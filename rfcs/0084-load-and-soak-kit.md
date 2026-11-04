@@ -477,7 +477,9 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   the OpenAPI document, from `GET /openapi.json` or from a file for deployments that disable
   docs. It finds the operation whose `operationId` is that key and takes its method, path and
   parameters. An operation that is missing, or whose `x-forze-kind` disagrees with the
-  scenario's declared `writes`, **stops the run before load** (row 7).
+  scenario's declared `writes`, **stops the run before load** (row 7). An operation with no
+  `x-forze-kind`, or with a value other than `query` and `command`, counts as `command`, as an
+  unmarked operation does in forze (§3.1). An OpenAPI document from before P2 has no key.
 - **`x-forze-kind`** is the one forze-side change: `_route_openapi_extra` adds
   `"x-forze-kind": "query" | "command"` from `entry.kind` (`_attach.py:346-398`). It is
   additive: every governed route gains one vendor key.
@@ -496,6 +498,11 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
 - Output never contains sampled ids (row 15).
 - A sampled id that later answers 404, deleted by a write scenario or by someone else, counts
   as `not_found` and is dropped from the sample. It is not an error.
+- A principal whose sample comes back empty stops the run before load, naming the principal
+  and the operation: its scenario has no id to call. A sample that `not_found` empties during
+  the run retires that scenario for that principal, and the step row records
+  `sample_exhausted` for it. The principal's workers carry on with the rest of its mix; with
+  nothing left, the run stops and the summary says why.
 
 ### 5.6 Step ramp and the knee
 
@@ -642,7 +649,8 @@ a summary, as `forze_dst.campaign.write_records` does:
 
 - **Off by default (row 8).** `allow_writes=False`. Under it, plan validation refuses:
   - any `Scenario.call` declared `writes=True`;
-  - any `Scenario.op` whose `x-forze-kind` is `command`.
+  - any `Scenario.op` whose `x-forze-kind` is not `query`, an absent or unknown value
+    included (§5.5).
 
   `writes` has no default on `Scenario.call`, so every free callable states its effect.
   Validation runs before any login.
@@ -699,7 +707,8 @@ under `-m perf`, which `just test` excludes.
   - The first failed login stops the run.
   - `X-Tenant-Id` is sent only when named, and `tenant_conflict` stops the run.
 - **Guards (unit):**
-  - A `command` op and a `writes=True` call are refused while writes are off.
+  - A `command` op, an op with no or an unknown `x-forze-kind`, and a `writes=True` call are
+    refused while writes are off.
   - A `Scenario.call` without `writes` is a type error.
   - A non-loopback host is refused, including `localhost.example.com` and `127.0.0.1.nip.io`.
     `FORZE_LOAD_WRITE_HOSTS` is matched exactly.
@@ -710,6 +719,10 @@ under `-m perf`, which `just test` excludes.
     in the file.
   - `target` keeps scheme, host and port only: userinfo, a path holding an id, and the query
     are stripped.
+- **Sampling (unit, P2):**
+  - An empty sample stops the run before load.
+  - A sample emptied by 404s retires its scenario for that principal and records
+    `sample_exhausted`.
 - **Parsers (unit):**
   - SSE frames: `id`, `event`, `data`, `retry`, keepalive comments, and multi-line data.
   - The Prometheus text subset.
@@ -821,14 +834,14 @@ under `-m perf`, which `just test` excludes.
 | 4 | `ASSUMED` | **Both load models**, accepted by the maintainer on 2026-11-05 over closed only or open only. Closed for the concurrency ramp the issue asks for, which finds capacity. Open for latency and for soak, where coordinated omission matters. Closed-model rows are labelled `latency: closed`. |
 | 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at the 1 − 10⁻⁶ quantile of a Poisson count with mean rate × request timeout; rate × timeout itself refuses 9 % of sends to a healthy server at a mean of 1. A send refused at the cap counts as a call and as `transport`. |
 | 6 | `LOCKED` | **The catalog source is the OpenAPI document** (URL or file) **plus a new `x-forze-kind` vendor key**, accepted by the maintainer on 2026-11-05 over reading the registry in-process through `forze_cli`. It is what a client sees, works against any deployment, needs no app import, and the forze change is one line in `_route_openapi_extra`. `x-forze-kind` becomes part of every app's OpenAPI document; removing it later breaks clients that read it. |
-| 7 | `ASSUMED` | An operation reference that is missing from OpenAPI, or whose `x-forze-kind` contradicts the scenario's declared `writes`, stops the run before any load. Generated scenarios are `query` routes whose input is empty, paginated or id/rev. Other inputs are listed as skipped. There is no schema faking. |
+| 7 | `ASSUMED` | An operation reference that is missing from OpenAPI, or whose `x-forze-kind` contradicts the scenario's declared `writes`, stops the run before any load. An absent or unknown `x-forze-kind` counts as `command`. Generated scenarios are `query` routes whose input is empty, paginated or id/rev. Other inputs are listed as skipped. There is no schema faking. |
 | 8 | `LOCKED` | **Writes are off by default and fail closed.** Generated scenarios are never `command`s. A `Scenario.call` must state `writes` (no default). A write scenario is refused at validation unless `allow_writes=True`. The kit points at shared environments. Relaxing this later cannot undo data already written, and every plan written against the relaxed default would change meaning. |
 | 9 | `LOCKED` | **A write-enabled run needs the flag and an exact host allowlist**: loopback, `localhost`, the plan's `write_hosts`, or `FORZE_LOAD_WRITE_HOSTS`, compared exactly after `urlsplit`. Accepted by the maintainer on 2026-11-05 over the flag alone. A target-side opt-in stays demand-gated. Relaxing this guard fails open against shared environments. |
 | 10 | `ASSUMED` | One session per principal, shared by its workers. Refresh runs under a per-principal lock, ahead of `access_expires_in`. No refresh token is ever presented twice: with `reuse_grace=0`, a second presentation revokes the family (`token_lifecycle.py:318-346`). |
 | 11 | `ASSUMED` | Logins are staggered to at most 4 at once by default (forze's `hashing_concurrency`) and are not measured. The first failed login stops the run before load, which keeps a wrong password from tripping the lockout. |
 | 12 | `ASSUMED` | **Credentials come from built-in helpers and from an app callable**, accepted by the maintainer on 2026-11-05. The helpers are `password_login` (forze `POST /login` and `/refresh`), `api_key` and `bearer`; any async callable returning headers also works, for cookies, OIDC and anything app-specific. Credentials come from environment variables only, never from the plan's source. |
 | 13 | `ASSUMED` | `X-Tenant-Id` is sent only when a principal names a tenant. `tenant_conflict` or `tenant_mismatch` stops the run. |
-| 14 | `ASSUMED` | Ids are sampled per principal through list operations, once, before the first measured step, bounded by `size`. A sampled id answering 404 is `not_found` and leaves the sample. |
+| 14 | `ASSUMED` | Ids are sampled per principal through list operations, once, before the first measured step, bounded by `size`. A sampled id answering 404 is `not_found` and leaves the sample. An empty sample stops the run before load; a sample emptied by 404s retires the scenario for that principal, recorded as `sample_exhausted`. |
 | 15 | `ASSUMED` | Output holds counts, latencies and outcome classes only: no bodies, headers, tokens, credentials or ids. `target` is written as scheme, host and port only: no userinfo, path, query or fragment. |
 | 16 | `ASSUMED` | Knee rule: the first closed-model step whose goodput is under 5 % above the previous step's, confirmed by the next step. Never a `client_saturated` or `misconfigured` step, as the knee or as its confirmation. Open model: the first rate where p99 more than doubles, or where goodput falls more than 5 % below the offered rate less its `conflict` and `not_found` answers. Thresholds may be tuned during P1 against the served mock; log the values chosen. |
 | 17 | `ASSUMED` | A step where `forbidden` plus `client_error` exceed 5 % is `misconfigured`, stops a ramp, and is never a knee. Goodput counts 2xx only. |
