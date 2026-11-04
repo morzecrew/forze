@@ -541,8 +541,8 @@ order before it inserts its missing ones, so concurrent loads of overlapping bat
 queue; a row another load stores meanwhile is locked and patched once the insert skips it.
 Concurrent loads can still deadlock: when their chunks split differently, and, with the same
 split, when such a row sorts below one the chunk already holds and a third load locks both.
-Postgres aborts one side with `concurrency`: retried outside a caller's transaction, and re-run
-by the scope inside one. Nothing is written twice or lost. It writes
+Postgres aborts one side with `concurrency`: retried outside a caller's transaction; inside one,
+the caller must re-run the whole scope. Nothing is written twice or lost. It writes
 `set_based_batch_size` rows per chunk (2,000 by default, `PostgresDocumentConfig`), not
 `batch_size`: each chunk costs a few statements, and a statement-level trigger fires once per
 statement, so a chunk per few hundred rows spends its time on statements.
