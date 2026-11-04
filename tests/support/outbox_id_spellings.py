@@ -1,6 +1,6 @@
 """One case every outbox backend runs: a row's id names it whether passed as a ``UUID`` or as
-any text spelling of one, in a list that may mix the two, and a malformed id is
-``precondition`` at every call that takes ids."""
+any text spelling of one, in a list that may mix the two. At every call that takes ids, a
+malformed id is ``precondition`` and the call changes no row, and an empty list changes none."""
 
 from __future__ import annotations
 
@@ -29,32 +29,44 @@ async def check_outbox_id_spellings(
     payload: BaseModel,
     spell: Callable[[UUID], Any],
 ) -> None:
-    """Stage and claim three rows, then mark, fail, retry and requeue them by *spell*'s ids."""
+    """Stage and claim five rows, then mark, fail, retry and requeue them by *spell*'s ids."""
 
     command, query = ctx.outbox.command(spec), ctx.outbox.query(spec)
+    admin = ctx.outbox.admin(spec)
 
-    for _ in range(3):
+    for _ in range(5):
         await command.stage("demo.created", payload)
 
-    assert await command.flush() == 3
+    assert await command.flush() == 5
 
-    published, failed, retried = [claim.id for claim in await query.claim_pending(limit=3)]
+    claims = await query.claim_pending(limit=5)
+    published, failed, retried, held, parked = [claim.id for claim in claims]
     other = uuid4()  # with a text spelling, each list mixes a UUID and text
 
     assert await query.mark_published([spell(published), other]) == 1
     assert await query.mark_failed([spell(failed), other], error="boom") == 1
     assert await query.mark_retry([spell(retried), other], attempts=1, available_at=utcnow()) == 1
     assert await query.requeue_failed([spell(failed), other]) == 1
+    assert await query.mark_failed([parked]) == 1
 
-    calls: list[Callable[[list[Any]], Any]] = [
-        query.mark_published,
-        query.mark_failed,
-        lambda ids: query.mark_retry(ids, attempts=1, available_at=utcnow()),
-        query.requeue_failed,
+    # Each call against a row it would act on: ``held`` is still processing, ``parked`` failed.
+    calls: list[tuple[Callable[[list[Any]], Any], UUID]] = [
+        (query.mark_published, held),
+        (query.mark_failed, held),
+        (lambda ids: query.mark_retry(ids, attempts=7, available_at=utcnow()), held),
+        (query.requeue_failed, parked),
     ]
+    depth = await admin.depth()
 
-    for call in calls:
+    for call, target in calls:
+        assert await call([]) == 0
+
         with pytest.raises(CoreException) as refused:
-            await call([published, "not-a-uuid"])
+            await call([spell(target), "not-a-uuid"])
 
         assert refused.value.kind == "precondition"
+        # Refused whole: each call moves its row to another status, and none moved.
+        assert await admin.depth() == depth
+
+    assert await query.mark_published([held]) == 1
+    assert await query.requeue_failed([parked]) == 1
