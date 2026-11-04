@@ -204,6 +204,33 @@ async def test_a_source_row_id_in_another_spelling_is_still_found() -> None:
     assert [r.total for r in await adapter.get_many([one])] == [10]
 
 
+@pytest.mark.asyncio
+async def test_source_row_ids_of_every_shape_are_read_as_uuids() -> None:
+    native, text = uuid4(), uuid4()
+
+    def _src(params: BaseModel, state: MockState) -> list[dict]:
+        return [
+            {"id": native, "region": "eu", "total": 1},  # a UUID object
+            {"id": None, "region": "eu", "total": 2},  # names no id
+            {"id": "not-a-uuid", "region": "eu", "total": 3},  # names no UUID
+            {"id": str(text), "region": "us", "total": 4},
+        ]
+
+    adapter: MockDocumentAdapter = MockDocumentAdapter(
+        spec=_spec(),
+        state=MockState(),
+        namespace="sales",
+        read_model=_Sale,
+        query_params_source=_src,
+    ).with_parameters(_Window())
+
+    assert (await adapter.get(native)).total == 1
+    assert (await adapter.get(text)).total == 4
+
+    with pytest.raises(CoreException, match="not found"):
+        await adapter.get(uuid4())
+
+
 def test_param_source_rows_requires_bound_params() -> None:
     # Defensive guard: the helper is only reached with params bound, but it fails closed anyway.
     adapter: MockDocumentAdapter = MockDocumentAdapter(
