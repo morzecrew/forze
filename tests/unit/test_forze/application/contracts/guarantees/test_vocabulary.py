@@ -9,6 +9,8 @@ import attrs
 import pytest
 from pydantic import (
     AfterValidator,
+    Field,
+    ValidationError,
     PlainSerializer,
     field_serializer,
     field_validator,
@@ -439,6 +441,33 @@ class TestTheKeysAHoldTakes:
         )
 
         assert held == [advisory_lock_key("s", None, "owner", Shouting(owner="abc").owner)]
+
+    @pytest.mark.filterwarnings("error::pydantic.warnings.UnsupportedFieldAttributeWarning")
+    def test_a_field_s_model_only_attributes_do_not_warn(self) -> None:
+        # ``frozen`` and an alias belong to the model, not to the key's validation.
+        class Frozen(Document):
+            group_id: UUID = Field(frozen=True, alias="groupId")
+            label: str = Field(default="x", max_length=3, frozen=True)
+
+        group = uuid4()
+        held = serialization_keys(
+            [SerializedBy(key=("group_id", "label"))],
+            [{"group_id": str(group), "label": "abc"}],
+            domain=Frozen,
+            scope="g",
+            tenant=None,
+        )
+
+        assert held == [advisory_lock_key("g", None, "group_id", "label", group, "abc")]
+
+        with pytest.raises(ValidationError, match="at most 3 characters"):
+            serialization_keys(
+                [SerializedBy(key=("label",))],
+                [{"label": "abcd"}],
+                domain=Frozen,
+                scope="g",
+                tenant=None,
+            )
 
     def test_a_store_keys_the_validated_value_as_it_keeps_it(self) -> None:
         # A store that rounds or pads hands its own form back, after the type check.
