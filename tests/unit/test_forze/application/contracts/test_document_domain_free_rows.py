@@ -10,6 +10,7 @@ under the same frozen clock. Values are compared with their types, so a ``Decima
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import IntEnum, StrEnum
@@ -24,13 +25,15 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    Json,
+    ValidationError,
     computed_field,
     field_serializer,
     field_validator,
     model_validator,
 )
 
-from forze.application.contracts.document import domains_from_create_payloads
+from forze.application.contracts.document import codecs, domains_from_create_payloads
 from forze.application.contracts.document.codecs import (
     _create_row_stamps,
     rows_from_create_payloads,
@@ -279,6 +282,133 @@ _SLOW: dict[str, tuple[type[BaseModel], type[BaseModel]]] = {
 
 
 # ....................... #
+# Shapes an adversarial review found the rule passing: each written by the domain path differs
+# from the payload's dump, or the domain path refuses the payload.
+
+
+class _AliasedInner(BaseModel):
+    n: int = Field(default=0, alias="N")
+
+
+class _ValidationAliasedInner(BaseModel):
+    n: int = Field(default=0, validation_alias="M")
+
+
+class _ExcludedInner(BaseModel):
+    a: int
+    hidden: int = Field(default=0, exclude=True)
+
+
+class _Cat(BaseModel):
+    kind: Literal["cat"] = "cat"
+    name: str
+
+
+class _Dog(BaseModel):
+    kind: Literal["dog"] = "dog"
+    name: str
+
+
+class _NestedAlias(CoreModel):
+    child: _AliasedInner
+
+
+class _NestedValidationAlias(CoreModel):
+    child: _ValidationAliasedInner
+
+
+class _ListedAlias(CoreModel):
+    children: list[_AliasedInner]
+
+
+class _NestedExclude(CoreModel):
+    child: _ExcludedInner
+
+
+class _Tagged(CoreModel):
+    pet: _Cat | _Dog = Field(discriminator="kind")
+
+
+class _JsonField(CoreModel):
+    data: Json[dict[str, int]]
+
+
+class _IntDefaultCreate(BaseDTO):
+    x: float = 1
+
+
+class _FloatDefaultDoc(Document):
+    x: float = 1.0
+
+
+class _IntFlagCreate(BaseDTO):
+    flag: int = 1
+
+
+class _BoolFlagDoc(Document):
+    flag: int = True
+
+
+class _SetDefaultCreate(BaseDTO):
+    tags: set[int] | frozenset[int] = Field(default=set())
+
+
+class _FrozenDefaultDoc(Document):
+    tags: set[int] | frozenset[int] = Field(default=frozenset())
+
+
+_REVIEWED: dict[str, tuple[tuple[type[BaseModel], type[BaseModel]], dict[str, Any]]] = {
+    "nested alias": (_pair(_NestedAlias), {"child": {"N": 5}}),
+    "nested validation alias": (_pair(_NestedValidationAlias), {"child": {"M": 5}}),
+    "listed alias": (_pair(_ListedAlias), {"children": [{"N": 5}]}),
+    "nested exclude": (_pair(_NestedExclude), {"child": {"a": 1, "hidden": 5}}),
+    "discriminated union": (_pair(_Tagged), {"pet": _Cat(name="x")}),
+    "json field": (_pair(_JsonField), {"data": '{"a": 1}'}),
+    "int and float defaults": ((_FloatDefaultDoc, _IntDefaultCreate), {}),
+    "int and bool defaults": ((_BoolFlagDoc, _IntFlagCreate), {}),
+    "set and frozenset defaults": ((_FrozenDefaultDoc, _SetDefaultCreate), {}),
+}
+
+
+@pytest.mark.parametrize("shape", list(_REVIEWED))
+def test_a_reviewed_shape_builds_the_domain(shape: str) -> None:
+    (domain, create), _ = _REVIEWED[shape]
+
+    assert _create_row_stamps(domain, create) is None
+
+
+@pytest.mark.parametrize("shape", list(_REVIEWED))
+def test_a_reviewed_shape_writes_what_the_domain_path_writes_or_refuses(shape: str) -> None:
+    """Whichever path a payload takes, its row is the domain path's, and a payload the domain
+    refuses is refused."""
+
+    (domain, create), values = _REVIEWED[shape]
+    payload = create(**values)
+
+    try:
+        fast, slow = _both(domain, [payload])
+
+    except ValidationError:
+        assert rows_from_create_payloads(domain, [payload], [uuid4()], now=_AT) is None
+        return
+
+    assert fast is None or _typed(fast) == _typed(slow)
+
+
+def test_a_constructed_payload_missing_a_required_field_builds_the_domain() -> None:
+    """``model_construct`` skips validation: a required field it leaves out is refused by the
+    domain path, so the payload's dump must not be written instead."""
+
+    domain, create = _pair(_Plain)
+    payload = create.model_construct(name="a")
+
+    assert rows_from_create_payloads(domain, [payload], [uuid4()], now=_AT) is None
+
+    with pytest.raises(ValidationError):
+        _domain_rows(domain, [payload], [uuid4()])
+
+
+# ....................... #
 
 
 def _typed(rows: list[dict[str, Any]]) -> list[dict[str, tuple[type, Any]]]:
@@ -412,3 +542,72 @@ def test_any_union_payload_dumps_the_domains_row(payloads: list[BaseModel], rati
 
     assert fast is not None and not math.isnan(ratio)
     assert _typed(fast) == _typed(slow)
+
+
+# ....................... #
+# The safety net: a pair's first row is checked against the domain path's, once per process
+
+
+@pytest.fixture(autouse=True)
+def _fresh_verdicts() -> Iterator[None]:
+    codecs._VERDICTS.clear()
+    yield
+    codecs._VERDICTS.clear()
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.warnings: list[tuple[Any, ...]] = []
+
+    def warning(self, *args: Any) -> None:
+        self.warnings.append(args)
+
+
+def test_a_mis_proved_pair_is_caught_on_its_first_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rule wrongly passing a domain that upper-cases ``name``: its first row differs from the
+    domain path's, so the pair is logged and builds its domain models from then on."""
+
+    proven = codecs._create_row_stamps(_FieldsDoc, _FieldsCreate)
+    recorder = _Recorder()
+    monkeypatch.setattr(codecs, "_create_row_stamps", lambda domain, create: proven)
+    monkeypatch.setattr(codecs, "logger", recorder)
+    payload = _FieldsCreate(name="a")
+
+    assert rows_from_create_payloads(_ValidatedDoc, [payload], [uuid4()], now=_AT) is None
+    assert codecs._VERDICTS[(_ValidatedDoc, _FieldsCreate)] is False
+    assert len(recorder.warnings) == 1 and ["name"] in recorder.warnings[0]
+
+    checks: list[Any] = []
+    monkeypatch.setattr(codecs, "_confirmed", lambda *args: checks.append(args) or True)
+
+    assert rows_from_create_payloads(_ValidatedDoc, [payload], [uuid4()], now=_AT) is None
+    assert checks == []
+
+
+def test_a_proven_pair_is_checked_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    confirmed = codecs._confirmed
+    checks: list[Any] = []
+
+    def counting(*args: Any) -> bool:
+        checks.append(args)
+        return confirmed(*args)
+
+    monkeypatch.setattr(codecs, "_confirmed", counting)
+
+    for _ in range(3):
+        rows = rows_from_create_payloads(_FieldsDoc, [_FieldsCreate(name="a")], [uuid4()], now=_AT)
+        assert rows is not None
+
+    assert len(checks) == 1
+    assert codecs._VERDICTS[(_FieldsDoc, _FieldsCreate)] is True
+
+
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings")
+def test_a_payload_the_domain_refuses_decides_nothing() -> None:
+    """A first payload the domain path refuses (one ``model_construct`` filled with the wrong
+    type) is left to that path to refuse, and the pair stays undecided."""
+
+    payload = _FieldsCreate.model_construct(name="a", qty="not a number")
+
+    assert rows_from_create_payloads(_FieldsDoc, [payload], [uuid4()], now=_AT) is None
+    assert (_FieldsDoc, _FieldsCreate) not in codecs._VERDICTS

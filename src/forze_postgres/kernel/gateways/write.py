@@ -1436,8 +1436,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
-            now = utcnow()
-
             for offset in range(0, len(items), set_based_batch_size):
                 chunk = items[offset : offset + set_based_batch_size]
                 id_batch = [pk for pk, _, _ in chunk]
@@ -1449,6 +1447,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 # create payload becomes a domain only for an id not stored: a reload builds
                 # none.
                 present = await self.__visible_ids(id_batch, lock=True)
+                # Read after the locks are held, so a chunk that waited is not stamped earlier
+                # than it writes; an inserted row's ``created_at`` and ``last_update_at`` alike.
+                now = utcnow()
                 missing = [pk for pk in id_batch if pk not in present]
                 inserted = await self.__insert_set_based(
                     missing, creates_by_id, column_types, now=now

@@ -227,3 +227,65 @@ async def test_a_set_based_insert_stores_what_the_domain_path_stores(
 
     assert set_based == by_domain
     assert built == [fast]
+
+
+class _Ticking:
+    """A clock a second later at every read, so each read shows in what it stamps."""
+
+    def __init__(self) -> None:
+        self.at = _AT
+
+    def now(self) -> datetime:
+        self.at += timedelta(seconds=1)
+        return self.at
+
+    def uuid(self) -> UUID:
+        return uuid4()
+
+    def monotonic(self) -> float:
+        return 0.0
+
+
+async def test_each_chunk_is_stamped_when_it_writes(pg_client: PostgresClient) -> None:
+    """The instant is read per chunk, once its locks are held: a later chunk is never stamped
+    earlier than an earlier one, and an inserted row's two timestamps are one instant."""
+
+    spec, columns, payloads, _ = _SHAPES["typed"]
+    t = f"pg_domain_free_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"CREATE TABLE {t} (id uuid PRIMARY KEY, rev integer NOT NULL, created_at timestamptz "
+        f"NOT NULL, last_update_at timestamptz NOT NULL, {columns})"
+    )
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+            set_based_batch_size=10,
+        )
+    )
+    deps = {
+        PostgresClientDepKey: pg_client,
+        PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+        DocumentQueryDepKey: doc,
+        DocumentCommandDepKey: doc,
+    }
+    cmd = context_from_deps(Deps.plain(deps)).document.command(spec)
+    create = spec.write["create_cmd"]  # type: ignore[index]
+
+    with bind_time_source(_Ticking()):  # type: ignore[arg-type]
+        await cmd.upsert_many(
+            [
+                UpsertItem(id=uuid4(), create=create(**payloads[1]), update=_Update())
+                for _ in range(25)
+            ],
+            return_new=False,
+            set_based=True,
+        )
+
+    rows = await pg_client.fetch_all(f"SELECT created_at, last_update_at FROM {t} ORDER BY id", [])
+    stamps = [row["created_at"] for row in rows]
+
+    assert all(row["created_at"] == row["last_update_at"] for row in rows)
+    assert stamps == sorted(stamps)
+    assert len(set(stamps)) == 3
