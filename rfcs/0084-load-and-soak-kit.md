@@ -542,12 +542,19 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   - The first arrival per subscriber is timed. Duplicates are counted: durable signals can
     arrive twice, through the mailbox and the live race. A key unseen after `timeout_s` is
     `missing`.
+  - A key is expected only at the subscribers its write addresses. A principal-addressed event
+    reaches that principal's streams only (`hub.py:157-160`), so the plan can name a write's
+    audience with `audience(response) -> principal names | None`. `None`, the default, means
+    every subscriber of the write's topics. Only expected subscribers count a key `missing`.
 - **Two latencies on one clock (row 19).** The writer and every subscriber are in one process,
   on one monotonic clock, so no clock alignment is needed:
   - **send → delivery**, from the write's send to the frame. It is an upper bound that includes
     the write's own latency, and is what erp measures;
   - **answer → delivery**, from the write's response to the frame. It can be negative when the
-    live leg beats the HTTP answer; that is reported, not clipped.
+    live leg beats the HTTP answer; that is reported, not clipped. `DDSketch` takes
+    non-negative values only (`sketch.py:100-101`), so the non-negative samples feed the sketch
+    and its percentiles. The negative ones are reported beside them as a count, a share of
+    deliveries and a minimum.
 
   True commit time is not observable. No frame carries it, and the uuid7 event id is minted
   before commit on the server's wall clock (§3.4). The docs say so.
@@ -566,8 +573,10 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
     - time until all streams are back (`back_in_s`);
     - frames replayed;
     - **gaps**, keys written while the stream was down that never arrived;
-    - duplicates;
-    - streams that resumed from the cursor because their id aged out of the mailbox's 1000.
+    - duplicates.
+  - A resume whose id aged out of the mailbox's 1000 falls back to the stored cursor with no
+    signal a client can see (`sse.py:406-437`), so fallbacks are not counted on their own.
+    What a fallback costs shows up as gaps and duplicates.
   - A live-only route ignores `Last-Event-ID` (`sse.py:563`). There the storm records
     `resume: "none"` and measures reconnects only.
   - Draining answers are reconnects with the server's `retry:`, never errors:
@@ -586,6 +595,9 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   - After a warm-up of at least two windows, each series gets an OLS slope over time
     (`statistics.linear_regression`, as erp's `_drift`) and a first-quarter against
     last-quarter mean.
+  - A counter (`TYPE counter`, and row 24's CPU seconds) is differenced into a per-second rate
+    between windows before the fit. A cumulative series rises under any steady load, so fitted
+    raw it would flag every counter.
   - A series is **flagged** when its slope over the run exceeds 10 % of its first-quarter mean
     and the last quarter is above the first.
   - A gauge with a matching capacity gauge (`forze.cache.l1.size` against `.capacity`) is not
@@ -732,8 +744,12 @@ under `-m perf`, which `just test` excludes.
     durable id.
   - Draining answers count as reconnects.
   - Duplicates are counted once, and gaps are computed from keys written while down.
+  - A principal-addressed write is `missing` only at that principal's subscribers.
+  - A frame that beats its write's answer counts as a negative answer → delivery: not clipped
+    to 0, and not passed to the sketch.
 - **Drift (unit, P4):** synthetic series. Flat is not flagged. A linear leak is flagged. A
-  sawtooth is not flagged. A series that fills to its capacity gauge is not flagged.
+  sawtooth is not flagged. A counter rising at a steady rate is fitted as that rate and is not
+  flagged. A series that fills to its capacity gauge is not flagged.
   Interleaved instance ids give no drift.
 - **`x-forze-kind` (unit, `tests/unit/test_forze_fastapi/`, P2):** query and command routes
   carry the key with the right value. Unflagged routes are otherwise unchanged.
@@ -847,13 +863,13 @@ under `-m perf`, which `just test` excludes.
 | 17 | `ASSUMED` | A step where `forbidden` plus `client_error` exceed 5 % is `misconfigured`, stops a ramp, and is never a knee. Goodput counts 2xx only. |
 | 18 | `ASSUMED` | Percentiles come from core's `DDSketch` (1 % relative accuracy), per step and per scenario. Rows store quantiles and counts, not sketches, because no serialization exists. |
 | 19 | `ASSUMED` | **Realtime latency is measured on the one process's monotonic clock**: send → delivery and answer → delivery. Accepted by the maintainer on 2026-11-05 over the uuid7 event id's embedded time with an estimated offset, and over a new server timestamp in frames. No clock alignment is needed, and it is what erp measures. The docs call send → delivery an upper bound. |
-| 20 | `ASSUMED` | Frame matching is app-supplied (`match(frame)`, `key_of(response)`). The first arrival per subscriber is timed. Duplicates and `missing` keys after a timeout are counted. |
-| 21 | `ASSUMED` | The storm resumes each subscriber from its last durable id: `Last-Event-ID` on SSE, the `last_event_id` query on WS. Writes continue during it. Gaps, duplicates and cursor fallbacks are counted. Draining answers (SSE 200 + `retry:` + `X-Error-Code: realtime_draining`, WS 1012) are reconnects, not errors. A live-only route records `resume: "none"`. |
+| 20 | `ASSUMED` | Frame matching is app-supplied (`match(frame)`, `key_of(response)`, and `audience(response)` for principal-addressed events). The first arrival per subscriber is timed. Duplicates and `missing` keys after a timeout are counted, `missing` only at subscribers the write addresses. |
+| 21 | `ASSUMED` | The storm resumes each subscriber from its last durable id: `Last-Event-ID` on SSE, the `last_event_id` query on WS. Writes continue during it. Gaps and duplicates are counted. Cursor fallbacks are not: the server sends no signal for one. Draining answers (SSE 200 + `retry:` + `X-Error-Code: realtime_draining`, WS 1012) are reconnects, not errors. A live-only route records `resume: "none"`. |
 | 22 | `LOCKED` | **Gauge drift is computed only from scrapes of one process.** If consecutive `/metrics` scrapes name different `service.instance.id`s, every gauge series is marked `interleaved` and no drift is computed. Under a pre-fork server this depends on RFC 0083 (#838). Computing drift from interleaved scrapes produces confident false findings that later work would build on. |
 | 23 | `ASSUMED` | **Gauges are read from the app's `/metrics` first** (single process now, pre-fork after RFC 0083), accepted by the maintainer on 2026-11-05. It matches RFC 0083's audience of compose stacks with no collector. A Prometheus-compatible query API over the run window stays demand-gated, for apps that push OTLP. |
 | 24 | `ASSUMED` | **Server RSS and CPU come from forze process gauges** exported through forze's meter (stdlib `/proc/self/statm` and `time.process_time`, a new `instrument_process`) and read with the other gauges. Accepted by the maintainer on 2026-11-05 over reading `/proc/<pid>`, reading cgroup files, or leaving it to the user's monitoring. It lands as its own small change, which P4 depends on. |
 | 25 | `ASSUMED` | **The missing gauges are separate issues**, accepted by the maintainer on 2026-11-05 over adding them in this RFC's P4: connection pool checked-out and idle per backend, SSE/WS hub subscribers and dropped, mailbox depth, bulkhead in-use. Each is production observability first, and the kit reads whatever `/metrics` serves. |
-| 26 | `ASSUMED` | Drift: after two warm-up windows, an OLS slope and a first- against last-quarter mean per series. Flagged when the slope over the run exceeds 10 % of the first-quarter mean and the last quarter is higher. Not flagged once a gauge reaches its capacity gauge. Flags never fail the run. |
+| 26 | `ASSUMED` | Drift: after two warm-up windows, an OLS slope and a first- against last-quarter mean per series. Counters, CPU seconds included, are fitted as per-second rates. Flagged when the slope over the run exceeds 10 % of the first-quarter mean and the last quarter is higher. Not flagged once a gauge reaches its capacity gauge. Flags never fail the run. |
 | 27 | `ASSUMED` | Output is JSONL: a meta line, rows, a summary, with `schema: 1`, following `forze_dst.campaign`'s convention. It is not pytest-benchmark's format, and `gate_compare.py` is not reused. |
 | 28 | `ASSUMED` | **`compare` reports by default, with an opt-in `--fail-on p95:15%,goodput:10%`**, accepted by the maintainer on 2026-11-05 over report only or failing on default thresholds. Load runs are far noisier than the micro-benchmarks `perf-check` gates at 10 %, so a default failure would make every consumer's CI flaky. |
 | 29 | `ASSUMED` | One `httpx.AsyncClient` for requests with `Limits(max_connections=...)` set to the worker count or in-flight cap, and a separate client for streams. httpx's default of 100 connections would queue in the client above 100 workers. |
