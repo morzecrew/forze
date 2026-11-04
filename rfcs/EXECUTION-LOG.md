@@ -5648,3 +5648,136 @@ RFC tracks neither question, so neither gets a row.
 | 0028 | 14 | Accepted | `ASSUMED` | A bounded Postgres read costs one round trip at the root and five exchanges in a transaction | D-195 |
 | 0028 | 15 | Accepted | `ASSUMED` | An autocommit procedure route carries no route timeout; the role's or the database's `statement_timeout` bounds it | D-196 |
 | 0028 | 16 | Accepted | `ASSUMED` | A timeout that is not a whole number of the engine's unit, or beyond what it can hold, is refused; nothing is rounded | D-197 |
+
+---
+
+# Unit 19 · RFC 0083 P1 — one scrape for every worker of a pre-fork server
+
+Branch `feat/multi-worker-metrics-p1`. RFC 0083 P1 per §12: W1 (the writer step), W2 (the
+union route), W3 (the age gauge) and `worker_metrics_reader()`, the §6 tests, and the §7 docs
+for the snapshot mode. No P2 (collector recipe) and no P3 (Redis store). Measured against the
+decision table as the maintainer settled it on 2026-11-05, where rows 4 to 10 are `LOCKED`,
+and against §5.2 and §6 as the review of the RFC's PR amended them (the shared render future,
+and no file until a render names the worker).
+Rows 1 to 18 hold as written; nothing here conflicts with a `LOCKED` row. The dev-group floor
+of `opentelemetry-exporter-prometheus` moves to 0.66b0 so the tests can build the reader row 8
+names. `uv.lock`'s specifier line follows, with no change to what it resolves.
+
+**Drift count: 0.** Six entries, D-210 to D-215: four `discovery`, two `spec-gap`.
+
+**Where each item lives.** `MetricsSnapshots`, `worker_metrics_reader`, the writer, the union and
+the `SNAPSHOT_AGE_GAUGE` constant are in
+[`routes/_snapshots.py`](../src/forze_fastapi/routes/_snapshots.py), exported from
+`forze_fastapi.routes`. `attach_metrics_route(..., snapshots=)` is in
+[`routes/health.py`](../src/forze_fastapi/routes/health.py). The reader check that route always
+ran moved into `_snapshots.py` as `prometheus_renderer`, unchanged, because the writer runs it
+too. The tests are `tests/unit/test_forze_fastapi/test_metrics_snapshots.py` (unit) and
+`test_metrics_snapshot_workers.py` (real `uvicorn --workers` processes, after
+`test_serve_workers.py`).
+
+## D-210 — The route answers 503 when every fresh snapshot is withheld, too
+
+- **Touches:** row 16 and row 13.
+- **RFC said:** `503` "with no fresh snapshot at all"; otherwise `200` with whatever is fresh.
+  Row 13 withholds two snapshots that claim one instance id.
+- **Found:** a group whose only fresh snapshots are withheld, which is every worker under
+  gunicorn `--preload` with `bootstrap_telemetry` at import, has fresh snapshots and serves
+  none of them. Read literally, row 16 answers `200` with an empty body, so `up == 1` hides a
+  group that exports nothing.
+- **Class:** `spec-gap`.
+- **Consequence:** `503` whenever no snapshot is left after withholding: none fresh, or every
+  fresh one withheld. A worker whose renders name no instance yet writes no file (amended §5.2),
+  so a group that has recorded nothing answers `503` too. The real-worker test runs two workers
+  on one forced id and asserts `503` on every scrape.
+- **Proposed row (RFC 0083):** `ASSUMED`. The route answers `503` when no snapshot is left to
+  serve after row 13 withholds shared ids, and `200` otherwise.
+
+## D-211 — The file token is derived from the process, not minted per writer
+
+- **Touches:** row 12 (`<pid>-<token>.prom`) and §5.2 ("a random hex string minted once per
+  writer").
+- **RFC said:** a random token minted once per writer.
+- **Found:** `runtime_lifespan(build=...)` may build a second runtime in the same process after
+  tearing the first down, and that runtime builds a new writer. With a fresh token, the first
+  writer's final snapshot (row 6 keeps it until `ttl`) and the second writer's both claim the
+  process's instance id. Row 13 then withholds both for up to `ttl`.
+- **Class:** `discovery`.
+- **Consequence:** the token is the first 32 hex digits of the SHA-256 of
+  `forze.base.primitives.instance_id()`. That value is stable for the life of a process and
+  new in every fork, so a rebuilt writer overwrites its own file. A unit test runs two scopes in
+  one process and finds one file.
+- **Proposed row (RFC 0083):** `ASSUMED`. The snapshot file's token is derived from the
+  process's `instance_id()`, so every writer in one process writes the same file.
+
+## D-212 — The final render's budget is one interval, and the loop's stop usually spends it first
+
+- **Touches:** amended §5.2 ("if waiting would pass the shutdown budget, the final render is
+  skipped") and row 6.
+- **RFC said:** the writer owns one render future, shared by its ticks and the final render. A
+  tick cancelled at shutdown is waited for, within a shutdown budget the RFC does not size.
+- **Found:**
+  - A tick is cancelled at shutdown only by the loop's own stop. `periodic_lifecycle_step`
+    gives a tick up to 5 s (`DEFAULT_STOP_GRACE_SECONDS`) to finish before it cancels the
+    loop.
+  - The runtime's `stop_all` does not cancel the loop. It cancels the `stop()` call at its
+    deadline, and the step's own shutdown hook then waits for the tick again.
+  - So with a render under 5 s, the final render follows a finished tick. The shared future
+    engages only for a render over 5 s.
+  - Each shutdown hook is bounded by `shutdown_step_timeout` (10 s by default). A wedged render
+    can therefore spend 5 s in the loop's stop, then up to one interval waiting. Past those
+    10 s the runtime abandons the hook, with its own log line.
+- **Class:** `discovery`.
+- **Consequence:** the final render's budget is one `interval`, counted from when the loop has
+  stopped. The wait on an unfinished render and the final render both come out of it. Past it,
+  the final render is skipped and the last snapshot stands, with a warning. Either way no
+  second render starts beside the first. The unit test cancels a tick mid-render at the writer
+  and checks both outcomes. Under sabotage (no shared future, no wait) both cases fail with two
+  renders at once.
+- **Proposed row (RFC 0083):** `ASSUMED`. The final render's budget is one `interval`. The
+  maintainer may prefer a smaller fixed bound, so that a wedged render skips the final render
+  itself instead of meeting the runtime's step timeout.
+
+## D-213 — `MetricsSnapshots.union()` is public
+
+- **Touches:** row 10 (the API's shape).
+- **RFC said:** `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` with
+  `writer_step(reader)`, and `attach_metrics_route(..., snapshots=)`.
+- **Found:** the route needs the union, and §8 names a stdlib listener serving it as a likely
+  follow-up. A load test also wants it without HTTP.
+- **Class:** `spec-gap`.
+- **Consequence:** `union() -> tuple[int, bytes]` is public and blocking. It returns the status
+  and the body the route serves, and the route runs it in a thread. `writer_step` also takes
+  `step_id=` (default `"metrics_snapshot_writer"`), like the other step factories.
+- **Proposed row (RFC 0083):** `ASSUMED`. `MetricsSnapshots.union()` is public: blocking,
+  returning `(status, body)` exactly as the route answers.
+
+## D-214 — `/dev/shm/<dir>`, not a default tmpfs mount
+
+- **Touches:** §7 ("the §5.2 wiring and a tmpfs mount") and row 12 (a directory group- or
+  world-writable is refused).
+- **RFC said:** recommend a tmpfs mount private to the container.
+- **Found:** Docker's `tmpfs:` mount defaults to mode `1777`, so the writer refuses the mount
+  point itself. `/dev/shm` is a per-container tmpfs, also `1777`, but the writer creates a
+  subdirectory of it as `0700`, owned by the app's user, with no compose change.
+- **Class:** `discovery`.
+- **Consequence:** the docs use `Path("/dev/shm/forze-metrics")`. They say a directory any
+  other user can write into is refused, and that the directory serves one group.
+- **Proposed row (RFC 0083):** none.
+
+## D-215 — Measured: the render is the writer's cost; the union of four takes about 7–10 ms
+
+- **Touches:** §5.5 (writer and scrape cost) and §9 ("measured again in P1").
+- **RFC said:** render 24 to 36 ms, merge of four 2.3 ms, both for 200 operation label sets.
+- **Found:** through the built writer, on the same 200 label sets and the same versions
+  (exporter 0.66b1, `prometheus_client` 0.26.0) under Python 3.14, on a shared machine:
+  - one write took a median of 54 ms in one run and 88 ms in another;
+  - `generate_latest` was 98% of it under cProfile, and the label check, encode, write and
+    sweep the rest;
+  - the snapshot was 0.96 MB;
+  - `union()` over four such snapshots took a median of 7 to 10 ms, with the file reads and
+    header parse, and returned 3.5 MB.
+- **Class:** `discovery`.
+- **Consequence:** the writer adds nothing material beyond the render it replaces. At the 10 s
+  default, one render costs about 0.5 to 0.9% of a core per worker. The RFC's render numbers
+  came from a quieter run, and §9's risk stands as written.
+- **Proposed row (RFC 0083):** none.

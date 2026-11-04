@@ -22,9 +22,10 @@ from forze.application.execution.background import evaluate_readiness
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
 
+from ._snapshots import MetricsSnapshots, absorb_abandoned_failure, prometheus_renderer
+
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics.export import MetricReader
-    from prometheus_client import CollectorRegistry
 
 # ----------------------- #
 
@@ -178,6 +179,7 @@ def attach_metrics_route(
     reader: MetricReader,
     *,
     path: str = "/metrics",
+    snapshots: MetricsSnapshots | None = None,
 ) -> APIRouter:
     """Attach a Prometheus **pull** endpoint over an already-registered metric reader.
 
@@ -187,12 +189,18 @@ def attach_metrics_route(
     ``PeriodicExportingMetricReader`` and the page renders perfectly and stays empty
     forever, which is the kind of failure nobody notices until an incident.
 
-    **Single-process deployments only.** Under a pre-fork server (gunicorn/uvicorn with
-    workers) the scrape is answered by whichever worker happened to accept the connection,
-    so consecutive scrapes sample different processes: per-process cumulative counters
-    interleave, ``rate()`` sees phantom resets, and gauges flap between workers. Nothing
-    inside this endpoint can fix that. Multi-worker deployments push over OTLP instead,
-    where each process stays a distinct series by ``service.instance.id``.
+    **Without** *snapshots*, **single-process deployments only.** Under a pre-fork server
+    (gunicorn/uvicorn with workers) the scrape is answered by whichever worker happened to
+    accept the connection, so consecutive scrapes sample different processes: per-process
+    cumulative counters interleave, ``rate()`` sees phantom resets, and gauges flap between
+    workers. Nothing inside this endpoint alone can fix that.
+
+    **With** *snapshots*, the route answers for every worker of the group: each worker's
+    :meth:`MetricsSnapshots.writer_step` leaves a snapshot in the shared directory, and
+    whichever worker takes the scrape serves the union of the fresh ones, each series
+    labelled ``service_instance_id``, plus a ``forze_metrics_snapshot_age_seconds`` sample per
+    worker. The route then renders nothing itself; it answers ``503`` when no snapshot can be
+    served. Deployments across hosts push over OTLP instead.
 
     ``prometheus_client`` is deliberately *not* part of the ``observability`` extra — the
     blessed push path has no use for it. Install ``opentelemetry-exporter-prometheus``
@@ -203,11 +211,28 @@ def attach_metrics_route(
     route rendering any other registry would serve a perfectly healthy, permanently empty
     page — the same failure the reader check above exists to prevent.
 
+    :param snapshots: Serve the union of every worker's snapshot from this directory
+        instead of rendering this process alone.
+
     :raises CoreException: ``configuration`` — the Prometheus exporter is not installed, or
         *reader* is not a ``PrometheusMetricReader``.
     """
 
-    generate_latest, registry = _prometheus_renderer(reader)
+    generate_latest, registry = prometheus_renderer(reader)
+
+    if snapshots is not None:
+        union = snapshots.union
+
+        @router.get(path, include_in_schema=False)
+        async def metrics_union() -> Response:  # pyright: ignore[reportUnusedFunction]
+            # Off the loop: it reads every worker's file. It renders nothing, so a scrape
+            # runs no observable callback and never races the writer for the collector.
+            status, body = await asyncio.to_thread(union)
+
+            return Response(content=body, status_code=status, media_type=PROMETHEUS_CONTENT_TYPE)
+
+        return router
+
     scrape = asyncio.Lock()
     in_flight: asyncio.Future[bytes] | None = None
 
@@ -234,7 +259,7 @@ def attach_metrics_route(
                 # stats, bulkhead depths — and on the loop each scrape would stall every
                 # other coroutine, including the liveness probe.
                 in_flight = asyncio.ensure_future(asyncio.to_thread(generate_latest, registry))
-                in_flight.add_done_callback(_absorb_abandoned_failure)
+                in_flight.add_done_callback(absorb_abandoned_failure)
 
             pending = in_flight
 
@@ -243,56 +268,3 @@ def attach_metrics_route(
         return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 
     return router
-
-
-# ....................... #
-
-
-def _absorb_abandoned_failure(render: asyncio.Future[bytes]) -> None:
-    """Retrieve a failed render's exception so asyncio does not report it as a leak.
-
-    A render outlives the scrape that started it — the client disconnects, the handler is
-    cancelled, the thread keeps going. If that render then raises (an observable callback
-    reading a half-disposed client, say) nobody is left to receive it, and asyncio logs
-    ``Task exception was never retrieved`` with a full traceback at ERROR. That fires
-    precisely during an incident, where it reads as a framework fault rather than as the
-    scrape timeout it actually is.
-
-    Retrieving here only clears the leak warning: a scrape still awaiting this render
-    receives the exception exactly as before and answers 500 for it.
-    """
-
-    if not render.cancelled():
-        render.exception()
-
-
-# ....................... #
-
-
-def _prometheus_renderer(
-    reader: MetricReader,
-) -> tuple[Callable[[CollectorRegistry], bytes], CollectorRegistry]:
-    try:
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
-        from prometheus_client import REGISTRY, generate_latest
-
-    except ImportError as error:
-        raise exc.configuration(
-            "The pull metrics route needs the Prometheus exporter "
-            "(pip install opentelemetry-exporter-prometheus); the blessed OTLP push path "
-            "does not require it"
-        ) from error
-
-    if not isinstance(reader, PrometheusMetricReader):
-        raise exc.configuration(
-            f"attach_metrics_route needs a PrometheusMetricReader, got "
-            f"{type(reader).__name__}: any other reader exports elsewhere and leaves this "
-            f"endpoint permanently empty"
-        )
-
-    # The reader keeps the registry it registered its collector into — the global one by
-    # default, a caller-supplied one when ``PrometheusMetricReader(registry=...)`` was
-    # used. Reading it back is what keeps the route and the reader from ever disagreeing;
-    # the exporter exposes no public accessor, and the fallback covers older releases that
-    # predate the constructor argument.
-    return generate_latest, getattr(reader, "_registry", REGISTRY)

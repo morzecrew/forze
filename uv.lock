@@ -1514,7 +1514,7 @@ dev = [
     { name = "hypothesis", specifier = ">=6.153.0" },
     { name = "import-linter", specifier = ">=2.10" },
     { name = "mypy", extras = ["faster-cache"], specifier = ">=1.19.1" },
-    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.60b0" },
+    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.66b0" },
     { name = "polyfactory", specifier = ">=3.3.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "py-spy", specifier = ">=0.4.2" },

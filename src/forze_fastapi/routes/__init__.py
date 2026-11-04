@@ -12,6 +12,7 @@ from ._attach import (
     id_rev_endpoint,
     query_endpoint,
 )
+from ._snapshots import MetricsSnapshots, worker_metrics_reader
 from .aggregate import attach_aggregate_routes
 from .asyncapi import attach_asyncapi_route
 from .authn import attach_authn_routes
@@ -49,6 +50,8 @@ __all__ = [
     "attach_readiness_route",
     "attach_liveness_route",
     "attach_metrics_route",
+    "MetricsSnapshots",
+    "worker_metrics_reader",
     "attach_jwks_route",
     "attach_document_routes",
     "attach_search_routes",

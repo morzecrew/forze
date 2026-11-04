@@ -265,15 +265,111 @@ bootstrap_telemetry(service_name="orders-api", extra_metric_readers=[reader])
 attach_metrics_route(router, reader)
 ```
 
-It is correct for a **single-process** deployment and wrong for any other. Under a pre-fork
-server the scrape is answered by whichever worker accepted the connection, so consecutive
-scrapes sample different processes: cumulative counters interleave, `rate()` sees phantom
-resets, gauges flap between workers. Nothing inside the endpoint can fix that — it is a
-property of one socket in front of N independent processes.
+As written, it is correct for a **single-process** deployment and wrong for any other.
+Under a pre-fork server the scrape is answered by whichever worker accepted the connection,
+so consecutive scrapes sample different processes: cumulative counters interleave, `rate()`
+sees phantom resets, gauges flap between workers. Nothing inside one process can fix that —
+it is a property of one socket in front of N independent processes. The next section is the
+fix for workers that share a host.
 
-Multi-worker deployments push over OTLP, where each process stays its own series.
 `prometheus_client` is deliberately not part of the `observability` extra; install
 `opentelemetry-exporter-prometheus` yourself if you want this route.
+
+### Several workers, one scrape
+
+For `uvicorn --workers N` or gunicorn's uvicorn worker, with a Prometheus and no
+collector: every worker leaves a snapshot of its own metrics in a directory they all share,
+and whichever worker takes the scrape answers for all of them. Each series keeps its
+worker's `service.instance.id` as the label `service_instance_id`, and nothing is summed.
+
+```python
+from pathlib import Path
+
+from fastapi import APIRouter, FastAPI
+
+from forze.application.execution import build_runtime
+from forze.base.telemetry import bootstrap_telemetry
+from forze_fastapi import runtime_lifespan
+from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_metrics_reader
+
+
+def create_app() -> FastAPI:  # uvicorn orders.app:create_app --factory --workers 4
+    reader = worker_metrics_reader()
+    bootstrap_telemetry(service_name="orders-api", exporter="none", extra_metric_readers=[reader])
+
+    snapshots = MetricsSnapshots(directory=Path("/dev/shm/forze-metrics"))
+    lifespan = runtime_lifespan(
+        build=lambda: build_runtime(lifecycle_steps=snapshots.writer_step(reader)),
+    )
+
+    router = APIRouter()
+    attach_metrics_route(router, reader, snapshots=snapshots)
+
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(router)
+
+    return app
+```
+
+Three pieces, one per process:
+
+- **`worker_metrics_reader()`** builds the `PrometheusMetricReader` the mode needs: its own
+  registry, and `service.instance.id` copied onto every series. It needs
+  `opentelemetry-exporter-prometheus` 0.66b0 or newer and refuses an older one. Call
+  `bootstrap_telemetry` **in each worker** — in the app factory, as above — so each mints
+  its own id.
+- **`snapshots.writer_step(reader)`** is a lifecycle step, so each worker runs its own. At
+  startup it creates the directory (`0700`) and renders once; it refuses to start on a
+  directory another user could write into, or on a reader whose series do not all carry
+  one `service_instance_id` — a plain `PrometheusMetricReader()` renders the process
+  collectors, which carry none. It then writes every `interval`, atomically, from the
+  first render that holds a series: a worker that has recorded nothing yet is not served.
+  On shutdown it writes once more.
+- **`attach_metrics_route(..., snapshots=snapshots)`** serves every snapshot younger than
+  `ttl`, merged family by family, and renders nothing itself.
+
+| `MetricsSnapshots` | Default | |
+|---|---|---|
+| `directory` | required | One directory per worker group. A tmpfs path such as `/dev/shm/...` keeps writes in memory; in a container it is private to that container. |
+| `interval` | 10 s | How often each worker writes. Each write renders that worker's metrics once, the cost one scrape has today. |
+| `ttl` | 3 × `interval` | How old a snapshot may be and still be served. Below 2 × `interval` is refused. |
+| `max_snapshot_bytes` | 16 MiB | A larger snapshot is neither written nor served. |
+
+Every scrape also carries `forze_metrics_snapshot_age_seconds{service_instance_id}`, one
+sample per worker it served: how old that worker's numbers are. Query per worker, and sum on
+the query side:
+
+```promql
+sum without (service_instance_id) (rate(forze_operations_total[5m]))
+count(forze_metrics_snapshot_age_seconds)   # workers served; alert when below the count
+```
+
+Prometheus's own `up` stays 1 while one worker is missing, so the `count` is the alert. The
+route answers `503` when it has nothing to serve: no fresh snapshot at all, or only
+snapshots it withholds. It withholds two processes that claim the same `service.instance.id`
+and logs both pids, because serving either would interleave them into one series. That
+happens when `bootstrap_telemetry` runs before the fork, under gunicorn's `--preload`.
+
+What to know before you rely on it:
+
+- **A restart is a new series.** A worker that dies drops out once its snapshot is older
+  than `ttl`, and its replacement comes back under a new `service_instance_id`. That is
+  what keeps `rate()` honest, and it costs one fresh set of series per restart. Worker
+  recycling, such as gunicorn's `--max-requests`, multiplies it. OTLP push pays the same.
+- **One host.** The directory joins the workers of one host. Several replicas are several
+  scrape targets, which Prometheus discovers; across hosts without that, push over OTLP.
+- **The response grows with the workers.** About 1 MB per worker for 200 operation label
+  sets, measured. Raise `scrape_timeout`, or put `GZipMiddleware` in front of the route.
+- **The names differ from the push path's.** The pull path renders suffixed names
+  (`forze_operations_total`, `forze_operation_duration_milliseconds_bucket`), labels the
+  worker `service_instance_id` rather than `instance`, and `job` is your scrape job. The
+  shipped dashboards and alert rules assume the push names above, so they do not apply as
+  they stand.
+- **No exponential histograms.** The exporter does not render them: with
+  `bootstrap_telemetry(exponential_histograms=True)`, the duration histograms are missing
+  from every pull scrape, this mode's included. Keep the default millisecond ladder.
+- **No process collectors.** `process_*` and `python_gc_*` carry no instance label, so the
+  reader's own registry leaves them out.
 
 ## Probes
 
