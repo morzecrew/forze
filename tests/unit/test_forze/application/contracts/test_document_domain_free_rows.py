@@ -10,6 +10,7 @@ under the same frozen clock. Values are compared with their types, so a ``Decima
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -30,12 +31,15 @@ from pydantic import (
     computed_field,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
 from forze.application.contracts.document import codecs, domains_from_create_payloads
 from forze.application.contracts.document.codecs import (
     _create_row_stamps,
+    _same_schema,
+    _same_value,
     rows_from_create_payloads,
 )
 from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
@@ -333,6 +337,19 @@ class _JsonField(CoreModel):
     data: Json[dict[str, int]]
 
 
+class _ComputedInner(BaseModel):
+    a: int
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def double(self) -> int:
+        return self.a * 2
+
+
+class _NestedComputed(CoreModel):
+    child: _ComputedInner | None = None
+
+
 class _IntDefaultCreate(BaseDTO):
     x: float = 1
 
@@ -364,6 +381,7 @@ _REVIEWED: dict[str, tuple[tuple[type[BaseModel], type[BaseModel]], dict[str, An
     "nested exclude": (_pair(_NestedExclude), {"child": {"a": 1, "hidden": 5}}),
     "discriminated union": (_pair(_Tagged), {"pet": _Cat(name="x")}),
     "json field": (_pair(_JsonField), {"data": '{"a": 1}'}),
+    "nested computed field": (_pair(_NestedComputed), {"child": {"a": 2}}),
     "int and float defaults": ((_FloatDefaultDoc, _IntDefaultCreate), {}),
     "int and bool defaults": ((_BoolFlagDoc, _IntFlagCreate), {}),
     "set and frozenset defaults": ((_FrozenDefaultDoc, _SetDefaultCreate), {}),
@@ -401,8 +419,14 @@ def test_a_constructed_payload_missing_a_required_field_builds_the_domain() -> N
 
     domain, create = _pair(_Plain)
     payload = create.model_construct(name="a")
+    claimed = create.model_construct(_fields_set=set(create.model_fields), name="a")
+    valid = create(name="b", qty=1, ratio=0.5, flag=False)
 
     assert rows_from_create_payloads(domain, [payload], [uuid4()], now=_AT) is None
+
+    # Once the pair is confirmed, a ``_fields_set`` that claims the missing field is not believed.
+    assert rows_from_create_payloads(domain, [valid], [uuid4()], now=_AT) is not None
+    assert rows_from_create_payloads(domain, [claimed], [uuid4()], now=_AT) is None
 
     with pytest.raises(ValidationError):
         _domain_rows(domain, [payload], [uuid4()])
@@ -611,3 +635,58 @@ def test_a_payload_the_domain_refuses_decides_nothing() -> None:
 
     assert rows_from_create_payloads(_FieldsDoc, [payload], [uuid4()], now=_AT) is None
     assert (_FieldsDoc, _FieldsCreate) not in codecs._VERDICTS
+
+
+# ....................... #
+
+
+class _SelfReferencingDoc(Document, _Plain):
+    parent: _SelfReferencingDoc | None = None
+
+
+class _SelfReferencingCreate(BaseDTO, _Plain):
+    parent: _SelfReferencingCreate | None = None
+
+
+class _Serialized(CoreModel):
+    name: str
+
+    @model_serializer
+    def _dump(self) -> dict[str, Any]:
+        return {"name": self.name.upper()}
+
+
+class _DrawnRevDoc(Document, _Plain):
+    rev: int = Field(default_factory=lambda: 1)
+
+
+def test_a_model_built_by_reference_or_serializing_itself_builds_the_domain() -> None:
+    assert _create_row_stamps(_SelfReferencingDoc, _SelfReferencingCreate) is None
+    assert _create_row_stamps(*_pair(_Serialized)) is None
+
+
+def test_a_bookkeeping_default_the_rule_cannot_stamp_builds_the_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Were ``Document`` to draw ``rev`` from a factory, the rule would not guess its value."""
+
+    shape = codecs._model_schema(_DrawnRevDoc)
+    assert shape is not None
+
+    bare = {**codecs._bare_document_fields(), "rev": shape[1]["fields"]["rev"]}
+    monkeypatch.setattr(codecs, "_bare_document_fields", lambda: bare)
+
+    assert _create_row_stamps.__wrapped__(_DrawnRevDoc, _pair(_Plain)[1]) is None
+
+
+def test_dumped_values_compare_by_type_and_a_nan_is_itself() -> None:
+    assert not _same_value(1, 1.0)
+    assert _same_value(math.nan, math.nan) and not _same_value(math.nan, 1.0)
+    assert _same_value(Decimal("NaN"), Decimal("NaN"))
+    assert not _same_value(Decimal("NaN"), Decimal(1))
+
+
+def test_schemas_compare_set_defaults_by_element_type() -> None:
+    assert _same_schema({"default": {1, 2}}, {"default": {2, 1}})
+    assert not _same_schema({"default": {1}}, {"default": {True}})
+    assert not _same_schema({"a": 1}, OrderedDict(a=1))

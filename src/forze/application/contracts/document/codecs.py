@@ -193,8 +193,9 @@ def rows_from_create_payloads(
 
     stamps, required = plan
 
-    # A payload built with ``model_construct`` can lack a required field the domain refuses.
-    if any(type(p) is not create or not required <= p.model_fields_set for p in payloads):
+    # A payload built with ``model_construct`` can lack a required field the domain refuses;
+    # its values, not ``model_fields_set`` (which ``_fields_set`` can claim), say what it holds.
+    if any(type(p) is not create or not required <= p.__dict__.keys() for p in payloads):
         return None
 
     fixed = {name: now if value is _NOW else value for name, value in stamps}
@@ -304,9 +305,9 @@ an alias (the dump names the field, validation looks for the alias), an exclusio
 drops it), or a union's discriminator (an unset tag is dropped from the dump the domain path
 validates)."""
 
-_UNSAFE_TYPES = frozenset({"json", "tagged-union"})
+_UNSAFE_TYPES = frozenset({"json", "tagged-union", "computed-field"})
 """Schemas whose Python dump does not validate back: ``Json[T]`` dumps the value it parsed, a
-tagged union needs its tag."""
+tagged union needs its tag, and a nested model's computed field runs code on the dump."""
 
 
 def _plain_schema(node: Any) -> bool:
