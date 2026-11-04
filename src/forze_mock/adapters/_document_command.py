@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -63,6 +63,16 @@ if TYPE_CHECKING:
     from forze_mock.state import MockState
 
 # ----------------------- #
+
+
+def _as_uuids(ids: Iterable[Any]) -> list[UUID]:
+    """*ids* as the real adapter reads them: a ``str`` id as the ``UUID`` it names, a malformed
+    one ``precondition``, so two spellings of one id are one id."""
+
+    return [pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk) for pk in ids]
+
+
+# ....................... #
 
 
 class MockDocumentCommandMixin(Generic[R, D, C, U]):
@@ -727,13 +737,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return None
             return []
 
-        if len({it.id for it in items}) != len(items):
+        ids = _as_uuids(it.id for it in items)
+
+        if len(set(ids)) != len(items):
             raise exc.precondition("ensure_many requires distinct id values in the batch")
 
+        pairs = list(zip(ids, items, strict=True))
+
         if return_new:
-            return [await self.ensure(it.id, it.payload, return_new=True) for it in items]
-        for it in items:
-            await self.ensure(it.id, it.payload, return_new=False)
+            return [await self.ensure(pk, it.payload, return_new=True) for pk, it in pairs]
+        for pk, it in pairs:
+            await self.ensure(pk, it.payload, return_new=False)
         return None
 
     # ....................... #
@@ -849,9 +863,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return None
             return []
 
-        # As the real adapter reads them: a ``str`` id as the ``UUID`` it names, a malformed one
-        # ``precondition``, so two spellings of one id are one id.
-        ids = [it.id if type(it.id) is UUID else QueryValueCaster.as_uuid(it.id) for it in items]
+        ids = _as_uuids(it.id for it in items)
 
         if len(set(ids)) != len(items):
             raise exc.precondition("upsert_many requires distinct id values in the batch")
@@ -1053,9 +1065,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not updates:
             return [] if (return_new or return_diff) else None
 
-        pks = [u.id for u in updates]
+        pks = _as_uuids(u.id for u in updates)
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
+
+        updates = [
+            KeyedUpdate(id=pk, rev=u.rev, dto=u.dto) for pk, u in zip(pks, updates, strict=True)
+        ]
 
         self._check_revisions_first([(u.id, u.rev) for u in updates])
 
@@ -1355,6 +1371,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not pks:
             return [] if return_new else None
 
+        pks = _as_uuids(pks)
+
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 
@@ -1391,6 +1409,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         self.spec.require_hard_delete()
+        pks = _as_uuids(pks)
 
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")

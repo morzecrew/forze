@@ -1,7 +1,7 @@
 """Document command port methods."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Generic, Literal, overload
 from uuid import UUID
 
@@ -37,12 +37,12 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
         )
 
 
-def _uuid_ids(items: Sequence[UpsertItem[Any, Any]]) -> list[UUID]:
-    """Each item's id as a ``UUID``, so the distinctness check, the write and the cache keys
-    see one spelling of it: a ``str`` id, which the type does not allow but a caller can pass,
-    is read as the domain path reads one, and a malformed one is ``precondition``."""
+def _as_uuids(ids: Iterable[Any]) -> list[UUID]:
+    """*ids* as ``UUID``s, so a batch's distinctness check, its write and its cache keys see one
+    spelling of each: a ``str`` id, which the type does not allow but a caller can pass, is read
+    as the domain path reads one, and a malformed one is ``precondition``."""
 
-    return [it.id if type(it.id) is UUID else QueryValueCaster.as_uuid(it.id) for it in items]
+    return [pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk) for pk in ids]
 
 
 def _require_set_based(
@@ -205,7 +205,7 @@ class DocumentCommandMixin(
 
             return []
 
-        ids = [it.id for it in items]
+        ids = _as_uuids(it.id for it in items)
         _require_distinct_ids(ids)
         payloads = [it.payload for it in items]
 
@@ -287,7 +287,7 @@ class DocumentCommandMixin(
                 return None
             return []
 
-        ids = _uuid_ids(items)
+        ids = _as_uuids(it.id for it in items)
         _require_distinct_ids(ids)
         creates = [it.create for it in items]
         updates = [it.update for it in items]
@@ -482,7 +482,7 @@ class DocumentCommandMixin(
 
             return []
 
-        pks = [u.id for u in updates]
+        pks = _as_uuids(u.id for u in updates)
 
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
@@ -755,6 +755,7 @@ class DocumentCommandMixin(
 
             return []
 
+        pks = _as_uuids(pks)
         domains, _ = await asyncio.gather(
             w.touch_many(pks, batch_size=self.eff_batch_size)
             if revs is None
@@ -827,6 +828,7 @@ class DocumentCommandMixin(
         if not pks:
             return
 
+        pks = _as_uuids(pks)
         await asyncio.gather(
             w.kill_many(pks, batch_size=self.eff_batch_size),
             self.document_cache.invalidate_keys_now(*pks),
