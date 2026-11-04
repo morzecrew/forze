@@ -1022,3 +1022,22 @@ async def test_a_scrape_right_after_a_write_reads_the_snapshot_fresh(
     monkeypatch.setattr(snapshots_module, "_clocks", lambda: (1000.0007, 50.0007))
 
     assert snapshots.union()[0] == 200
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_label_value_holding_a_line_separator_keeps_its_family(
+    tmp_path: Path, provider: tuple[MeterProvider, PrometheusMetricReader]
+) -> None:
+    meter_provider, reader = provider
+    # The text format escapes only backslash, quote and LF in a label value.
+    meter_provider.get_meter("forze").create_counter("forze.test.hits").add(
+        1, {"note": "a\u2028b\x85c\rd"}
+    )
+    directory = tmp_path / "snaps"
+
+    async with build_runtime(lifecycle_steps=_snapshots(directory).writer_step(reader)).scope():
+        (written,) = directory.glob("*.prom")
+        assert "forze_test_hits_total" in written.read_text()

@@ -350,7 +350,9 @@ def _instance_of(family: _Family) -> str | None:
 
     found: str | None = None
 
-    for line in family.samples.splitlines():
+    # LF only: the text format leaves CR, NEL and U+2028 raw inside a label value, and
+    # ``splitlines()`` would cut a sample there.
+    for line in family.samples.rstrip("\n").split("\n"):
         match = _INSTANCE_LABEL.search(line)
 
         if match is None or (found is not None and match.group(1) != found):
