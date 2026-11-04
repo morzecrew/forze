@@ -1070,3 +1070,32 @@ def test_a_snapshot_that_fails_to_read_does_not_fail_the_scrape(
 
     assert status == 200
     assert len(_served(body)) == 1, "the unreadable snapshot is skipped, the other served"
+
+
+# ....................... #
+
+
+def test_a_snapshot_rewritten_during_a_scrape_is_still_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from forze_fastapi.routes import _snapshots as module
+
+    path = _write(tmp_path, "w-0", wall=1000.0, mono=500.0)
+    readings: list[int] = []
+
+    def clocks() -> tuple[float, float]:
+        readings.append(1)
+
+        if len(readings) == 1:
+            # The worker rewrites its snapshot just after this reading.
+            _write(tmp_path, "w-0", wall=1000.002, mono=500.002, header=None)
+            path.unlink()
+
+        return 1000.003 if len(readings) > 1 else 1000.0, 500.003 if len(readings) > 1 else 500.0
+
+    monkeypatch.setattr(module, "_clocks", clocks)
+
+    status, body = _snapshots(tmp_path).union()
+
+    assert status == 200
+    assert _served(body) == {"w-0"}

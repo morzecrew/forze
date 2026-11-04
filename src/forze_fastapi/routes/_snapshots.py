@@ -667,8 +667,7 @@ class MetricsSnapshots:
 
             return 503, b"no metrics snapshot directory\n"
 
-        wall, mono = _clocks()
-        served = self._without_shared_instances(list(self._read_fresh(dfd, wall, mono)))
+        served = self._without_shared_instances(list(self._read_fresh(dfd)))
 
         if not served:
             return 503, b"no fresh metrics snapshot\n"
@@ -688,7 +687,7 @@ class MetricsSnapshots:
 
     # ....................... #
 
-    def _read_fresh(self, dfd: int, wall: float, mono: float) -> Iterator[_Snapshot]:
+    def _read_fresh(self, dfd: int) -> Iterator[_Snapshot]:
         try:
             names = os.listdir(dfd)
 
@@ -703,7 +702,7 @@ class MetricsSnapshots:
                 continue
 
             try:
-                snapshot = self._read_one(dfd, name, wall, mono)
+                snapshot = self._read_one(dfd, name)
 
             except OSError as error:
                 # One unreadable file must not cost the scrape every other worker's series.
@@ -715,7 +714,7 @@ class MetricsSnapshots:
 
     # ....................... #
 
-    def _read_one(self, dfd: int, name: str, wall: float, mono: float) -> _Snapshot | None:
+    def _read_one(self, dfd: int, name: str) -> _Snapshot | None:
         try:
             fd = os.open(name, _OPEN_SNAPSHOT, dir_fd=dfd)
 
@@ -749,6 +748,9 @@ class MetricsSnapshots:
                 self._skip(name, "no snapshot header", version=info.st_mtime_ns)
                 return None
 
+            # Read after the header, never before: a snapshot replaced since an earlier
+            # reading would carry a later stamp and look negative-aged.
+            wall, mono = _clocks()
             age = header.fresh_age(wall, mono, self.ttl.total_seconds())
 
             if age is None:
