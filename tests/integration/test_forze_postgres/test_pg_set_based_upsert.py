@@ -214,6 +214,75 @@ async def test_a_row_stored_after_the_look_up_is_patched_not_lost(
     assert len(look_ups) == 2 and "FOR NO KEY UPDATE" in look_ups[1]
 
 
+async def test_str_ids_write_what_uuid_ids_write(
+    pg_client: PostgresClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The id arrays go in binary; an id passed as a ``str`` is read as the ``UUID`` it names,
+    stored and patched alike."""
+
+    tables, ids = [], [uuid4() for _ in range(4)]
+    fetch_all = pg_client.fetch_all
+    statements: list[str] = []
+
+    async def spy(query: Any, params: Any = None, **kwargs: Any) -> Any:
+        statements.append(query if isinstance(query, str) else query.as_string(None))
+
+        return await fetch_all(query, params, **kwargs)
+
+    monkeypatch.setattr(pg_client, "fetch_all", spy)
+
+    for as_id in (lambda pk: pk, str):
+        t = await _table(pg_client)
+        tables.append(t)
+        cmd = document_context(pg_client, t).document.command(_SPEC)
+        await cmd.upsert_many([_item(pk, "stored", 1) for pk in ids[:2]], return_new=False)
+
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 2, tzinfo=UTC))):
+            await cmd.upsert_many(
+                [
+                    UpsertItem(id=as_id(pk), create=item.create, update=item.update)  # type: ignore[arg-type]
+                    for pk in ids
+                    for item in [_item(pk, "new", 2, {"name": "patched"})]
+                ],
+                return_new=False,
+                set_based=True,
+            )
+
+    monkeypatch.undo()
+    sql = "SELECT id, name, qty, rev, last_update_at FROM {} ORDER BY id"
+    by_uuid, by_str = [await pg_client.fetch_all(sql.format(t), []) for t in tables]
+
+    assert by_str == by_uuid
+    assert [(row["name"], row["rev"]) for row in by_uuid if row["id"] in ids[:2]] == [
+        ("patched", 2),
+        ("patched", 2),
+    ]
+    assert any("= ANY(%b::uuid[])" in s for s in statements)
+    assert any("unnest(%b::uuid[])" in s for s in statements)
+
+
+# The domain path dumps the id it was handed before refusing it.
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings")
+@pytest.mark.parametrize("set_based", [False, True])
+async def test_a_malformed_str_id_is_refused_as_on_the_domain_path(
+    pg_client: PostgresClient, set_based: bool
+) -> None:
+    t = await _table(pg_client)
+    cmd = document_context(pg_client, t).document.command(_SPEC)
+    item = _item(uuid4(), "n", 1)
+
+    with pytest.raises(CoreException) as refused:
+        await cmd.upsert_many(
+            [UpsertItem(id="not-a-uuid", create=item.create, update=item.update)],  # type: ignore[arg-type]
+            return_new=False,
+            set_based=set_based,
+        )
+
+    assert refused.value.kind == "precondition"
+    assert "Invalid UUID value" in str(refused.value)
+    assert await pg_client.fetch_all(f"SELECT id FROM {t}", []) == []
+
+
 @pytest.mark.parametrize("field", ["name", "ref"])
 async def test_a_null_the_domain_refuses_is_refused_set_based_too(
     pg_client: PostgresClient, field: str
