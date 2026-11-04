@@ -106,7 +106,7 @@ from forze_mock.query.matching import (
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
-from ._document_command import MockDocumentCommandMixin
+from ._document_command import MockDocumentCommandMixin, as_uuid_pk, as_uuid_pks
 
 # ----------------------- #
 
@@ -747,6 +747,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         skip_cache: bool = False,
     ) -> R:
         del skip_cache
+        pk = as_uuid_pk(pk)
 
         if owned_by is not None:
             owned_by.check(self.spec)
@@ -795,6 +796,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Sequence[R]:
+        pks = as_uuid_pks(pks)
+
         if owned_by is None:
             return await self._get_many(pks, skip_cache=skip_cache)
 

@@ -4,7 +4,7 @@ id are one id, and the cache entry a non-canonical spelling names is the one dro
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -224,6 +224,48 @@ async def test_a_malformed_str_pk_is_refused_by_a_single_id_command(
 
     with pytest.raises(CoreException) as refused:
         await command(cmd, "not-a-uuid")
+
+    assert refused.value.kind == "precondition"
+    assert "Invalid UUID value" in str(refused.value)
+
+
+# ....................... #
+# Reads
+
+
+async def _name(query: Any, pk: Any, *, many: bool) -> str:
+    if many:
+        (doc,) = await query.get_many([pk])
+        return cast(str, doc.name)
+
+    return cast(str, (await query.get(pk)).name)
+
+
+@pytest.mark.parametrize("many", [False, True], ids=["get", "get_many"])
+async def test_a_read_by_a_non_canonical_str_pk_sees_the_latest_write(
+    pg_client: PostgresClient, many: bool
+) -> None:
+    """Read through the cache under another spelling, then written under the canonical one:
+    the next read under that spelling must not find what the first read cached."""
+
+    cmd, query, pk, _ = await _stored(pg_client)
+    spelled = pk.hex.upper()
+    assert await _name(query, spelled, many=many) == "stored"
+
+    await cmd.update(pk, 1, _Update(name="patched"), return_new=False)
+
+    assert await _name(query, spelled, many=many) == "patched"
+    assert await _name(query, pk, many=many) == "patched"
+
+
+@pytest.mark.parametrize("many", [False, True], ids=["get", "get_many"])
+async def test_a_read_by_a_malformed_str_pk_is_refused(
+    pg_client: PostgresClient, many: bool
+) -> None:
+    _, query, _, _ = await _stored(pg_client)
+
+    with pytest.raises(CoreException) as refused:
+        await _name(query, "not-a-uuid", many=many)
 
     assert refused.value.kind == "precondition"
     assert "Invalid UUID value" in str(refused.value)

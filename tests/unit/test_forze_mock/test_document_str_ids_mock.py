@@ -108,3 +108,19 @@ async def test_a_str_pk_names_the_stored_row_in_a_single_id_command(
         await command(doc, "not-a-uuid")
 
     assert refused.value.kind == "precondition"
+
+
+@pytest.mark.asyncio
+async def test_a_read_by_a_str_pk_finds_the_row_it_names() -> None:
+    doc = _mock()
+    pk = uuid4()
+    await doc.create(_Create(name="a"), id=pk)
+
+    assert (await doc.get(pk.hex.upper())).id == pk
+    assert [r.id for r in await doc.get_many([pk.hex.upper(), str(pk)])] == [pk, pk]
+
+    for read in (lambda: doc.get("not-a-uuid"), lambda: doc.get_many(["not-a-uuid"])):
+        with pytest.raises(CoreException) as refused:
+            await read()
+
+        assert refused.value.kind == "precondition"
