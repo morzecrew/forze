@@ -2,13 +2,14 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
 from pydantic import (
     AfterValidator,
+    BaseModel,
     Field,
     ValidationError,
     PlainSerializer,
@@ -32,7 +33,7 @@ from forze.application.contracts.guarantees import (
     implied_guarantees_of,
     validate_storage_guarantees,
 )
-from forze.application.contracts.document.specs import serialization_keys
+from forze.application.contracts.document.specs import _stored_as, serialization_keys
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import advisory_lock_key
 from forze.domain.models import Document
@@ -468,6 +469,22 @@ class TestTheKeysAHoldTakes:
                 scope="g",
                 tenant=None,
             )
+
+    @pytest.mark.filterwarnings("error::pydantic.warnings.UnsupportedFieldAttributeWarning")
+    def test_a_field_s_discriminator_still_picks_the_member(self) -> None:
+        class Cat(BaseModel):
+            kind: Literal["cat"] = "cat"
+
+        class Dog(BaseModel):
+            kind: Literal["dog"] = "dog"
+
+        class Pets(Document):
+            pet: Cat | Dog = Field(discriminator="kind", frozen=True)
+
+        adapter = _stored_as(Pets, "pet")
+
+        assert adapter.core_schema["type"] == "tagged-union"
+        assert isinstance(adapter.validate_python({"kind": "dog"}), Dog)
 
     def test_a_store_keys_the_validated_value_as_it_keeps_it(self) -> None:
         # A store that rounds or pads hands its own form back, after the type check.
