@@ -8,7 +8,7 @@ from typing import Annotated, Any, Generic, TypeAliasType, TypeVar, Union, get_a
 from uuid import UUID
 
 import attrs
-from pydantic import BaseModel, PlainSerializer, TypeAdapter, WrapSerializer
+from pydantic import BaseModel, Field, PlainSerializer, TypeAdapter, WrapSerializer
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
@@ -360,8 +360,15 @@ def require_hold_in_transaction(in_transaction: bool) -> None:
 @functools.cache
 def _stored_as(domain: type[Document], field: str) -> TypeAdapter[Any]:
     info = domain.model_fields[field]
-    # With the field's own constraints and the model's config, as the model applies them.
-    form: Any = Annotated[info.annotation, info]  # type: ignore[name-defined]
+    # With the field's own constraints and the model's config, as the model applies them; not
+    # the whole ``FieldInfo``, whose model-only attributes (``frozen``, ``alias``) mean
+    # nothing on a bare ``TypeAdapter`` and make pydantic warn.
+    constraints = [*info.metadata]
+
+    if info.discriminator is not None:
+        constraints.append(Field(discriminator=info.discriminator))
+
+    form: Any = Annotated[info.annotation, *constraints] if constraints else info.annotation
 
     return TypeAdapter(form, config=domain.model_config)
 

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **`hold()` no longer warns `UnsupportedFieldAttributeWarning` for a `SerializedBy` key field declared with `frozen=True` or an alias.** The key is validated with the field's constraints and `Annotated` validators only, as before.
 
 ## [0.22.0] - 2026-11-04
 
