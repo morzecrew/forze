@@ -702,7 +702,13 @@ class MetricsSnapshots:
             if _SNAPSHOT_NAME.fullmatch(name) is None:
                 continue
 
-            snapshot = self._read_one(dfd, name, wall, mono)
+            try:
+                snapshot = self._read_one(dfd, name, wall, mono)
+
+            except OSError as error:
+                # One unreadable file must not cost the scrape every other worker's series.
+                self._skip(name, f"unreadable ({type(error).__name__})")
+                continue
 
             if snapshot is not None:
                 yield snapshot

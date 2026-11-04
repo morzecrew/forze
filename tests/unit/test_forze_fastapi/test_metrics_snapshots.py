@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import gc
 import os
 import stat
@@ -1041,3 +1042,31 @@ async def test_a_label_value_holding_a_line_separator_keeps_its_family(
     async with build_runtime(lifecycle_steps=_snapshots(directory).writer_step(reader)).scope():
         (written,) = directory.glob("*.prom")
         assert "forze_test_hits_total" in written.read_text()
+
+
+# ....................... #
+
+
+def test_a_snapshot_that_fails_to_read_does_not_fail_the_scrape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, "w-0", pid=100)
+    _write(tmp_path, "w-1", pid=101)
+    snapshots = _snapshots(tmp_path)
+    assert snapshots.union()[0] == 200  # the directory is now held open
+    real_fstat = os.fstat
+    failed: list[int] = []
+
+    def fstat(fd: int) -> os.stat_result:
+        if not failed:
+            failed.append(fd)
+            raise OSError(errno.EIO, "Input/output error")
+
+        return real_fstat(fd)
+
+    monkeypatch.setattr(os, "fstat", fstat)
+
+    status, body = snapshots.union()
+
+    assert status == 200
+    assert len(_served(body)) == 1, "the unreadable snapshot is skipped, the other served"
