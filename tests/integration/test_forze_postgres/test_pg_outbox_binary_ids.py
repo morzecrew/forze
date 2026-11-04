@@ -23,34 +23,53 @@ from tests.integration.test_forze_postgres.test_pg_outbox_integration import (
     _OutboxPayload,
     outbox_table,  # noqa: F401 - the fixture
 )
+from tests.support.outbox_id_spellings import SPELLINGS, check_outbox_id_spellings
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
-
-@pytest.mark.parametrize(
-    "spell", [lambda pk: pk, str, lambda pk: pk.hex.upper()], ids=["uuid", "text", "upper"]
+_SPEC = OutboxSpec(
+    name="integration",
+    codec=PydanticModelCodec(_OutboxPayload),
+    destination=OutboxDestination.queue(route="relay", channel="relay"),
 )
+
+
+def _runtime(pg_client: PostgresClient, table: str) -> ExecutionRuntime:
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={"integration": PostgresOutboxConfig(relation=("public", table))},
+    )
+
+    return ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module)
+        .with_modules(_mock_fallback(MockState()))
+        .freeze(),
+    )
+
+
+@pytest.mark.parametrize("spell", SPELLINGS)
+async def test_outbox_ids_conform(
+    pg_client: PostgresClient,
+    outbox_table: str,  # noqa: F811 - the fixture
+    spell: Any,
+) -> None:
+    runtime = _runtime(pg_client, outbox_table)
+
+    async with runtime.scope():
+        await check_outbox_id_spellings(
+            runtime.get_context(), _SPEC, _OutboxPayload(label="row"), spell
+        )
+
+
+@pytest.mark.parametrize("spell", SPELLINGS)
 async def test_outbox_marks_and_requeues_by_an_id_or_its_text(
     pg_client: PostgresClient,
     outbox_table: str,  # noqa: F811 - the fixture
     monkeypatch: pytest.MonkeyPatch,
     spell: Any,
 ) -> None:
-    outbox_spec = OutboxSpec(
-        name="integration",
-        codec=PydanticModelCodec(_OutboxPayload),
-        destination=OutboxDestination.queue(route="relay", channel="relay"),
-    )
-    pg_module = PostgresDepsModule(
-        client=pg_client,
-        tx={"default"},
-        outboxes={"integration": PostgresOutboxConfig(relation=("public", outbox_table))},
-    )
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(pg_module)
-        .with_modules(_mock_fallback(MockState()))
-        .freeze(),
-    )
+    outbox_spec, runtime = _SPEC, _runtime(pg_client, outbox_table)
     failed_id, processing_id = uuid4(), uuid4()
 
     for row_id, status in (

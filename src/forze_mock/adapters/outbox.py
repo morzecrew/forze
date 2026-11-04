@@ -21,6 +21,7 @@ from forze.application.contracts.outbox import (
     StagedOutboxEntry,
 )
 from forze.base.primitives import utcnow, uuid7
+from forze_mock.adapters._document_command import as_uuid_pks
 from forze_mock.adapters._journal import record_undo
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
@@ -230,7 +231,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort, OutboxAdm
         if not ids:
             return 0
 
-        id_set = set(ids)
+        id_set = set(as_uuid_pks(ids))
         route = self._route()
         updated = 0
 
@@ -279,7 +280,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort, OutboxAdm
         if not ids:
             return 0
 
-        id_set = set(ids)
+        id_set = set(as_uuid_pks(ids))
         route = self._route()
         updated = 0
 
@@ -312,7 +313,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort, OutboxAdm
         if not ids:
             return 0
 
-        id_set = set(ids)
+        id_set = set(as_uuid_pks(ids))
         route = self._route()
         updated = 0
         now = utcnow()

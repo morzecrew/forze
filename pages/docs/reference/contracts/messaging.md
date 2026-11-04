@@ -77,6 +77,9 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 | `reclaim_stale_processing` | `reclaim_stale_processing(*, older_than)` | reset stuck rows to pending |
 | `requeue_failed` | `requeue_failed(ids)` | re-drive failed rows; resets `attempts` to 0 |
 
+Every backend reads `ids` as `UUID`s: a `str` in any spelling names its row, even in a list
+mixed with `UUID`s, and a malformed one is `precondition`.
+
 (Most apps use the `bind_outbox` kit rather than these directly.)
 Delivery is at-least-once and ordering is not guaranteed across
 failures/retries — a retrying row never stalls later rows of its
