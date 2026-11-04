@@ -39,6 +39,7 @@ from forze_mock.execution.module import MockDepsModule
 from forze_mongo.execution.deps import MongoDepsModule
 from forze_mongo.execution.deps.configs import MongoOutboxConfig
 from forze_mongo.kernel.client import MongoClient
+from tests.support.outbox_id_spellings import SPELLINGS, check_outbox_id_spellings
 
 
 class _OutboxPayload(BaseModel):
@@ -666,6 +667,22 @@ def _outbox_doc(row_id: Any, **overrides: Any) -> dict[str, Any]:
     }
     doc.update(overrides)
     return doc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spell", SPELLINGS)
+async def test_mongo_outbox_ids_conform(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+    spell: Any,
+) -> None:
+    outbox_spec = OutboxSpec(name="integration", codec=PydanticModelCodec(_OutboxPayload))
+    runtime = _mongo_runtime(mongo_client_replica, outbox_collection)
+
+    async with runtime.scope():
+        await check_outbox_id_spellings(
+            runtime.get_context(), outbox_spec, _OutboxPayload(label="row"), spell
+        )
 
 
 @pytest.mark.asyncio

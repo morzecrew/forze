@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Document commands, `get` and `get_many` read a `str` id as the `UUID` it names; a malformed one is `precondition`** (**behaviour change**). A non-canonical id no longer leaves a stale cached document, two spellings in a batch count as one, and set-based `upsert_many` no longer raises `AttributeError` (since 0.20).
 
+- **The mock and MongoDB outboxes read a row id as Postgres does** (**behaviour change**): any spelling of it, in a list that may mix `UUID` and `str`, names its row, and a malformed one is `precondition`. The mock matched only `UUID`s and MongoDB only canonical text; both skipped a malformed id.
+
 ### Security
 
 - **A tenant-scoped Postgres read searches its schema and `public` before temporary tables.** A temporary table left on a pooled connection could otherwise stand in for the tenant's table.

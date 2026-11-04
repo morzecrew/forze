@@ -27,6 +27,7 @@ from forze.application.contracts.outbox import (
     OutboxStatus,
     StagedOutboxEntry,
 )
+from forze.application.contracts.querying import QueryValueCaster
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import HlcTimestamp, JsonDict, utcnow, uuid4, uuid7
@@ -42,6 +43,13 @@ def _as_uuid(value: Any) -> UUID:
         return value
 
     return UUID(str(value))
+
+
+def _as_texts(ids: Sequence[UUID]) -> list[str]:
+    """*ids* as the canonical text a row's ``id`` holds, so any spelling of one, in a list that
+    may mix ``UUID`` and ``str``, names its row; a malformed ``str`` is ``precondition``."""
+
+    return [str(QueryValueCaster.as_uuid(pk)) for pk in ids]
 
 
 # ....................... #
@@ -299,7 +307,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminP
         return await self.client.update_many(
             coll,
             {
-                "id": {"$in": [str(i) for i in ids]},
+                "id": {"$in": _as_texts(ids)},
                 "status": OutboxStatus.PROCESSING.value,
             },
             {"$set": update},
@@ -320,7 +328,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminP
         return await self.client.update_many(
             coll,
             {
-                "id": {"$in": [str(i) for i in ids]},
+                "id": {"$in": _as_texts(ids)},
                 "status": OutboxStatus.PROCESSING.value,
             },
             {
@@ -363,7 +371,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminP
         return await self.client.update_many(
             coll,
             {
-                "id": {"$in": [str(i) for i in ids]},
+                "id": {"$in": _as_texts(ids)},
                 "status": OutboxStatus.FAILED.value,
             },
             {
