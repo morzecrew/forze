@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 
 import pytest
-
-pytest.importorskip("typer")
-pytest.importorskip("httpx")
-
 from typer.testing import CliRunner
 
 from forze_cli.app import app
@@ -109,6 +106,43 @@ class TestRun:
         assert result.exit_code == 2
         assert "closed" in result.output
 
+    def test_a_ramp_that_stops_is_a_result_and_exits_0(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:failing_plan",
+                "--steps",
+                "1,2",
+                "--step-s",
+                "0.2",
+                "--warm-s",
+                "0",
+                "--out",
+                str(tmp_path / "f.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "stopped:" in result.output
+
+    def test_a_sign_in_transport_error_exits_2(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("FORZE_LOAD_TEST_PASSWORD", secrets.token_hex(8))
+
+        result = runner.invoke(
+            app, ["load", "run", f"{_PLANS}:login_plan", "--out", str(tmp_path / "l.jsonl")]
+        )
+
+        assert result.exit_code == 2
+        assert "transport error" in result.output
+
+    def test_fractional_closed_steps_are_a_usage_error(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:plan", "--steps", "1,2.5"])
+
+        assert result.exit_code == 2
+        assert "whole worker counts" in result.output
+
     def test_bad_steps_are_a_usage_error(self) -> None:
         result = runner.invoke(app, ["load", "run", f"{_PLANS}:plan", "--steps", "1,x"])
 
@@ -135,6 +169,23 @@ class TestCompare:
 
         assert result.exit_code == 1
         assert "FAIL workers=1: goodput worse by 50.0%" in result.output
+
+    @pytest.mark.parametrize("content", [None, "{broken\n", "[1]\n"])
+    def test_an_unreadable_run_file_exits_2_never_1(
+        self, tmp_path: Path, content: str | None
+    ) -> None:
+        base = _write_run(tmp_path / "base.jsonl", 100)
+        head = tmp_path / "head.jsonl"
+
+        if content is not None:
+            head.write_text(content)
+
+        result = runner.invoke(
+            app, ["load", "compare", str(base), str(head), "--fail-on", "goodput:10%"]
+        )
+
+        assert result.exit_code == 2
+        assert "refused" in result.output
 
     def test_a_bad_threshold_exits_2(self, tmp_path: Path) -> None:
         base = _write_run(tmp_path / "base.jsonl", 100)

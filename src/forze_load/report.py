@@ -26,7 +26,7 @@ SCHEMA = 1
 
 _LOWER_IS_WORSE = frozenset({"goodput"})
 _METRICS: tuple[str, ...] = ("goodput", "p50", "p95", "p99")
-_META_KEYS: tuple[str, ...] = ("target", "model", "plan", "client")
+_META_KEYS: tuple[str, ...] = ("target", "model", "client")
 
 
 # ....................... #
@@ -77,18 +77,23 @@ class RunFile:
 def read_run(path: str | Path) -> RunFile:
     """Read a run file written by :func:`forze_load.run`.
 
-    :raises CoreException: ``configuration`` (``load_run_file_invalid``) — no ``meta`` line,
-        or a schema this version does not read.
+    :raises CoreException: ``configuration`` (``load_run_file_invalid``) — the file cannot
+        be read, a line is not a JSON object, there is no ``meta`` line, the schema is one
+        this version does not read, or a step row lacks its key, goodput or latency.
     """
 
-    records = [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        records = [json.loads(line) for line in lines if line.strip()]
+
+    except (OSError, ValueError) as error:
+        raise _invalid(f"{path} cannot be read as a run file ({type(error).__name__})") from error
+
+    if not all(isinstance(record, dict) for record in records):
+        raise _invalid(f"{path} has a line that is not a JSON object")
 
     if not records or records[0].get("kind") != "meta":
-        raise exc.configuration(f"{path} is not a run file", code="load_run_file_invalid")
+        raise _invalid(f"{path} is not a run file")
 
     meta = records[0]
 
@@ -99,9 +104,25 @@ def read_run(path: str | Path) -> RunFile:
         )
 
     rows = [record for record in records if record.get("kind") == "step"]
+
+    if not all(_is_step(row) for row in rows):
+        raise _invalid(f"{path} has a step row without its key, goodput or latency")
+
     summary = next((record for record in records if record.get("kind") == "summary"), None)
 
     return RunFile(meta=meta, rows=rows, summary=summary)
+
+
+def _is_step(row: Mapping[str, Any]) -> bool:
+    return (
+        ("workers" in row or "rate" in row)
+        and isinstance(row.get("goodput_rps"), int | float)
+        and isinstance(row.get("ms"), dict)
+    )
+
+
+def _invalid(summary: str) -> Exception:
+    return exc.configuration(summary, code="load_run_file_invalid")
 
 
 # ....................... #
@@ -163,6 +184,18 @@ def compare_runs(
         for key in _META_KEYS
         if base.meta.get(key) != head.meta.get(key)
     ]
+    base_plan, head_plan = base.meta.get("plan") or {}, head.meta.get("plan") or {}
+    warnings.extend(
+        f"runs differ in principal {label}: a different mix is a different workload"
+        for key, label in (("principals", "weights"), ("mixes", "mixes"))
+        if base_plan.get(key) != head_plan.get(key)
+    )
+    other = ("principals", "mixes")
+
+    if {k: v for k, v in base_plan.items() if k not in other} != {
+        k: v for k, v in head_plan.items() if k not in other
+    }:
+        warnings.append("runs differ in plan (scenarios, timeout or seed): comparing anyway")
     base_rows = {_row_key(row): row for row in base.rows}
     head_rows = {_row_key(row): row for row in head.rows}
     lines: list[str] = []

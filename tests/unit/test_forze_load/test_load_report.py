@@ -55,6 +55,32 @@ class TestReadRun:
         with pytest.raises(CoreException, match="schema 99"):
             read_run(path)
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "{not json\n",
+            json.dumps({"kind": "meta", "schema": SCHEMA}) + "\n[1, 2]\n",
+            json.dumps({"kind": "meta", "schema": SCHEMA})
+            + "\n"
+            + json.dumps({"kind": "step", "workers": 1})
+            + "\n",
+        ],
+    )
+    def test_it_refuses_malformed_lines(self, tmp_path: Path, content: str) -> None:
+        path = tmp_path / "x.jsonl"
+        path.write_text(content)
+
+        with pytest.raises(CoreException) as error:
+            read_run(path)
+
+        assert error.value.code == "load_run_file_invalid"
+
+    def test_it_refuses_a_missing_file(self, tmp_path: Path) -> None:
+        with pytest.raises(CoreException) as error:
+            read_run(tmp_path / "absent.jsonl")
+
+        assert error.value.code == "load_run_file_invalid"
+
     def test_an_interrupted_run_has_no_summary(self, tmp_path: Path) -> None:
         path = tmp_path / "x.jsonl"
         lines = [{"kind": "meta", "schema": SCHEMA}, _row(1, 10, 5)]
@@ -111,6 +137,19 @@ class TestCompare:
         assert "runs differ in target: comparing anyway" in comparison.warnings
         assert "workers=2: only in one run" in comparison.warnings
         assert "workers=4: only in one run" in comparison.warnings
+
+    def test_different_weights_or_mixes_are_warned(self) -> None:
+        base, head = _run(_row(1, 10, 5)), _run(_row(1, 10, 5))
+        base.meta["plan"] = {"principals": {"a": 1}, "mixes": {"a": {"x": 1}}, "seed": 0}
+        head.meta["plan"] = {"principals": {"a": 2}, "mixes": {"a": {"x": 1, "y": 1}}, "seed": 1}
+
+        warnings = compare_runs(base, head).warnings
+
+        assert (
+            "runs differ in principal weights: a different mix is a different workload" in warnings
+        )
+        assert "runs differ in principal mixes: a different mix is a different workload" in warnings
+        assert "runs differ in plan (scenarios, timeout or seed): comparing anyway" in warnings
 
     def test_missing_latency_compares_as_unknown(self) -> None:
         row = _row(1, 0, 5)

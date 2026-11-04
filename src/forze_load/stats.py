@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -26,7 +28,11 @@ OUTCOMES: tuple[str, ...] = (
 """Every outcome class, in output order. Goodput counts ``ok`` only."""
 
 ERROR_OUTCOMES = frozenset({"server_error", "deadline", "transport"})
-"""Outcomes the stop rule counts as errors: 5xx, a 504 deadline, and transport failures."""
+"""Outcomes the stop rule counts as errors: 5xx, a 504 deadline, and transport failures
+(a send refused at the open model's in-flight cap included)."""
+
+EXPECTED_OUTCOMES = frozenset({"conflict", "not_found"})
+"""Answers a healthy server gives a write or id mix; the open-model knee discounts them."""
 
 MISCONFIGURED_OUTCOMES = frozenset({"forbidden", "client_error"})
 """Outcomes that mark a step misconfigured past :data:`MISCONFIGURED_SHARE`."""
@@ -37,6 +43,9 @@ a mix that answers 403 quickly looks like excellent throughput and is not a meas
 
 KNEE_GAIN = 0.05
 """A closed-model step under this gain over the previous step's goodput has stopped rising."""
+
+KNEE_MIN_SAMPLES = 100
+"""Answered calls a step needs before its p99 is compared: below 100, p99 is the maximum."""
 
 _QUANTILES: tuple[tuple[str, float], ...] = (
     ("p50", 0.5),
@@ -84,7 +93,7 @@ class _Series:
         self.outcomes[outcome] += 1
 
         if latency_ms is not None:
-            self.sketch.observe(latency_ms)
+            self.sketch.observe(max(latency_ms, 0.0))
             self.max_ms = max(self.max_ms, latency_ms)
 
     def latency(self) -> dict[str, float | None]:
@@ -98,23 +107,66 @@ class _Series:
 
 @attrs.define
 class StepRecorder:
-    """One step's measurements: latency per scenario and in total, and outcome counts."""
+    """One step's measurements, bound to each call when it is sent.
+
+    A call sent during the step's measured window records here even when it answers after
+    the step ended, so a slow answer counts in the step that sent it. :meth:`drain` waits
+    for those calls before the row is written.
+    """
+
+    warm_until: float
+    """``perf_counter`` time when the step's measured window opens."""
 
     total: _Series = attrs.field(factory=_Series)
     scenarios: dict[str, _Series] = attrs.field(factory=lambda: dict[str, _Series]())
     scheduled: int = 0
     behind: int = 0
+    auth_s: float = 0.0
+    auth_max_s: float = 0.0
+    inflight: int = 0
+    _closed: bool = False
+    _drained: asyncio.Event = attrs.field(factory=asyncio.Event)
 
     # ....................... #
 
+    def enter(self) -> None:
+        """A measured call was sent."""
+
+        self.inflight += 1
+
+    def leave(self) -> None:
+        """A measured call finished."""
+
+        self.inflight -= 1
+
+        if self._closed and self.inflight == 0:
+            self._drained.set()
+
+    async def drain(self, timeout: float) -> None:
+        """Wait up to *timeout* seconds for the calls this step sent to finish."""
+
+        self._closed = True
+
+        if self.inflight == 0:
+            return
+
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._drained.wait(), timeout=timeout)
+
     def record(self, scenario: str, outcome: str, latency_ms: float | None) -> None:
-        """Count one call. *latency_ms* is ``None`` for a send refused before it left."""
+        """Count one call. *latency_ms* is ``None`` for a call that got no answer."""
 
         self.total.add(outcome, latency_ms)
         self.scenarios.setdefault(scenario, _Series()).add(outcome, latency_ms)
 
+    def add_auth(self, seconds: float) -> None:
+        """Count time spent resolving a call's credential, kept out of its latency."""
+
+        self.auth_s += seconds
+        self.auth_max_s = max(self.auth_max_s, seconds)
+
     def summary(self, measured_s: float) -> dict[str, Any]:
-        """The step's numbers as the output records them."""
+        """The step's numbers as the output records them, over *measured_s* seconds."""
 
         calls = sum(self.total.outcomes.values())
         ok = self.total.outcomes["ok"]
@@ -123,11 +175,13 @@ class StepRecorder:
         return {
             "duration_s": round(measured_s, 3),
             "calls": calls,
-            "goodput_rps": _rate(ok, measured_s),
-            "answered_rps": _rate(calls - self.total.outcomes["transport"], measured_s),
+            "goodput_rps": round(ok / measured_s, 2) if measured_s > 0 else 0.0,
+            "sampled": self.total.sketch.count,
             "ms": self.total.latency(),
             "outcomes": {name: self.total.outcomes[name] for name in OUTCOMES},
             "misconfigured": calls > 0 and misconfigured > MISCONFIGURED_SHARE * calls,
+            "unfinished": self.inflight,
+            "auth": {"total_s": round(self.auth_s, 3), "max_ms": round(self.auth_max_s * 1000, 2)},
             "scenarios": {
                 name: {
                     "calls": sum(series.outcomes.values()),
@@ -158,74 +212,116 @@ def find_knee(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any
 
     Closed model: the first step whose goodput is under :data:`KNEE_GAIN` above the previous
     step's, confirmed by the next step (also under the gain over the same previous step).
-    Open model: the first rate whose p99 more than doubles over the previous rate's, or whose
-    answered rate falls more than :data:`KNEE_GAIN` below the offered rate.
+    Open model: the first rate whose p99 more than doubles over the previous rate's,
+    confirmed by the next rate, each with at least :data:`KNEE_MIN_SAMPLES` answered calls;
+    or whose goodput falls more than :data:`KNEE_GAIN` below the offered rate less its
+    ``conflict`` and ``not_found`` answers.
 
-    A step whose client was saturated, or that was misconfigured, is never named; the search
-    stops there, because nothing after it measures the server.
+    A step whose client was saturated, or that was misconfigured, is never named and never
+    confirms a knee; the search stops there, because nothing after it measures the server.
 
     :returns: ``{"knee": <row key> | None, "confirmed": bool, "note": str | None}``.
     """
 
     usable: list[Mapping[str, Any]] = []
+    blocker: str | None = None
 
     for row in rows:
         if row["client"]["saturated"] or row["misconfigured"]:
             reason = "client saturated" if row["client"]["saturated"] else "misconfigured"
-            found = _search(usable, model=model)
-
-            if found["knee"] is not None:
-                return found
-
-            return {"knee": None, "confirmed": False, "note": f"{reason} at {_key(row)}"}
+            blocker = f"{reason} at {_key(row)}"
+            break
 
         usable.append(row)
 
-    return _search(usable, model=model)
+    found = _search(usable, model=model)
+
+    if blocker is None:
+        return found
+
+    if found["knee"] is None:
+        return {"knee": None, "confirmed": False, "note": blocker}
+
+    if not found["confirmed"]:
+        return {**found, "note": f"unconfirmed: the next step was {blocker}"}
+
+    return found
 
 
 def _search(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any]:
+    if len(rows) < 2:
+        note = "one step, no comparison" if rows else "no step measured the server"
+        return {"knee": None, "confirmed": False, "note": note}
+
     for k in range(1, len(rows)):
         before, here = rows[k - 1], rows[k]
+        after = rows[k + 1] if k + 1 < len(rows) else None
 
         if model == "open":
-            if _open_knee(before, here):
-                return {"knee": _key(here), "confirmed": True, "note": None}
+            found = _open_knee(before, here, after)
+
+            if found is not None:
+                return found
 
             continue
+
+        if before["goodput_rps"] <= 0:
+            return {"knee": None, "confirmed": False, "note": f"no goodput at {_key(before)}"}
 
         ceiling = before["goodput_rps"] * (1.0 + KNEE_GAIN)
 
         if here["goodput_rps"] >= ceiling:
             continue
 
-        if k + 1 < len(rows):
-            if rows[k + 1]["goodput_rps"] < ceiling:
-                return {"knee": _key(here), "confirmed": True, "note": None}
+        if after is None:
+            return {"knee": _key(here), "confirmed": False, "note": "last step, unconfirmed"}
 
-            continue
-
-        return {"knee": _key(here), "confirmed": False, "note": "last step, unconfirmed"}
+        if after["goodput_rps"] < ceiling:
+            return {"knee": _key(here), "confirmed": True, "note": None}
 
     return {"knee": None, "confirmed": False, "note": "goodput rose at every step"}
 
 
-def _open_knee(before: Mapping[str, Any], here: Mapping[str, Any]) -> bool:
-    p99_before, p99_here = before["ms"]["p99"], here["ms"]["p99"]
+def _open_knee(
+    before: Mapping[str, Any],
+    here: Mapping[str, Any],
+    after: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if here["goodput_rps"] < _expected_ok(here) * (1.0 - KNEE_GAIN):
+        return {"knee": _key(here), "confirmed": True, "note": None}
 
-    if p99_before is not None and p99_here is not None and p99_here > 2.0 * p99_before:
-        return True
+    if not _p99_doubled(before, here):
+        return None
 
-    # Answered, not goodput: a mix with expected 409s answers every arrival below the offer.
-    return bool(here["answered_rps"] < here["rate"] * (1.0 - KNEE_GAIN))
+    if after is None:
+        return {"knee": _key(here), "confirmed": False, "note": "last step, unconfirmed"}
+
+    if _p99_doubled(before, after):
+        return {"knee": _key(here), "confirmed": True, "note": None}
+
+    return None
+
+
+def _expected_ok(row: Mapping[str, Any]) -> float:
+    """The offered rate less the answers a healthy server gives that are not 2xx."""
+
+    seconds = row["duration_s"]
+    expected = sum(row["outcomes"][name] for name in EXPECTED_OUTCOMES)
+
+    return float(row["rate"]) - (expected / seconds if seconds > 0 else 0.0)
+
+
+def _p99_doubled(before: Mapping[str, Any], later: Mapping[str, Any]) -> bool:
+    if min(before["sampled"], later["sampled"]) < KNEE_MIN_SAMPLES:
+        return False
+
+    p99_before, p99_later = before["ms"]["p99"], later["ms"]["p99"]
+
+    return p99_before is not None and p99_later is not None and p99_later > 2.0 * p99_before
 
 
 def _key(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: row[k] for k in ("workers", "rate") if k in row}
-
-
-def _rate(count: int, seconds: float) -> float:
-    return round(count / seconds, 2) if seconds > 0 else 0.0
 
 
 def _round(value: float | None) -> float | None:

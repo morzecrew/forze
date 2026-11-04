@@ -18,9 +18,6 @@ from pathlib import Path
 import attrs
 import httpx
 import pytest
-
-pytest.importorskip("uvicorn")
-
 import uvicorn
 from fastapi import Request
 
@@ -184,6 +181,7 @@ async def test_a_cpu_bound_client_is_flagged_and_never_named_the_knee(served: _S
         ClosedRamp(steps=[1, 4], step_s=1.0, warm_s=0.2),
     )
 
+    assert light.rows[0]["client"]["loop_cpu_judged"]  # served by another thread
     assert not light.rows[0]["client"]["saturated"]
     assert all(row["client"]["saturated"] for row in burning.rows)
     assert burning.summary["knee"] is None

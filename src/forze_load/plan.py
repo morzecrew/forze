@@ -14,7 +14,7 @@ import httpx
 
 from forze.base.exceptions import exc
 
-from .auth import Auth, HeadersFn
+from .auth import Auth, AuthSession, HeadersFn
 
 # ----------------------- #
 
@@ -55,7 +55,25 @@ class Call:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
-        """Send one request with the principal's headers merged under *headers*."""
+        """Send one request with the principal's headers merged under *headers*.
+
+        *url* is a path relative to the plan's base URL. An absolute URL, or one starting
+        with ``//``, is refused before anything is sent: it would leave the target the write
+        guard checked and carry the principal's credential to another host (a pagination
+        ``next`` link, say).
+
+        :raises CoreException: ``configuration`` (``load_plan_invalid``) — *url* names a
+            scheme or a host.
+        """
+
+        parts = urlsplit(url)
+
+        if parts.scheme or parts.netloc:
+            raise exc.configuration(
+                "Call.request takes a path relative to the plan's base URL, not a URL "
+                "with a scheme or a host",
+                code="load_plan_invalid",
+            )
 
         merged = {**self.headers, **(headers or {})}
 
@@ -74,7 +92,9 @@ class Scenario:
     """A named request a principal's mix can pick.
 
     ``writes`` has no default on purpose: every scenario states whether it changes data, and
-    a run refuses one that does unless the plan allows writes (:func:`validate_plan`).
+    a run refuses one that does unless the plan allows writes (:func:`validate_plan`). It is
+    a declaration the kit trusts, not something it can check: forze's list and search routes
+    are ``POST``, so a request does not show whether it writes.
     """
 
     name: str
@@ -100,8 +120,9 @@ class Principal:
     mix: Mapping[str, int]
     """Scenario name to weight: how often this principal's workers pick each scenario."""
 
-    auth: Auth | HeadersFn | None = None
-    """Credential: an :class:`~forze_load.auth.Auth` helper or an async callable, or ``None``."""
+    auth: Auth | AuthSession | HeadersFn | None = None
+    """Credential: a helper (:func:`~forze_load.api_key`, :func:`~forze_load.password_login`,
+    …), an async callable taking the auth client and returning headers, or ``None``."""
 
     weight: int = 1
     """Share of workers (closed model) or arrivals (open model) that run as this principal."""
@@ -212,12 +233,16 @@ def write_host_allowed(host: str, write_hosts: Sequence[str] = ()) -> bool:
 
 
 def safe_target(base_url: str) -> str:
-    """*base_url* as the output records it: scheme, host, port and path only."""
+    """*base_url* as the output records it: scheme, host and port only.
+
+    Userinfo, path, query and fragment are dropped: a base path can carry an id
+    (``/tenants/123/api``).
+    """
 
     parts = urlsplit(base_url)
     netloc = parts.netloc.rpartition("@")[2]
 
-    return f"{parts.scheme}://{netloc}{parts.path}"
+    return f"{parts.scheme}://{netloc}"
 
 
 # ....................... #

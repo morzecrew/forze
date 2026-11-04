@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -21,9 +22,12 @@ from forze_load import (
     Principal,
     Scenario,
     api_key,
+    inflight_cap,
+    password_login,
     read_run,
     run,
 )
+from forze_load.engine import _Probe, _Run
 
 pytestmark = pytest.mark.unit
 
@@ -129,6 +133,9 @@ class TestClosedModel:
         )
 
         assert result.rows[0]["outcomes"]["transport"] > 0
+        # A call that got no answer has no latency: percentiles cover answered calls.
+        assert result.rows[0]["sampled"] == 0
+        assert result.rows[0]["ms"]["p50"] is None
 
     async def test_a_scenario_bug_stops_the_run_with_its_error(self) -> None:
         async def buggy(_call: Call) -> httpx.Response:
@@ -211,7 +218,29 @@ class TestOpenModel:
             transport=_transport(slow),
         )
 
-        assert result.rows[0]["outcomes"]["transport"] > 0
+        row = result.rows[0]
+        assert row["outcomes"]["transport"] > 0
+        assert row["calls"] == sum(row["outcomes"].values())  # a refusal is a call
+
+    async def test_the_cap_refuses_nothing_from_a_healthy_server(self) -> None:
+        async def quick(_request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.1)
+
+            return httpx.Response(200)
+
+        result = await run(
+            _plan(timeout_s=1.0),
+            OpenRamp(rates=[20], step_s=1.0, arrivals="poisson"),
+            transport=_transport(quick),
+        )
+
+        assert result.rows[0]["outcomes"]["transport"] == 0
+
+    def test_the_cap_is_a_poisson_quantile(self) -> None:
+        assert inflight_cap(1.0, 1.0) == 9
+        assert inflight_cap(100.0, 1.0) == 151
+        assert inflight_cap(1000.0, 1.0) == 1154
+        assert inflight_cap(0.01, 1.0) >= 1
 
     async def test_poisson_arrivals_run(self) -> None:
         result = await run(
@@ -310,5 +339,149 @@ class TestOutput:
 
         written = read_run(out)
         assert written.meta["plan"]["principals"] == {"viewer": 1, "robot": 1}
+        assert written.meta["plan"]["mixes"] == {"viewer": {"get": 1}, "robot": {"get": 1}}
+        assert written.meta["target"] == "http://127.0.0.1:9"
         assert written.summary is not None
         assert len(written.rows) == 2
+
+
+class TestRunState:
+    async def test_a_slow_answer_counts_in_the_step_that_sent_it(self) -> None:
+        async def slow(_request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.25)
+
+            return httpx.Response(200)
+
+        result = await run(
+            _plan(), ClosedRamp(steps=[1, 1], step_s=0.3), transport=_transport(slow)
+        )
+
+        first = result.rows[0]
+        # Sent at 0 s and at 0.25 s, the second answered after the step closed.
+        assert first["calls"] == 2
+        assert first["unfinished"] == 0
+
+    async def test_rates_use_the_measured_window(self) -> None:
+        result = await run(
+            _plan(), ClosedRamp(steps=[1], step_s=0.3, warm_s=0.1), transport=_transport(_ok)
+        )
+
+        row = result.rows[0]
+        assert row["duration_s"] >= 0.2
+        assert row["goodput_rps"] == pytest.approx(
+            row["outcomes"]["ok"] / row["duration_s"], rel=0.01
+        )
+
+    async def test_auth_time_is_kept_out_of_latency_and_counted(self) -> None:
+        clients: dict[str, httpx.AsyncClient] = {}
+
+        async def slow_auth(client: httpx.AsyncClient) -> dict[str, str]:
+            clients["auth"] = client
+            await asyncio.sleep(0.05)
+
+            return {"X-Trace": "load"}
+
+        async def get(call: Call) -> httpx.Response:
+            clients["request"] = call.client
+
+            return await call.request("GET", "/items")
+
+        async def instant(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200)
+
+        result = await run(
+            _plan(
+                principals=[Principal(name="v", mix={"get": 1}, auth=slow_auth)],
+                scenarios=[Scenario("get", get, writes=False)],
+            ),
+            ClosedRamp(steps=[1], step_s=0.4),
+            transport=_transport(instant),
+        )
+
+        row = result.rows[0]
+        assert row["ms"]["p99"] < 40
+        assert row["auth"]["max_ms"] >= 40
+        assert row["auth"]["total_s"] > 0.1
+        assert clients["auth"] is not clients["request"]  # auth never waits on the pool
+
+    async def test_a_url_with_a_host_stops_the_run_and_sends_no_credential(
+        self, monkeypatch
+    ) -> None:
+        key = secrets.token_hex(16)
+        monkeypatch.setenv("LOAD_KEY", key)
+        seen: list[httpx.Request] = []
+
+        async def record(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+
+            return httpx.Response(200)
+
+        async def follow_next(call: Call) -> httpx.Response:
+            return await call.request("GET", "https://evil.example/page/2")
+
+        with pytest.raises(CoreException) as error:
+            await run(
+                _plan(
+                    principals=[Principal(name="v", mix={"next": 1}, auth=api_key("LOAD_KEY"))],
+                    scenarios=[Scenario("next", follow_next, writes=False)],
+                ),
+                ClosedRamp(steps=[1], step_s=0.5),
+                transport=_transport(record),
+            )
+
+        assert error.value.code == "load_plan_invalid"
+        assert seen == []
+
+    def test_a_plan_runs_again_in_a_new_event_loop(self, monkeypatch) -> None:
+        password = secrets.token_hex(8)
+        monkeypatch.setenv("LOAD_PW", password)
+        logins: list[int] = []
+
+        async def app(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/login":
+                logins.append(1)
+
+                return httpx.Response(
+                    200, json={"access_token": secrets.token_hex(8), "access_expires_in": 900}
+                )
+
+            return httpx.Response(200)
+
+        plan = _plan(
+            principals=[
+                Principal(
+                    name="v", mix={"get": 1}, auth=password_login("v", password_env="LOAD_PW")
+                )
+            ]
+        )
+
+        for _ in range(2):  # each asyncio.run is a new loop; the plan holds no loop-bound lock
+            asyncio.run(run(plan, ClosedRamp(steps=[1], step_s=0.1), transport=_transport(app)))
+
+        assert len(logins) == 2  # no token carried from the first run
+
+    async def test_an_in_process_app_leaves_loop_cpu_unjudged(self) -> None:
+        result = await run(_plan(), ClosedRamp(steps=[1], step_s=0.2), transport=_transport(_ok))
+
+        assert result.rows[0]["client"]["loop_cpu_judged"] is False
+
+    def test_unjudged_loop_cpu_does_not_mark_saturation(self) -> None:
+        probe = _Probe()
+        probe.begin()
+        end = time.perf_counter() + 0.1
+
+        while time.perf_counter() < end:  # a busy loop thread
+            pass
+
+        assert probe.report(0, 0, cpu_judged=True)["saturated"]
+        assert not probe.report(0, 0, cpu_judged=False)["saturated"]
+
+    async def test_arrivals_draw_from_their_own_stream(self) -> None:
+        async with httpx.AsyncClient() as client:
+            first = _Run(plan=_plan(), client=client, auth_client=client, cpu_judged=True)
+            second = _Run(plan=_plan(), client=client, auth_client=client, cpu_judged=True)
+
+        for _ in range(10):
+            first.rng.random()  # a scenario drawing from Call.rng
+
+        assert first.arrival_rng.expovariate(5) == second.arrival_rng.expovariate(5)

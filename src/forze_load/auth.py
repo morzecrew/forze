@@ -1,9 +1,10 @@
 """Credentials for load-test principals.
 
 Every secret is read from an environment variable when the principal first signs in, never
-from the plan's source, and never kept in a ``repr``. A principal holds one session that all
-of its workers share: forze rotates refresh tokens with no grace by default, so two workers
-refreshing the same token would revoke each other's session family.
+from the plan's source, and never kept in a ``repr``. A credential opens one session per run
+(:meth:`Auth.session`), which all of the principal's workers share: forze rotates refresh
+tokens with no grace by default, so two workers refreshing the same token would revoke each
+other's session family. A plan reused for a second run signs in again.
 """
 
 from __future__ import annotations
@@ -22,15 +23,30 @@ from forze.base.primitives import monotonic
 # ----------------------- #
 
 type HeadersFn = Callable[[httpx.AsyncClient], Awaitable[Mapping[str, str]]]
-"""An app-supplied credential: given the run's client, return the request headers to send."""
+"""An app-supplied credential: given the run's auth client, return the headers to send."""
+
+RETRY_FIRST_S = 0.5
+"""First wait before retrying a refresh that failed in transport or with a 5xx."""
+
+RETRY_MAX_S = 30.0
+"""Longest wait between refresh retries."""
+
+
+@runtime_checkable
+class AuthSession(Protocol):
+    """One run's credential state: yields the headers a principal's requests carry."""
+
+    async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
+        """Return the headers for the next request, signing in or refreshing when needed."""
+        ...
 
 
 @runtime_checkable
 class Auth(Protocol):
-    """A credential that yields the headers a principal's requests carry."""
+    """A credential a principal carries across runs; each run opens its own session."""
 
-    async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
-        """Return the headers for the next request, signing in or refreshing when needed."""
+    def session(self) -> AuthSession:
+        """Open a session for one run, with no state from an earlier run."""
         ...
 
 
@@ -70,6 +86,9 @@ class ApiKeyAuth:
 
     # ....................... #
 
+    def session(self) -> AuthSession:
+        return self
+
     async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
         return {self.header: read_env(self.key_env)}
 
@@ -86,6 +105,9 @@ class BearerAuth:
 
     # ....................... #
 
+    def session(self) -> AuthSession:
+        return self
+
     async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
         return {"Authorization": f"Bearer {read_env(self.token_env)}"}
 
@@ -93,15 +115,13 @@ class BearerAuth:
 # ....................... #
 
 
-@attrs.define
+@attrs.frozen
 class PasswordLogin:
     """Sign in through forze's password routes and keep the access token fresh.
 
     ``POST {login_path}`` with ``{login, password}`` and ``POST {refresh_path}`` with
-    ``{refresh_token}``, as ``attach_authn_routes`` serves them in header mode. The access
-    token is renewed once ``1 - refresh_margin`` of its lifetime has passed, under a lock,
-    so one principal's workers trigger exactly one refresh between them. A refresh answered
-    ``401`` signs in again.
+    ``{refresh_token}``, as ``attach_authn_routes`` serves them in header mode. Holds no
+    state itself: :meth:`session` opens a fresh one per run.
     """
 
     login: str
@@ -119,11 +139,6 @@ class PasswordLogin:
     refresh_margin: float = attrs.field(default=0.1)
     """Share of the access token's lifetime left when it is renewed."""
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False, repr=False)
-    _access: str | None = attrs.field(default=None, init=False, repr=False)
-    _refresh: str | None = attrs.field(default=None, init=False, repr=False)
-    _renew_at: float = attrs.field(default=0.0, init=False, repr=False)
-
     # ....................... #
 
     @refresh_margin.validator  # pyright: ignore[reportAttributeAccessIssue, reportUntypedFunctionDecorator]
@@ -131,68 +146,131 @@ class PasswordLogin:
         if not 0.0 <= value < 1.0:
             raise exc.configuration("refresh_margin must be in [0, 1)")
 
+    def session(self) -> AuthSession:
+        return PasswordSession(config=self)
+
+
+@attrs.define
+class PasswordSession:
+    """One run's tokens for a :class:`PasswordLogin`.
+
+    The access token is renewed once ``1 - refresh_margin`` of its lifetime has passed, under
+    a lock, so the principal's workers trigger one refresh between them. A refresh answered
+    ``401`` signs in again. A refresh that fails in transport or with a 5xx keeps the current
+    token while it is valid and retries with backoff (:data:`RETRY_FIRST_S` doubling to
+    :data:`RETRY_MAX_S`); once the token has expired the failure stops the run.
+    """
+
+    config: PasswordLogin = attrs.field(repr=False)
+    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False, repr=False)
+    _access: str | None = attrs.field(default=None, init=False, repr=False)
+    _refresh: str | None = attrs.field(default=None, init=False, repr=False)
+    _renew_at: float = attrs.field(default=0.0, init=False, repr=False)
+    _expires_at: float = attrs.field(default=0.0, init=False, repr=False)
+    _retry_at: float = attrs.field(default=0.0, init=False, repr=False)
+    _backoff: float = attrs.field(default=RETRY_FIRST_S, init=False, repr=False)
+
     # ....................... #
 
     async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
-        if self._access is None or monotonic() >= self._renew_at:
+        if self._access is None or self._due():
             async with self._lock:
                 # Re-checked under the lock: the worker ahead of this one may have renewed.
                 if self._access is None:
                     await self._sign_in(client)
 
-                elif monotonic() >= self._renew_at:
+                elif self._due():
                     await self._renew(client)
 
         return {"Authorization": f"Bearer {self._access}"}
 
+    def _due(self) -> bool:
+        now = monotonic()
+
+        return now >= self._renew_at and (now >= self._retry_at or now >= self._expires_at)
+
     # ....................... #
 
     async def _sign_in(self, client: httpx.AsyncClient) -> None:
-        body = {"login": self.login, "password": read_env(self.password_env)}
-        response = await client.post(self.login_path, json=body)
+        body = {"login": self.config.login, "password": read_env(self.config.password_env)}
+
+        try:
+            response = await client.post(self.config.login_path, json=body)
+
+        except httpx.TransportError as error:
+            reason = f"a transport error ({type(error).__name__})"
+            raise self._failed("Signing in", reason) from error
 
         if response.status_code != 200:
-            raise exc.configuration(
-                f"Signing in as {self.login!r} failed with HTTP {response.status_code}",
-                code="load_login_failed",
-            )
+            raise self._failed("Signing in", f"HTTP {response.status_code}")
 
         self._take(response)
 
     async def _renew(self, client: httpx.AsyncClient) -> None:
-        if self._refresh is None:
-            await self._sign_in(client)
-            return
+        try:
+            if self._refresh is None:
+                await self._sign_in(client)
+                return
 
-        response = await client.post(self.refresh_path, json={"refresh_token": self._refresh})
+            response = await client.post(
+                self.config.refresh_path, json={"refresh_token": self._refresh}
+            )
+
+        except httpx.TransportError as error:
+            self._retry_later(f"a transport error ({type(error).__name__})")
+            return
 
         if response.status_code == 401:
             await self._sign_in(client)
             return
 
+        if response.status_code >= 500:
+            self._retry_later(f"HTTP {response.status_code}")
+            return
+
         if response.status_code != 200:
-            raise exc.configuration(
-                f"Refreshing {self.login!r} failed with HTTP {response.status_code}",
-                code="load_refresh_failed",
-            )
+            raise self._failed("Refreshing", f"HTTP {response.status_code}", "load_refresh_failed")
 
         self._take(response)
 
-    def _take(self, response: httpx.Response) -> None:
-        body = response.json()
-        access = body.get("access_token")
+    def _retry_later(self, reason: str) -> None:
+        now = monotonic()
 
-        if not access:
-            raise exc.configuration(
-                "The token response carries no access_token: password_login needs the "
-                "header carrier, not cookies",
-                code="load_login_failed",
+        if now >= self._expires_at:
+            raise self._failed(
+                "Refreshing", f"{reason} after the token expired", "load_refresh_failed"
             )
 
+        self._retry_at = now + self._backoff
+        self._backoff = min(self._backoff * 2.0, RETRY_MAX_S)
+
+    def _take(self, response: httpx.Response) -> None:
+        try:
+            body = response.json()
+
+        except ValueError:
+            raise self._failed("Signing in", "a response that is not JSON") from None
+
+        access = body.get("access_token") if isinstance(body, dict) else None
+
+        if not isinstance(access, str) or not access:
+            raise self._failed(
+                "Signing in",
+                "a token response with no access_token: password_login needs the header "
+                "carrier, not cookies",
+            )
+
+        now = monotonic()
+        lifetime = float(body.get("access_expires_in") or 900)
         self._access = access
         self._refresh = body.get("refresh_token")
-        lifetime = float(body.get("access_expires_in") or 900)
-        self._renew_at = monotonic() + lifetime * (1.0 - self.refresh_margin)
+        self._renew_at = now + lifetime * (1.0 - self.config.refresh_margin)
+        self._expires_at = now + lifetime
+        self._retry_at = 0.0
+        self._backoff = RETRY_FIRST_S
+
+    def _failed(self, action: str, reason: str, code: str = "load_login_failed") -> Exception:
+        return exc.configuration(f"{action} as {self.config.login!r} failed: {reason}", code=code)
 
 
 # ....................... #

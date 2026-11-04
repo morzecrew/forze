@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import httpx
 import pytest
 
@@ -164,5 +166,42 @@ class TestPlanShape:
         with pytest.raises(CoreException):
             validate_plan(_plan(timeout_s=0))
 
-    def test_the_output_target_drops_query_and_fragment(self) -> None:
-        assert safe_target("http://h:1/api?token=x#y") == "http://h:1/api"
+    def test_the_output_target_keeps_scheme_host_and_port_only(self) -> None:
+        assert safe_target("http://h:1/tenants/123/api?token=x#y") == "http://h:1"
+        assert safe_target("https://h") == "https://h"
+
+
+class TestCallRequest:
+    """A scenario's URL stays on the plan's target, and so does the credential."""
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://evil.example/steal", "//evil.example/steal", "http://127.0.0.1:9/x"],
+    )
+    async def test_a_url_with_a_scheme_or_host_is_refused_before_sending(self, url: str) -> None:
+        sent: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+
+            return httpx.Response(200)
+
+        transport = httpx.MockTransport(handler)
+
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:9", transport=transport) as client:
+            call = Call(
+                client=client,
+                headers={"X-API-Key": "k"},
+                principal="viewer",
+                rng=random.Random(0),
+            )
+
+            with pytest.raises(CoreException) as error:
+                await call.request("GET", url)
+
+            assert _code(error) == "load_plan_invalid"
+            assert sent == []
+
+            await call.request("GET", "/items?page=2")
+
+        assert [str(r.url) for r in sent] == ["http://127.0.0.1:9/items?page=2"]

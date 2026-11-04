@@ -25,6 +25,7 @@ variables only. Needs the ``load`` extra.
 from .auth import (
     ApiKeyAuth,
     Auth,
+    AuthSession,
     BearerAuth,
     HeadersFn,
     PasswordLogin,
@@ -32,7 +33,7 @@ from .auth import (
     bearer,
     password_login,
 )
-from .engine import ClosedRamp, OpenRamp, Profile, RunResult, run
+from .engine import ClosedRamp, OpenRamp, Profile, RunResult, inflight_cap, run
 from .plan import (
     WRITE_HOSTS_ENV,
     Call,
@@ -50,6 +51,7 @@ from .report import Comparison, RunFile, compare_runs, parse_fail_on, read_run, 
 __all__ = [
     "ApiKeyAuth",
     "Auth",
+    "AuthSession",
     "BearerAuth",
     "Call",
     "ClosedRamp",
@@ -68,6 +70,7 @@ __all__ = [
     "api_key",
     "bearer",
     "compare_runs",
+    "inflight_cap",
     "parse_fail_on",
     "password_login",
     "read_run",

@@ -72,7 +72,12 @@ def run_command(
     ),
     out: Path = typer.Option(Path("load.jsonl"), help="JSON lines file to write."),
 ) -> None:
-    """Run a ramp against the plan's target and write one JSON line per step."""
+    """Run a ramp against the plan's target and write one JSON line per step.
+
+    Exits 0 when the run finishes, including a ramp that stopped on its stop rule: a stop is
+    a result, recorded in the summary. Gate on it with ``forze load compare --fail-on``.
+    Exits 2 when the plan is refused or a sign-in fails.
+    """
 
     from forze_load import ClosedRamp, LoadPlan, OpenRamp, run, summarize
 
@@ -90,6 +95,9 @@ def run_command(
         raise typer.Exit(code=2)
 
     values = _numbers(steps)
+
+    if model == "closed" and not all(value.is_integer() for value in values):
+        raise typer.BadParameter(f"closed-model steps are whole worker counts, got {steps!r}")
 
     try:
         if model == "closed":

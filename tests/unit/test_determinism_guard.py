@@ -61,9 +61,10 @@ _ALLOWLIST: frozenset[str] = frozenset(
         "forze_dst/engines/scenario.py",
         "forze_dst/engines/crash_restart.py",
         "forze_dst/engines/guided.py",
-        # The load kit drives a live app and never runs under simulation: it seeds its own
-        # RNG for picks and arrivals, and reads process CPU for the client's self-report.
-        "forze_load/engine.py",
+        # The load kit drives a live app and never runs under simulation. Its two raw
+        # primitives live in one small module: seeded RNGs for picks and arrivals, and the
+        # process CPU time its self-report shows beside the loop thread's.
+        "forze_load/_seams.py",
     }
 )
 

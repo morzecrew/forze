@@ -15,7 +15,9 @@ classes, and whether the client itself was the bottleneck. Install the `load` ex
 
 A plan names the target, who signs in, and what each of them sends. A scenario is an async
 function that sends one request through the `Call` it is given; `Call.request` adds the
-principal's credential and tenant headers.
+principal's credential and tenant headers. It takes a path relative to the plan's base URL:
+a URL with a scheme or a host, such as a pagination `next` link, is refused before anything
+is sent, so the credential never leaves the target the guard checked.
 
 ```python
 from forze_load import Call, LoadPlan, Principal, Scenario, api_key, password_login
@@ -49,14 +51,17 @@ plan = LoadPlan(
 
 - **`writes` has no default.** Every scenario says whether it changes data, and the run
   refuses a writing scenario unless the plan sets `allow_writes=True` (see
-  [Writes and shared environments](#writes-and-shared-environments)).
+  [Writes and shared environments](#writes-and-shared-environments)). It is a declaration the
+  kit trusts, not something it can check: forze's list and search routes are `POST`, so a
+  request does not show whether it writes.
 - **`weight`** is the share of workers that run as a principal; **`mix`** is how often its
   workers pick each scenario.
 - **Credentials come from environment variables only.** `api_key` sends a key in
   `X-API-Key` (or the header you name), `bearer` sends a pre-issued token, and
   `password_login` signs in through the `/login` and `/refresh` routes that
   `attach_authn_routes` serves. Any async callable that takes the client and returns headers
-  works too, for cookies or an external IdP.
+  works too, for cookies or an external IdP. Each run opens a fresh session, so a plan can be
+  run again.
 - **`tenant`** is sent as `X-Tenant-Id`. A token's tenant claim wins over it, and the app
   reads the header only with `trust_tenant_header=True`.
 
@@ -91,34 +96,47 @@ Pick the model by the question you are asking:
 - **`OpenRamp` measures latency.** Requests arrive at each step's rate, evenly or as a Poisson
   process (`arrivals="poisson"`), whatever the answers do, and latency runs from each
   request's *intended* send time. A stall shows up in every request scheduled during it.
-  In-flight requests are capped at rate × timeout; a send past the cap counts as `transport`.
+  In-flight requests are capped at the 1 − 10⁻⁶ quantile of a Poisson count with mean
+  rate × timeout (9 at a mean of 1, 151 at 100), so a healthy server is never refused and a
+  refusal means a real backlog. A refused send counts as a call and as `transport`.
 
 Before any load, the plan is validated and every principal signs in, at most four at a time:
 forze hashes passwords with Argon2 four at a time by default, and a mass sign-in would
-measure that queue. The first failed sign-in stops the run.
+measure that queue. The first failed sign-in stops the run, and the command exits 2. A ramp
+that stops on its stop rule exits 0: the stop is a result, recorded in the summary. To gate
+on a run, compare it with `--fail-on` (see [Compare two runs](#compare-two-runs)).
 
 ## Read the result
 
-Each step's warm-up (`warm_s`) is left out of its numbers. A step row carries:
+Each step's warm-up (`warm_s`) is left out of its numbers. A call counts in the step that
+sent it, even when it answers after the step ended, and rates divide by the measured
+window's real length. A step row carries:
 
 | Field | Meaning |
 | --- | --- |
 | `goodput_rps` | 2xx answers per second |
-| `answered_rps` | Answers of any status per second |
-| `ms` | `p50`, `p90`, `p95`, `p99`, `p999` and `max`, in milliseconds |
+| `sampled` | Answered calls; the latency percentiles cover these only |
+| `ms` | `p50`, `p90`, `p95`, `p99`, `p999` and `max`, in milliseconds, credential time excluded |
 | `outcomes` | Counts of `ok`, `conflict` (409), `shed` (429), `deadline` (504), `forbidden` (401/403), `not_found`, `client_error`, `server_error`, `transport` |
 | `misconfigured` | More than 5 % of calls answered 401/403 or another unexpected 4xx |
-| `client` | `loop_cpu`, `process_cpu`, `loop_lag_p99_ms`, `behind_schedule`, `saturated` |
+| `unfinished` | Calls the step sent that had not finished when its row was written |
+| `auth` | Time spent signing in or refreshing: `total_s` and `max_ms` |
+| `client` | `loop_cpu`, `loop_cpu_judged`, `process_cpu`, `loop_lag_p99_ms`, `behind_schedule`, `saturated` |
 | `scenarios` | Calls, 2xx and latency per scenario |
+
+A transport failure (a refused connection, a timeout) is counted but has no latency.
 
 The ramp stops at the first step where 5xx answers (504 included) and transport failures pass
 `stop_error_rate` (default 5 %), or that is misconfigured: a mix that answers 403 quickly looks
 like excellent throughput and measures nothing.
 
 The summary names the **knee**: in a closed ramp, the first step whose goodput is less than
-5 % above the previous step's, confirmed by the step after it; in an open ramp, the first rate
-whose p99 more than doubles, or whose answers fall more than 5 % behind the offered rate.
-A step whose client was saturated is never named, and the summary says so instead.
+5 % above the previous step's, confirmed by the step after it. In an open ramp, it is the
+first rate whose p99 more than doubles, confirmed by the next rate, with at least 100
+answered calls in each; or whose goodput falls more than 5 % below the offered rate less its
+`conflict` and `not_found` answers. A step whose client was saturated, or that was
+misconfigured, is never named and never confirms a knee; the summary's `note` says why no
+knee was named.
 
 ## Compare two runs
 
@@ -130,8 +148,9 @@ forze load compare base.jsonl head.jsonl --fail-on p95:15%,goodput:10%
 Steps are matched by worker count or rate, and goodput, p50, p95 and p99 are printed side by
 side. Without `--fail-on` the command only reports: load runs vary far more than
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
-exits 1 when a named metric is worse by more than its share. Runs against a different target,
-plan or client machine are compared with a warning.
+exits 1 when a named metric is worse by more than its share, and 2 when a file cannot be
+read as a run. Runs against a different target, client machine, principal weights or mixes
+are compared with a warning: a different mix is a different workload.
 
 ## Writes and shared environments
 
@@ -149,12 +168,18 @@ stack, never against production.
 - **One process drives the load, on one core.** A step's `client.saturated` is set when the
   event loop's thread uses 0.85 of a core, its lag p99 passes 25 ms, or more than 1 % of
   open-model sends start late. Past that point the client's queue is what the latency
-  measures: read those rows as the client's limit, not the server's.
+  measures: read those rows as the client's limit, not the server's. An app served through
+  `run(..., transport=...)` on the same event loop runs on that thread too, so then the loop
+  CPU is reported but not judged (`loop_cpu_judged: false`).
 - **One session per principal.** All of a principal's workers share its sign-in, and one of
   them refreshes it, under a lock, shortly before the access token expires. forze revokes a
   whole session family when a rotated refresh token is presented again, so two workers
-  refreshing one token would sign each other out.
+  refreshing one token would sign each other out. Sign-in and refresh use their own
+  connections, never the request pool. A refresh that fails in transport or with a 5xx keeps
+  the current token while it is valid and retries with backoff; once the token has expired,
+  the failure stops the run.
 - **The file holds numbers only:** counts, latencies and outcome classes. No bodies, headers,
-  tokens or ids, and the target is written without its query string.
+  tokens or ids, and the target is written as scheme, host and port only. The meta line
+  records each principal's weight and mix.
 - **Not yet covered:** scenarios built from your OpenAPI operations, realtime subscribers, and
   soak runs that watch server gauges for drift. They are later phases of RFC 0084.
