@@ -548,6 +548,13 @@ the caller must re-run the whole scope. Nothing is written twice or lost. It wri
 `batch_size`: each chunk costs a few statements, and a statement-level trigger fires once per
 statement, so a chunk per few hundred rows spends its time on statements.
 
+Inserts skip building the domain model when the domain is proven to add nothing to the
+create command: no validators, defaults, aliases, computed fields or fields of its own. The
+row is then the command's dump plus the id, `rev` 1 and the chunk's instant for both
+timestamps; any other domain is built first, as before. A command built with
+`model_construct` skips its own validation, so a value of the wrong type in one is written
+as given on this path.
+
 Like `update_matching`, it skips the domain model's update, so a spec whose updates need it
 refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`): one with
 revision history, materialized fields, a `SerializedBy` guarantee or randomized field
