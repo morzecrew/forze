@@ -1,6 +1,6 @@
 # RFC 0068 — Cross-process grants cache invalidation
 
-- **Status:** 🚧 In progress — **P1 shipped 2026-11-02** (#815): `GrantsInvalidation` on the authz kernel, `grants_invalidation_lifecycle_step`, the after-commit marker publish, `invalidate_grants(ctx, kernel, principal_id=None)`, the opt-in `forze_mock` push, and the simulation and Redis tests. Rows 7 and 8 are decided in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 13 (D-105, D-106), with eight more entries there. D-107 and D-108 were accepted on 2026-11-03 as rows 11 and 12; the other proposed rows await acceptance. **P2 stays demand-gated.** Builds on the opt-in grants cache shipped in #506
+- **Status:** 🚧 In progress — **P1 shipped 2026-11-02** (#815): `GrantsInvalidation` on the authz kernel, `grants_invalidation_lifecycle_step`, the after-commit marker publish, `invalidate_grants(ctx, kernel, principal_id=None)`, the opt-in `forze_mock` push, and the simulation and Redis tests. Rows 7 and 8 are decided in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 13 (D-105, D-106), with eight more entries there. D-107 and D-108 were accepted on 2026-11-03 as rows 11 and 12, and the maintainer accepted the other proposed rows on 2026-11-04 (rows 7, 8 and 13–17). **P2 stays demand-gated.** Builds on the opt-in grants cache shipped in #506
 - **Scope:** Makes a grants-cache invalidation in one process reach every other process that holds
   a `GrantsCache`, so a revoked role stops granting everywhere within broadcast latency instead of
   within the TTL. Adds an optional broadcast setting on the authz kernel, a lifecycle step that
@@ -287,16 +287,21 @@ that `invalidate_grants` is the call after plain document commands. The TTL word
 | 4 | `ASSUMED` | The transport is the cache contract's `SupportsInvalidationPush` (Redis `CLIENT TRACKING` today), carried by marker keys under a dedicated static namespace and written through `set_versioned`, the path the push tracks — not the pub/sub ports, which cannot signal a gap. |
 | 5 | `LOCKED` | Configuring a broadcast that cannot run — no grants cache, a port without push, a `None` subscription — fails at startup. A silent fall-back to TTL-only would leave the app believing revocation is prompt. |
 | 6 | `ASSUMED` | A failed publish after commit is logged and counted, never raised to the caller: the write has committed and cannot be undone, and the TTL bounds the effect. |
-| 7 | `OPEN` | How app code reaches `invalidate_grants` (a resolver method via the kernel, or a dedicated port). Decide by what the kernel already exposes for `forget`; log the choice. |
-| 8 | `OPEN` | What the marker value carries (nothing, an origin id, a timestamp). Correctness does not depend on it; decide and log. |
+| 7 | `ASSUMED` | How app code reaches `invalidate_grants`, accepted by the maintainer on 2026-11-04 (D-105): it calls `invalidate_grants(ctx, kernel, principal_id=None)` with the kernel it registered. There is no port and no dependency key; the resolver's own `forget` serves role assignment. |
+| 8 | `ASSUMED` | What the marker value carries, accepted by the maintainer on 2026-11-04 (D-106): its version token and nothing else. Anything a subscriber could act on has to travel in the key. |
 | 9 | `ASSUMED` | A received invalidation advances the cache epoch exactly as a local one does, so a read in flight is not stored after it. |
 | 10 | `ASSUMED` | Self-echo is not suppressed: the publishing process receives its own marker and forgets again, which is idempotent. |
 | 11 | `ASSUMED` | While a configured broadcast has no live subscription in the process, decisions read the bindings instead of the cache, and each one outside a transaction is counted. A missing step costs the cache's speed, never the revocation's reach. Row 5 covers a step that runs and cannot subscribe; this row covers one that never runs. (D-107) |
 | 12 | `ASSUMED` | The subscription needs a process that keeps running; a serverless runtime refuses the step rather than trust a listener it freezes. (D-108) |
+| 13 | `ASSUMED` | The mock push is opt-in per route, delivers inside the write and models no expiry; latency and the expiry flush are outside the simulation. (D-109) |
+| 14 | `ASSUMED` | Startup refuses a tenant-aware marker route; a marker names a principal, and the forget it causes spans tenants. (D-111) |
+| 15 | `ASSUMED` | Startup waits, up to ten seconds, for the push stream to be live, through an additive keyword on the push contract; a port that answers "subscribed" but never connects fails startup like one that declines. (D-112) |
+| 16 | `ASSUMED` | The end of a push stream is an event; a subscriber that relies on push stops trusting its cache on it. (D-113) |
+| 17 | `ASSUMED` | A keepalive `PING` unanswered within five seconds is a gap in the stream, and row 3's flush applies. (D-114) |
 
-Rows 11 and 12 were added by execution and accepted by the author on 2026-11-03; each cites the
-[`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as
-designed.
+Rows 11 and 12 were added by execution and accepted by the author on 2026-11-03, and rows 13 to
+17 by the maintainer on 2026-11-04; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry
+it came from, and the sections above are left as designed.
 
 ## 12. Phasing
 

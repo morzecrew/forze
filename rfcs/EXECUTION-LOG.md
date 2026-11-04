@@ -3098,6 +3098,19 @@ catalog at attach time, so an unknown operation raises `internal` at the first c
 refuses a sensitive operation. These are hand-declared routes, which the sensitive rule (§5.2,
 generated surfaces) does not cover, and no copy of a boundary step is involved.
 
+## Decision-row outcomes — 2026-11-04 (RFC 0077)
+
+The maintainer accepted D-079, D-083, D-086 and D-087 as proposed, now RFC 0077 §11 rows 18 to
+21. D-083 is `drift` from §2's account of the WS route, accepted as a departure from it: §2
+stands as written, and row 19 overrides it. The other seven entries proposed no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0077 | 18 | Accepted | `ASSUMED` | HTTP keeps its own tenant ladder; the ingress refusal applies where the caller names the tenant, and an advisory `X-Tenant-Id` stays dropped | D-079 |
+| 0077 | 19 | Accepted, **as a departure** | `ASSUMED` | Every governed invocation runs with its own `InvocationMetadata`, a duplex command frame included | D-083 (drift) |
+| 0077 | 20 | Accepted | `ASSUMED` | Socket.IO moves onto `invoke_at_ingress` only with a registry-backed adapter, on a named consumer; until then it mints each event's metadata | D-086 |
+| 0077 | 21 | Accepted | `ASSUMED` | A duplex command binds the identity and the tenant its connection resolved, on every transport | D-087 |
+
 ---
 
 ---
@@ -3293,6 +3306,22 @@ consequence in place; no proposed row changes.
 | R-3 | Low | The app-author skill said every flat-scalar input takes typed flags, though a secret field or a colliding spelling disables them (CodeAnt) | Fixed — it says "usually" and points at `describe` |
 
 Each fix was checked against its own removal.
+
+## Decision-row outcomes — 2026-11-04 (RFC 0077)
+
+The maintainer accepted D-088 to D-094 as proposed, now RFC 0077 §11 rows 22 to 28. D-088
+amends decision 15. A graded row's text is not edited, so row 15 stands as written and row 22
+overrides it.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0077 | 22 | Accepted, **amends decision 15** | `ASSUMED` | No remote mode or surface field in this RFC; typed flags, the JSONL batch and shell completion shipped in P3 on a named demand | D-088 |
+| 0077 | 23 | Accepted | `ASSUMED` | Typed flags only when every field is a scalar or an optional one, no secret is declared and no spelling collides; otherwise none | D-089 |
+| 0077 | 24 | Accepted | `ASSUMED` | An option `call` does not have is read as a typed flag, refused as an error object with exit 2 | D-090 |
+| 0077 | 25 | Accepted | `ASSUMED` | With `--batch`, one JSON line per call that ran, numbered by its input line; a whole-batch refusal is one error object without a line | D-091 |
+| 0077 | 26 | Accepted | `ASSUMED` | A batch validates every line before building the runtime, stops at the first failure, and refuses `--idempotency-key` and `--pretty` | D-092 |
+| 0077 | 27 | Accepted | `ASSUMED` | A signal stops a batch after the line in flight; with lines left unrun, it exits 128 plus the signal number | D-093 |
+| 0077 | 28 | Accepted | `ASSUMED` | Completion loads the declaration as `list` does, builds no runtime, and offers nothing, silently, when it cannot load | D-094 |
 
 ---
 
@@ -3518,6 +3547,16 @@ conditions to D-097's summary and proposed row, both amended in place.
 
 Each fix was checked against its own removal.
 
+## Decision-row outcomes — 2026-11-04 (RFC 0077)
+
+The maintainer accepted D-095 at `LOCKED` and D-097 at `ASSUMED`, as proposed, now RFC 0077
+§11 rows 29 and 30. D-096 proposed no row; D-095's row covers it.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0077 | 29 | Accepted | `LOCKED` | Only a boundary that owns its process and result channel (the CLI) or its journal (the saga executors) converts a cancel after the commit point; every other one records it and re-raises | D-095 |
+| 0077 | 30 | Accepted | `ASSUMED` | A read-only root marks no commit point only when its manager answers `ReadOnlyAware` exactly `True` for the transaction it opened and nothing write-capable ran beside it | D-097 |
+
 ---
 
 # Unit 12 · RFC 0078 — a DuckLake per tenant (issue #800)
@@ -3710,6 +3749,21 @@ Fresh-eyes review of the branch before it was published.
 | R-20 | Low | The docs wrote the optional CA entry as a nested list (CodeAnt) | Fixed |
 | R-21 | High | A view in the role's own schema runs with its owner's rights, so it can expose another lake's metadata past every grant check (CodeAnt) | Fixed: the attestation refuses a view or materialized view in the schema that reads outside it and that the role can read. Tenant `d` holds one over tenant `b`'s metadata. `SECURITY DEFINER` functions are left to the deployment, and the docs say so |
 | R-22 | High | R-21's view check counted only views the role can read with a direct outside dependency, so a readable view over an inner view, or over a function, passed (cubic) | Fixed: any view or materialized view in the schema that depends on a relation outside it or on a function outside `pg_catalog` is refused, readable or not. A chain leaving the schema must cross such a view. Tenant `d` holds a view over a view over tenant `b`'s metadata, and a view calling a function |
+
+## Decision-row outcomes — 2026-11-04 (RFC 0078)
+
+The maintainer accepted D-098 to D-104 as proposed, now RFC 0078 §10 rows 21 to 27, each
+`assumed` in that table's State column.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0078 | 21 | Accepted | `ASSUMED` | A DuckLake session keeps persistent secrets off; the unnamed `postgres` secret, created before `ATTACH`, makes that possible | D-098 |
+| 0078 | 22 | Accepted | `ASSUMED` | The metadata password lives only in the unnamed `postgres` secret; the attestation reads the attach string back as bare `postgres:` | D-099 |
+| 0078 | 23 | Accepted | `ASSUMED` | The allowlist attests the four paths `ATTACH` adds; a read-only working directory is the deployment's control | D-100 |
+| 0078 | 24 | Accepted | `ASSUMED` | On DuckDB 1.5 the engine does not bound Postgres egress; the dynamic-read classification and the egress policy do | D-101 |
+| 0078 | 25 | Accepted | `ASSUMED` | The metadata role's grants bound the metadata database, and the attestation reads them back | D-102 |
+| 0078 | 26 | Accepted | `ASSUMED` | On a DuckLake, read-only rests on the store key or the mount; the `READ_ONLY` attach and the classification are belts | D-103 |
+| 0078 | 27 | Accepted | `ASSUMED` | A local DuckLake attests the engine's refusal of a dot-segment; on `s3://` the store key's scope confines reads | D-104 |
 
 ---
 
@@ -4012,6 +4066,22 @@ proposed rows in this unit await the author.
 |---|---|---|---|---|---|
 | 0068 | 11 | Accepted, **with a counter** | `ASSUMED` | While a configured broadcast has no live subscription in the process, decisions read the bindings instead of the cache, and each one outside a transaction is counted. A missing step costs the cache's speed, never the revocation's reach | D-107 |
 | 0068 | 12 | Accepted | `ASSUMED` | The subscription needs a process that keeps running; a serverless runtime refuses the step rather than trust a listener it freezes | D-108 |
+
+## Decision-row outcomes — 2026-11-04 (RFC 0068)
+
+The maintainer accepted the remaining proposed rows in this unit as proposed. D-105 and D-106
+settle the `OPEN` rows 7 and 8; D-109 and D-111 to D-114 are appended as rows 13 to 17. D-110
+proposed no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0068 | 7 | Accepted, settles the row | `ASSUMED` | App code calls `invalidate_grants(ctx, kernel, principal_id=None)` with the kernel it registered; no port, no dependency key | D-105 |
+| 0068 | 8 | Accepted, settles the row | `ASSUMED` | The marker value is its version token; anything a subscriber could act on travels in the key | D-106 |
+| 0068 | 13 | Accepted | `ASSUMED` | The mock push is opt-in per route, delivers inside the write and models no expiry | D-109 |
+| 0068 | 14 | Accepted | `ASSUMED` | Startup refuses a tenant-aware marker route | D-111 |
+| 0068 | 15 | Accepted | `ASSUMED` | Startup waits up to ten seconds for the push stream to be live, through an additive keyword on the push contract | D-112 |
+| 0068 | 16 | Accepted | `ASSUMED` | The end of a push stream is an event; a subscriber that relies on push stops trusting its cache on it | D-113 |
+| 0068 | 17 | Accepted | `ASSUMED` | A keepalive `PING` unanswered within five seconds is a gap in the stream, and row 3's flush applies | D-114 |
 
 ---
 
@@ -4341,6 +4411,25 @@ other proposed rows in this unit, D-159's among them, await the author.
 |---|---|---|---|---|---|
 | 0009 | 12 | Accepted | `ASSUMED` | Introspection client credentials are inline `SecretStr` or `str`, like the other identity presets. `SecretRef` support is a follow-up that needs a context-bound secrets seam on the verifier factory, and only widens the field's type | D-150 |
 | 0009 | 13 | Accepted | `ASSUMED` | A rejected external credential is `authentication` with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything that says nothing about the credential is `infrastructure`. Both fail closed | D-153 |
+
+## Decision-row outcomes — 2026-11-04 (RFC 0009)
+
+The maintainer accepted the remaining proposed rows in this unit as proposed, now RFC 0009 §10
+rows 14 to 23. D-159 is `drift` from §5.3, accepted as a departure from its letter: §5.3 stands
+as written, and row 21 overrides it. D-162 and D-163 proposed no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0009 | 14 | Accepted | `ASSUMED` | Introspection requires the issuer, records it on every assertion, and refuses a different `iss` | D-151 |
+| 0009 | 15 | Accepted | `ASSUMED` | Introspection requires an audience by default; `require_audience=False` is the explicit waiver | D-152 |
+| 0009 | 16 | Accepted | `ASSUMED` | Verdict caches keep active verdicts only, count the TTL from the call, and refuse a TTL above five minutes | D-154 |
+| 0009 | 17 | Accepted | `ASSUMED` | `ClaimsPath(..., item_key=)` reads lists of objects; the Casdoor preset uses `item_key="name"` | D-155 |
+| 0009 | 18 | Accepted | `ASSUMED` | Claim paths fill `{name}` placeholders after splitting on dots; `email_claim` is a dotted path | D-156 |
+| 0009 | 19 | Accepted | `ASSUMED` | Org-derived tenant hints belong to `ClaimsTenantResolver` (P4), not to the roles extractor | D-157 |
+| 0009 | 20 | Accepted | `ASSUMED` | `_forze` in `VerifiedAssertion.claims` is written by the mapper alone | D-158 |
+| 0009 | 21 | Accepted, **as a departure** | `ASSUMED` | The whoami verifier is Kratos-shaped; a second session endpoint generalizes it | D-159 (drift) |
+| 0009 | 22 | Accepted | `ASSUMED` | Discovery and remote-verifier endpoints are https, or http on loopback only; algorithms are never read from discovery | D-160 |
+| 0009 | 23 | Accepted | `ASSUMED` | The `private_key_jwt` audience is explicit configuration, conventionally the issuer | D-161 |
 
 ---
 

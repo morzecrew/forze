@@ -293,5 +293,12 @@ Real legs run against a pinned Lakekeeper (OpenFGA or Cedar authorizer, OAuth2 I
 | 18 | A dynamic read's error detail carries the engine's message without its name guesses, which can reach outside the tenant's lake (D-173) | assumed |
 | 19 | A missing namespace is `dynamic_read_namespace_missing` on DuckDB and `dynamic_read_statement_invalid` on Postgres. Decision 13's "same taxonomy" holds for every other refusal (D-174) | assumed |
 | 20 | The mock does not model namespaces; a handler scripts `dynamic_read_namespace_missing` by raising its factory, as for every engine-specific refusal (D-175) | assumed |
+| 21 | A DuckLake session keeps persistent secrets off; the unnamed `postgres` secret, created before `ATTACH`, is what makes that possible (D-098) | assumed |
+| 22 | The metadata password lives only in the unnamed `postgres` secret, and the attestation reads the attach string back as bare `postgres:` (D-099) | assumed |
+| 23 | The DuckLake allowlist attests the four paths `ATTACH` adds; a read-only working directory is the deployment's control over them (D-100) | assumed |
+| 24 | On DuckDB 1.5 the engine does not bound Postgres egress from a DuckLake session; the dynamic-read classification and the deployment's egress policy do (D-101) | assumed |
+| 25 | The metadata role's grants bound the metadata database, and the attestation reads them back (D-102) | assumed |
+| 26 | On a DuckLake, read-only rests on the store key or the mount; the `READ_ONLY` attach and the classification are belts (D-103) | assumed |
+| 27 | A local DuckLake attests the engine's refusal of a dot-segment; on `s3://` the store key's scope confines reads to the prefix (D-104) | assumed |
 
-Rows 15 to 20 were added by execution and accepted by the maintainer on 2026-11-04; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as designed.
+Rows 15 to 27 were added by execution and accepted by the maintainer on 2026-11-04; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as designed.
