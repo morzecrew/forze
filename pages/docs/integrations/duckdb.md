@@ -437,8 +437,9 @@ Operating it, beyond the Iceberg list:
   `PGSERVICEFILE` and `~/.pgpass`. DuckDB 2's extension has neither function.
   Run the worker with none of those variables set and no readable `~/.pgpass`,
   and let its egress policy allow only the metadata database and the store.
-- **Run the worker in a read-only working directory**, so the four
-  `postgres:…` paths cannot be written.
+- **Run the worker in a read-only working directory that holds no file at the
+  four `postgres:…` paths.** Read-only stops a statement writing them; the
+  allowlist still lets one read a file that is already there.
 - **Call `evict_tenant` after rotating the role's password or the store key,**
   or set `fingerprint_ttl`, as for an Iceberg principal.
 
