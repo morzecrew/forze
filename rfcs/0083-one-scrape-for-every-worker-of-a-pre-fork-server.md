@@ -1,7 +1,7 @@
 # RFC 0083 — One scrape for every worker of a pre-fork server
 
-- **Status:** 📝 Draft. P1 is one PR (§12). Seven rows (4 to 10) are `OPEN` for the maintainer,
-  each with a lean, and they gate P1. The recommendation in §5 follows the leans.
+- **Status:** 📝 Draft (execution-ready — P1 is one PR, §12). §10 Q1 to Q7 were settled by
+  the maintainer on 2026-11-05, each the lean's way (rows 4 to 10).
 - **Scope:** A supported way for one Prometheus scrape to cover every worker of a pre-fork
   server (`uvicorn --workers N`, gunicorn's uvicorn worker) without an OTLP collector. The
   recommendation:
@@ -485,7 +485,8 @@ is not built.
 
 ## 10. Unresolved questions
 
-These must be settled before P1 starts. Each is a row in §11 with a lean.
+These had to be settled before P1 started. The maintainer settled all seven on 2026-11-05,
+each the lean's way (rows 4 to 10).
 
 - Q1 (row 4): which shapes forze builds, and in which phase.
 - Q2 (row 5): whether the answering worker serves itself live or from its snapshot.
@@ -505,13 +506,13 @@ default.
 | 1 | `LOCKED` | Each series stays per instance. Every series in the union carries the worker's `service.instance.id` as a label, and forze never sums, averages or merges samples across workers. Aggregation is the query's job. From the issue's constraints. It locks in series churn per restart (§9), and a later "summed" mode would need its own RFC. |
 | 2 | `LOCKED` | Staleness is bounded and visible. A snapshot older than `ttl` is not served, and every served worker has one `forze_metrics_snapshot_age_seconds{service_instance_id}` sample, computed when the route answers. From the issue's constraints. |
 | 3 | `LOCKED` | Nothing changes for single-process apps or OTLP apps. `attach_metrics_route` without `snapshots` keeps today's code path, names and content type. `bootstrap_telemetry` gains no parameter. No dependency or extra is added. From the issue's constraints. |
-| 4 | `OPEN` | Which shapes forze builds. Options: (a) directory snapshots in `forze_fastapi`; (b) Redis/Valkey snapshots through a new core port and a `forze_redis` adapter; (c) fan-out at scrape time; (d) a collector recipe only. **Lean: (a) in P1, (d) as P2, (b) demand-gated as P3, (c) rejected.** (a) covers exactly the pre-fork group, which shares a host, with no new port and no new service. (b) needs core contract work for a cross-host union that Prometheus SD already gives. (c) is (a)'s registry plus a server per worker (§5.8 A2). (d) alone leaves eis-backend's "no collector" wiring broken at two workers. |
-| 5 | `OPEN` | How the answering worker sees itself. Options: (a) every worker, including the answering one, comes from the directory, and a scrape renders nothing; (b) the answering worker renders itself live and its siblings come from the directory; (c) a scrape first refreshes the answering worker's snapshot, then reads all. **Lean: (a).** Every worker's data then has the same age semantics. A scrape never runs observable callbacks, and no render gate is shared between route and writer. (b) and (c) make one worker fresher than the others at random, which is worse for a load test comparing workers. |
-| 6 | `OPEN` | What a graceful shutdown leaves. Options: (a) write a final snapshot and leave it until `ttl`; (b) delete the worker's file at shutdown; (c) do nothing, and let the last periodic snapshot age out. **Lean: (a).** One more scrape then captures the counters' final increments since the last tick. The price is a dead worker's gauges served for up to `ttl`, with their age shown. (b) loses those increments on every deploy. |
-| 7 | `OPEN` | Defaults. Options: (a) `interval` 5 s, `ttl` 15 s; (b) `interval` 10 s, `ttl` 30 s; (c) no defaults. **Lean: (b), with `ttl` derived as 3 × `interval` unless set, and `ttl` below 2 × `interval` refused (`configuration`).** At 10 s the writer costs about what one scrape every 10 s costs today. Staleness stays under a 15 s scrape interval plus one tick. A load test sets 1 s. |
-| 8 | `OPEN` | How the instance label reaches every series. Options: (a) the docs tell apps to build `PrometheusMetricReader(registry=CollectorRegistry(), resource_attribute_filter=...)`, and the writer checks; (b) forze ships `worker_metrics_reader()`, which builds exactly that, and the writer checks; (c) the writer rewrites every sample line to inject the label, which works on exporters older than 0.66b0. **Lean: (b).** Snapshot mode then requires exporter 0.66b0 or newer, checked at wiring. The check refuses the global-registry reader eis-backend uses today. (c) is a per-line rewrite of about 1 MB per tick to support exporters a year old. |
-| 9 | `OPEN` | The instance label's name. Options: (a) `service_instance_id`, the exporter's sanitized resource attribute; (b) `instance`, matching the Alloy path, which needs `honor_labels: true` in the scrape config, or Prometheus renames it to `exported_instance` and overwrites `instance` with the target. **Lean: (a).** It needs no scrape configuration and cannot be overwritten silently. The pull path already differs from Alloy's in names (§3), so (b) would buy no dashboard compatibility by itself. |
-| 10 | `OPEN` | The public API's shape. Options: (a) a `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` value with `writer_step(reader)`, and `attach_metrics_route(..., snapshots=...)`; (b) a separate `attach_worker_metrics_route` plus a free `metrics_snapshot_step(...)`; (c) discovery from an environment variable, as `PROMETHEUS_MULTIPROC_DIR` works. **Lean: (a).** One value configures both halves, so the writer and the route cannot disagree on directory or `ttl`. The route stays one function. (c) turns on cross-process behaviour from the environment, invisible at the call site. |
+| 4 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q1): directory snapshots in `forze_fastapi` ship in P1, the collector recipe in P2, and a Redis/Valkey store through a new core port in P3, on demand. Fan-out at scrape time is rejected (§5.8 A2). The directory covers exactly the pre-fork group, which shares a host, with no new port and no new service. A cross-host store needs core contract work for a union Prometheus SD already gives. |
+| 5 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q2): every worker, including the answering one, is served from the directory, and a scrape renders nothing. Every worker's data has the same age semantics, a scrape never runs observable callbacks, and no render gate is shared between route and writer. Serving the answering worker live was rejected: it makes one worker fresher than the others at random. |
+| 6 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q3): a graceful shutdown writes one final snapshot and leaves it until `ttl`. One more scrape then captures the counters' final increments since the last tick. The price is a dead worker's gauges served for up to `ttl`, with their age shown. Deleting the file at shutdown was rejected: it loses those increments on every deploy. |
+| 7 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q4): `interval` defaults to 10 s, and `ttl` to 3 × `interval` (30 s) unless set. A `ttl` below 2 × `interval` is refused (`configuration`). At 10 s the writer costs about what one scrape every 10 s costs today, and staleness stays under a 15 s scrape interval plus one tick. A load test sets 1 s. |
+| 8 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q5): forze ships `worker_metrics_reader()`, which builds `PrometheusMetricReader(registry=CollectorRegistry(), resource_attribute_filter=<service.instance.id only>)`, and the writer checks every render. Snapshot mode requires `opentelemetry-exporter-prometheus` 0.66b0 or newer, checked at wiring. The check refuses the global-registry reader eis-backend uses today. Rewriting sample lines for older exporters was rejected. |
+| 9 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q6): the instance label is `service_instance_id`, the exporter's sanitized resource attribute. It needs no scrape configuration and cannot be overwritten silently. `instance` with `honor_labels: true` was rejected: the pull path already differs from Alloy's in names (§3), so it buys no dashboard compatibility by itself. |
+| 10 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q7): a `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` value with `writer_step(reader)`, and `attach_metrics_route(..., snapshots=...)`. One value configures both halves, so the writer and the route cannot disagree on directory or `ttl`, and the route stays one function. A separate route function and discovery from an environment variable were rejected. |
 | 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting at line-start `# HELP ` and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on each family's first sample line. |
 | 12 | `ASSUMED` | Directory and file protocol, per §5.2 and §5.3: the directory is created `0700`, or refused when it is a symlink, foreign-owned, or group- or world-writable. Files are `0600`, written through `mkstemp` and `os.replace`, named `<pid>-<token>.prom`, and read with `O_NOFOLLOW` under a size cap. A refusal at startup fails the boot, after the fleet step's precedent. |
 | 13 | `ASSUMED` | Two fresh snapshots claiming one instance id are both withheld, and an error names the pids. Serving either one would interleave two processes into one series. |
@@ -524,8 +525,8 @@ default.
 ## 12. Phasing
 
 - **P1, one PR:** W1, W2 and W3 with `worker_metrics_reader()`, the unit and end-to-end tests
-  (§6), the docs for the snapshot mode (§7), and a changelog `Added` entry. It is gated on rows
-  4 to 10.
+  (§6), the docs for the snapshot mode (§7), and a changelog `Added` entry. Rows 4 to 10
+  are settled.
 - **P2, docs only, independent:** the minimal collector recipe and its config asset, covered by
   the observability-assets integration test the way the Alloy config is. It can land before P1.
 - **P3, demand-gated, not scheduled:** the Redis/Valkey store, built on the first deployment
