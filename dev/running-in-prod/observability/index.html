@@ -7399,9 +7399,12 @@ these. Outside Linux the standard library offers only the <em>peak</em> resident
 size, so the memory instrument is skipped rather than reporting a peak as
 current. Each collection costs one syscall and a small <code>/proc</code> read.</p>
 <p>Every worker reports its own series, but one Prometheus scrape of a pre-fork
-server reaches one worker. To see them all, labelled <code>service_instance_id</code>,
-give each worker <code>worker_metrics_reader()</code> and serve
-<a href="../grafana-stack/#several-workers-one-scrape"><code>MetricsSnapshots</code></a>.</p>
+server reaches one worker. To see them all, give each worker
+<code>worker_metrics_reader()</code> and serve
+<a href="../grafana-stack/#several-workers-one-scrape"><code>MetricsSnapshots</code></a>, which labels
+each worker <code>service_instance_id</code>, or push every worker to
+<a href="../grafana-stack/#one-collector-one-scrape">one collector</a>, which labels it
+<code>instance</code>.</p>
 <p>For more — open file descriptors, threads, disk and network I/O — use
 <code>opentelemetry-instrumentation-system-metrics</code>, which depends on <code>psutil</code>.</p>
 <h2 id="realtime-metrics">Realtime metrics<a class="headerlink" href="#realtime-metrics" title="Permanent link">&para;</a></h2>

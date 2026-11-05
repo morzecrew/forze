@@ -10962,6 +10962,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>One Prometheus scrape can cover every worker of a pre-fork server.</strong> Pass <code>snapshots=MetricsSnapshots(...)</code> to <code>attach_metrics_route</code> and run its <code>writer_step</code> in each worker: the route serves every worker's series, labelled <code>service_instance_id</code>, with an age gauge. Needs <code>worker_metrics_reader()</code> (exporter 0.66b0+).</p>
 </li>
 <li>
+<p><strong>A minimal OpenTelemetry Collector recipe gives one Prometheus scrape across workers and hosts.</strong> <em>The Grafana stack</em> page ships <code>assets/otel-collector/config.yaml</code>: every process pushes OTLP, each keeps its own <code>instance</code>, and with <code>honor_labels: true</code> on the scrape the shipped dashboards and alert rules apply.</p>
+</li>
+<li>
 <p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that <code>forze load compare</code> diffs. Writes are refused unless allowed and the host is loopback or allowlisted.</p>
 </li>
 <li>

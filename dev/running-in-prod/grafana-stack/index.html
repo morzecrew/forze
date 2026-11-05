@@ -2523,6 +2523,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#one-collector-one-scrape" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One collector, one scrape
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6797,6 +6808,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#one-collector-one-scrape" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        One collector, one scrape
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7182,8 +7204,42 @@ across a pre-fork server's workers; a pod name plus worker index is.</p>
 Under a pre-fork server the scrape is answered by whichever worker accepted the connection,
 so consecutive scrapes sample different processes: cumulative counters interleave, <code>rate()</code>
 sees phantom resets, gauges flap between workers. Nothing inside one process can fix that —
-it is a property of one socket in front of N independent processes. The next section is the
-fix for workers that share a host.</p>
+it is a property of one socket in front of N independent processes. Two setups give one
+scrape that covers every process, and both keep each process its own series:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><a href="#several-workers-one-scrape">Snapshots</a></th>
+<th><a href="#one-collector-one-scrape">A collector</a></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reaches</td>
+<td>the workers of one host</td>
+<td>every process that can reach the collector, on any host</td>
+</tr>
+<tr>
+<td>Runs</td>
+<td>inside your FastAPI app</td>
+<td>as one more container</td>
+</tr>
+<tr>
+<td>Names and labels</td>
+<td>the pull path's: <code>forze_operations_total</code>, <code>service_instance_id</code></td>
+<td>the push path's: <code>forze_operations</code>, <code>job</code>, <code>instance</code></td>
+</tr>
+<tr>
+<td>Shipped dashboards and alerts</td>
+<td>do not apply as they stand</td>
+<td>apply</td>
+</tr>
+</tbody>
+</table>
+<p>Pick snapshots for a pre-fork API on one host that should not grow a service. Pick the
+collector for replicas on several hosts, for processes that are not web servers, or to use
+the shipped dashboards without the rest of the Grafana stack.</p>
 <p><code>prometheus_client</code> is deliberately not part of the <code>observability</code> extra; install
 <code>opentelemetry-exporter-prometheus</code> yourself if you want this route.</p>
 <h3 id="several-workers-one-scrape">Several workers, one scrape<a class="headerlink" href="#several-workers-one-scrape" title="Permanent link">&para;</a></h3>
@@ -7295,7 +7351,8 @@ happens when <code>bootstrap_telemetry</code> runs before the fork, under gunico
   what keeps <code>rate()</code> honest, and it costs one fresh set of series per restart. Worker
   recycling, such as gunicorn's <code>--max-requests</code>, multiplies it. OTLP push pays the same.</li>
 <li><strong>One host.</strong> The directory joins the workers of one host. Several replicas are several
-  scrape targets, which Prometheus discovers; across hosts without that, push over OTLP.</li>
+  scrape targets, which Prometheus discovers; across hosts without that, push to
+  <a href="#one-collector-one-scrape">one collector</a>.</li>
 <li><strong>The response grows with the workers.</strong> About 1 MB per worker for 200 operation label
   sets, measured. Raise <code>scrape_timeout</code>, or put <code>GZipMiddleware</code> in front of the route.</li>
 <li><strong>The names differ from the push path's.</strong> The pull path renders suffixed names
@@ -7313,6 +7370,66 @@ happens when <code>bootstrap_telemetry</code> runs before the fork, under gunico
   before the process exits. A callback that blocks on I/O therefore holds its worker until
   it returns or the supervisor kills it. A plain route's render behaves the same way. Give
   a callback that does I/O its own timeout.</li>
+</ul>
+<h3 id="one-collector-one-scrape">One collector, one scrape<a class="headerlink" href="#one-collector-one-scrape" title="Permanent link">&para;</a></h3>
+<p>Every process pushes OTLP to one OpenTelemetry Collector, and Prometheus scrapes the
+collector. That reaches processes on any host, and ones that are not web servers, such as
+an outbox relay. It is the push path above with only its metrics kept: one container, and
+no Alloy, Loki, Tempo or Grafana.</p>
+<p>Download <a href="../assets/otel-collector/config.yaml">config.yaml</a>, the collector's whole pipeline,
+and add the collector next to your app:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">otel-collector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">otel/opentelemetry-collector-contrib:0.130.0</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./config.yaml:/etc/otelcol-contrib/config.yaml:ro</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"4318:4318"</span><span class="w">   </span><span class="c1"># OTLP http/protobuf, for processes on other hosts</span>
+</code></pre></div>
+<p>The receiver takes unauthenticated plaintext: publish <code>4318</code> only on a private network, or
+put TLS and an authenticator in front of it. Prometheus on the same Compose network scrapes
+<code>otel-collector:8889</code> without a published port; publish <code>8889</code> only for a Prometheus outside
+it, on the same terms.</p>
+<p>Point every process at it, with traces off, since the recipe carries metrics only:</p>
+<div class="highlight"><pre><span></span><code><span class="n">bootstrap_telemetry</span><span class="p">(</span><span class="n">service_name</span><span class="o">=</span><span class="s2">"orders-api"</span><span class="p">,</span> <span class="n">traces</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># On the Compose network; from another host, use the address 4318 is published on.</span>
+<span class="nv">OTEL_EXPORTER_OTLP_ENDPOINT</span><span class="o">=</span>http://otel-collector:4318
+</code></pre></div>
+<p>Under a pre-fork server, call <code>bootstrap_telemetry</code> in each worker, never at import before
+the fork, exactly as for snapshots. Workers that share one <code>service.instance.id</code> interleave
+into one series. Then scrape the collector, and keep the labels it sets:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">scrape_configs</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">job_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">otel-collector</span>
+<span class="w">    </span><span class="nt">honor_labels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">    </span><span class="nt">static_configs</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"otel-collector:8889"</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>What to know before you rely on it:</p>
+<ul>
+<li><strong>The names and labels are the push path's.</strong> The config turns name suffixes off, as
+  <code>config.alloy</code> does, so the <a href="#metric-names-in-prometheus">metric names</a> above hold. Each
+  series carries <code>job</code> from <code>service.name</code> and <code>instance</code> from <code>service.instance.id</code>.
+  <code>honor_labels: true</code> is what keeps them. Without it, Prometheus renames them
+  <code>exported_job</code> and <code>exported_instance</code>, and every <code>by (job)</code> in the shipped dashboards
+  and alert rules lumps all services under the collector's job. With it, those assets apply
+  as they stand.</li>
+<li><strong>Each process is its own series.</strong> Nothing is summed in the collector, and a restart
+  comes back under a new <code>instance</code>. Sum on the query side:
+  <code>sum without (instance) (rate(forze_operations[5m]))</code>.</li>
+<li><strong><code>up</code> describes the collector.</strong> A process that stops pushing keeps its last values
+  until <code>metric_expiration</code> (5 minutes in the config) passes, then drops out.
+  <code>count by (job) (target_info)</code> counts the processes the collector serves. Alert when it
+  falls below the count you run, and when it is absent, which is what a full outage looks
+  like once every process has expired:
+  <code>count by (job) (target_info{job="orders-api"}) &lt; 3 or absent(target_info{job="orders-api"})</code>.</li>
+<li><strong>Freshness is the export interval plus the scrape interval.</strong> Each process pushes every
+  <code>metric_export_interval</code> (15 s by default), and Prometheus reads the latest push on its
+  next scrape. Keep <code>metric_export_interval</code> well under <code>metric_expiration</code>, or a process
+  drops out between pushes.</li>
+<li><strong>Traces need a pipeline of their own.</strong> Without one, the collector answers <code>404</code> on
+  <code>/v1/traces</code>. To keep traces, add a traces pipeline to an exporter you run, or use the
+  full stack above.</li>
 </ul>
 <h2 id="probes">Probes<a class="headerlink" href="#probes" title="Permanent link">&para;</a></h2>
 <p>Every process gets both probes, including the ones that are not HTTP servers.</p>
