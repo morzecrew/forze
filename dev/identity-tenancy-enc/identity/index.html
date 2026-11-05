@@ -7182,8 +7182,9 @@ remember them, per process, for a fixed time:</p>
 <li>Nothing is cached unless you pass one.</li>
 <li>It remembers the roles and permissions the catalog bindings grant, per principal, tenant and
   scope, up to <code>max_entries</code> (10,000 by default), dropping the least recently used first.</li>
-<li>Read on every decision, never cached: whether the principal is active, what providers derive,
-  and delegation (<code>may_act</code>) grants. <code>list_roles</code> reads the bindings too, and tenant membership
+<li>Read on every decision, never cached: whether the principal is active (unless a
+  <a href="../../integrations/authn/#skip-the-eligibility-read">fast-path admission</a> just checked it),
+  what providers derive, and delegation (<code>may_act</code>) grants. <code>list_roles</code> reads the bindings too, and tenant membership
   is outside the cache altogether.</li>
 <li>A revocation reaches the cache when its write commits, so a request elsewhere can still be
   served the revoked grant between the commit and that moment.</li>

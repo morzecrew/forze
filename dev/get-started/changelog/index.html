@@ -10982,7 +10982,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>An authz decision skips the policy principal read after a fast-path admission of it.</strong> With one <code>RevocationStates</code> object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (<code>ttl</code> at most). Other subjects still read.</p>
+</li>
+<li>
+<p><strong><code>SessionRevocation.check</code> returns a <code>FreshEpoch</code> when the token is on its principal's current epoch, <code>None</code> otherwise, instead of the epoch; <code>ApiKeyRevocation.fresh</code> returns <code>FreshEpoch | None</code> instead of a bool</strong> (<strong>Breaking</strong>). A custom verifier that compared the epoch tests the result for <code>None</code>.</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
