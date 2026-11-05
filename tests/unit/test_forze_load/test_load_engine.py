@@ -292,6 +292,12 @@ class TestBeforeLoad:
         assert error.value.code == "load_credential_missing"
         assert requests == []
 
+    def test_open_rates_are_floats_whatever_was_given(self) -> None:
+        rates = OpenRamp(rates=[50, 100.0], step_s=1).rates
+
+        assert rates == (50.0, 100.0)
+        assert all(type(rate) is float for rate in rates)
+
     @pytest.mark.parametrize(
         "make",
         [

@@ -60,7 +60,8 @@ def _ints(values: Iterable[int]) -> tuple[int, ...]:
 
 
 def _floats(values: Iterable[float]) -> tuple[float, ...]:
-    return tuple(values)
+    # Floats whatever was given, so a row's `rate` reads the same from Python and the CLI.
+    return tuple(float(value) for value in values)
 
 
 def _positive_steps(values: Sequence[float], what: str) -> None:

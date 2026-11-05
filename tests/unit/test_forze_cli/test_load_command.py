@@ -84,7 +84,7 @@ class TestRun:
         )
 
         assert result.exit_code == 0, result.output
-        assert "rate=20.0" in result.output
+        assert "rate=20:" in result.output
 
     def test_a_writing_plan_is_refused_with_exit_2(self, tmp_path: Path) -> None:
         result = runner.invoke(

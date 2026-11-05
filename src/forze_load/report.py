@@ -8,6 +8,7 @@ tokens or ids.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
@@ -196,13 +197,13 @@ def compare_runs(
         k: v for k, v in head_plan.items() if k not in other
     }:
         warnings.append("runs differ in plan (scenarios, timeout or seed): comparing anyway")
-    base_rows = {_row_key(row): row for row in base.rows}
-    head_rows = {_row_key(row): row for row in head.rows}
+    base_rows, head_rows = _keyed(base.rows), _keyed(head.rows)
     lines: list[str] = []
     failures: list[str] = []
 
     for key in [k for k in base_rows if k in head_rows]:
         cells: list[str] = []
+        label = _label(key)
 
         for metric in _METRICS:
             old, new = _metric(base_rows[key], metric), _metric(head_rows[key], metric)
@@ -211,12 +212,12 @@ def compare_runs(
             limit = (fail_on or {}).get(metric)
 
             if limit is not None and change is not None and change > limit:
-                failures.append(f"{key}: {metric} worse by {change:.1%} (limit {limit:.0%})")
+                failures.append(f"{label}: {metric} worse by {change:.1%} (limit {limit:.0%})")
 
-        lines.append(f"{key}: " + ", ".join(cells))
+        lines.append(f"{label}: " + ", ".join(cells))
 
     missing = sorted(set(base_rows) ^ set(head_rows))
-    warnings.extend(f"{key}: only in one run" for key in missing)
+    warnings.extend(f"{_label(key)}: only in one run" for key in missing)
 
     return Comparison(lines=lines, warnings=warnings, failures=failures)
 
@@ -224,8 +225,43 @@ def compare_runs(
 # ....................... #
 
 
+type _StepKey = tuple[str, float, int]
+
+
+def _step(row: Mapping[str, Any]) -> tuple[str, float]:
+    """A step's key as a number, so ``rate=50`` and ``rate=50.0`` are one step."""
+
+    return ("workers", float(row["workers"])) if "workers" in row else ("rate", float(row["rate"]))
+
+
+def _keyed(rows: Sequence[Mapping[str, Any]]) -> dict[_StepKey, Mapping[str, Any]]:
+    """Rows by step and occurrence: a ramp that repeats a step compares each by position."""
+
+    seen: Counter[tuple[str, float]] = Counter()
+    keyed: dict[_StepKey, Mapping[str, Any]] = {}
+
+    for row in rows:
+        step = _step(row)
+        seen[step] += 1
+        keyed[(*step, seen[step])] = row
+
+    return keyed
+
+
+def _label(key: _StepKey) -> str:
+    kind, value, occurrence = key
+    label = f"{kind}={value:g}"
+
+    if occurrence == 1:
+        return label
+
+    return f"{label} ({ {2: '2nd', 3: '3rd'}.get(occurrence, f'{occurrence}th') })"
+
+
 def _row_key(row: Mapping[str, Any]) -> str:
-    return f"workers={row['workers']}" if "workers" in row else f"rate={row['rate']}"
+    kind, value = _step(row)
+
+    return f"{kind}={value:g}"
 
 
 def _metric(row: Mapping[str, Any], metric: str) -> float | None:

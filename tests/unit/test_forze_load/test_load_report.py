@@ -151,6 +151,26 @@ class TestCompare:
         assert "runs differ in principal mixes: a different mix is a different workload" in warnings
         assert "runs differ in plan (scenarios, timeout or seed): comparing anyway" in warnings
 
+    def test_equal_rates_match_whatever_their_number_type(self) -> None:
+        base, head = _row(1, 10, 5), _row(1, 10, 5)
+        del base["workers"], head["workers"]
+        base["rate"], head["rate"] = 50, 50.0
+
+        comparison = compare_runs(_run(base), _run(head))
+
+        assert len(comparison.lines) == 1
+        assert comparison.lines[0].startswith("rate=50:")
+        assert comparison.warnings == []
+
+    def test_a_repeated_step_is_compared_by_its_position(self) -> None:
+        base = _run(_row(1, 10, 5), _row(2, 20, 5), _row(2, 21, 5))
+        head = _run(_row(1, 10, 5), _row(2, 20, 5), _row(2, 10, 5))
+
+        comparison = compare_runs(base, head, fail_on={"goodput": 0.10})
+
+        assert len(comparison.lines) == 3
+        assert comparison.failures == ["workers=2 (2nd): goodput worse by 52.4% (limit 10%)"]
+
     def test_missing_latency_compares_as_unknown(self) -> None:
         row = _row(1, 0, 5)
         row["ms"] = {"p50": None, "p95": None, "p99": None}
