@@ -101,8 +101,13 @@ async def test_gauges_follow_a_held_connection_and_a_queued_caller(postgres_cont
         }
 
         holder = asyncio.ensure_future(hold())
-        tasks.append(holder)
-        await holding.wait()
+        signalled = asyncio.ensure_future(holding.wait())
+        tasks += [holder, signalled]
+        # A hold() that fails before it holds never sets the event: surface its error.
+        await asyncio.wait([holder, signalled], return_when=asyncio.FIRST_COMPLETED)
+
+        if holder.done():
+            holder.result()
 
         held = _gauges(reader)
         assert held[CONNECTION_POOL_IN_USE_GAUGE] == 1
