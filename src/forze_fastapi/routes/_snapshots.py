@@ -367,8 +367,8 @@ def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
 
-    except ProcessLookupError:
-        return False
+    except (ProcessLookupError, OverflowError):
+        return False  # gone, or a number no process can have
 
     except PermissionError:
         return True  # alive, and someone else's

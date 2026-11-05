@@ -1099,3 +1099,22 @@ def test_a_snapshot_rewritten_during_a_scrape_is_still_served(
 
     assert status == 200
     assert _served(body) == {"w-0"}
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_named_with_an_impossible_pid_is_swept(
+    tmp_path: Path, provider: tuple[MeterProvider, PrometheusMetricReader]
+) -> None:
+    _, reader = provider
+    directory = tmp_path / "snaps"
+    directory.mkdir(mode=0o700)
+    impossible = directory / f"{10**20}-{uuid.uuid4().hex}.prom"
+    impossible.write_text("# not a snapshot\n")
+
+    async with build_runtime(lifecycle_steps=_snapshots(directory).writer_step(reader)).scope():
+        pass
+
+    assert not impossible.exists(), "no process can hold that pid"
