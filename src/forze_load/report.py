@@ -104,21 +104,40 @@ def read_run(path: str | Path) -> RunFile:
             code="load_run_file_invalid",
         )
 
+    if not _is_plan(meta.get("plan", {})):
+        raise _invalid(f"{path} has a meta plan whose weights or mixes are not objects")
+
     rows = [record for record in records if record.get("kind") == "step"]
 
     if not all(_is_step(row) for row in rows):
-        raise _invalid(f"{path} has a step row without its key, goodput or latency")
+        raise _invalid(f"{path} has a step row without a numeric key, goodput or latency")
 
     summary = next((record for record in records if record.get("kind") == "summary"), None)
 
     return RunFile(meta=meta, rows=rows, summary=summary)
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def _is_step(row: Mapping[str, Any]) -> bool:
+    """A step row ``compare`` can read: a numeric key and goodput, latencies numbers or null."""
+
+    key = row.get("workers", row.get("rate"))
+    ms = row.get("ms")
+
     return (
-        ("workers" in row or "rate" in row)
-        and isinstance(row.get("goodput_rps"), int | float)
-        and isinstance(row.get("ms"), dict)
+        _is_number(key)
+        and _is_number(row.get("goodput_rps"))
+        and isinstance(ms, dict)
+        and all(value is None or _is_number(value) for value in ms.values())
+    )
+
+
+def _is_plan(plan: Any) -> bool:
+    return isinstance(plan, dict) and all(
+        isinstance(plan.get(key, {}), dict) for key in ("principals", "mixes")
     )
 
 

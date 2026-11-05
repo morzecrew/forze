@@ -75,6 +75,30 @@ class TestReadRun:
 
         assert error.value.code == "load_run_file_invalid"
 
+    @pytest.mark.parametrize(
+        "lines",
+        [
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {"kind": "step", "workers": 1, "goodput_rps": 1, "ms": {"p95": "bad"}},
+            ],
+            [{"kind": "meta", "schema": SCHEMA, "plan": ["not", "a", "dict"]}],
+            [{"kind": "meta", "schema": SCHEMA, "plan": {"mixes": ["x"]}}],
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {"kind": "step", "rate": "fast", "goodput_rps": 1, "ms": {}},
+            ],
+        ],
+    )
+    def test_it_refuses_fields_of_the_wrong_shape(self, tmp_path: Path, lines: list) -> None:
+        path = tmp_path / "x.jsonl"
+        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+        with pytest.raises(CoreException) as error:
+            read_run(path)
+
+        assert error.value.code == "load_run_file_invalid"
+
     def test_it_refuses_a_missing_file(self, tmp_path: Path) -> None:
         with pytest.raises(CoreException) as error:
             read_run(tmp_path / "absent.jsonl")
