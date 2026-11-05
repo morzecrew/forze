@@ -33,6 +33,7 @@ from .lifecycle import LifecyclePlan
 from .lifecycle.serving import serve_runtime
 from .observability import (
     BREAKER_STATE_GAUGE,
+    BULKHEAD_IN_USE_GAUGE,
     BULKHEAD_LIMIT_GAUGE,
     BULKHEAD_QUEUE_GAUGE,
     CRYPTO_CACHE_HITS_COUNTER,
@@ -181,6 +182,7 @@ __all__ = [
     "BREAKER_STATE_GAUGE",
     "BULKHEAD_QUEUE_GAUGE",
     "BULKHEAD_LIMIT_GAUGE",
+    "BULKHEAD_IN_USE_GAUGE",
     "CRYPTO_DATA_KEYS_GENERATED_COUNTER",
     "CRYPTO_DATA_KEYS_UNWRAPPED_COUNTER",
     "CRYPTO_CACHE_HITS_COUNTER",
