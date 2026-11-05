@@ -57,7 +57,7 @@ _INSTANCE_ATTRIBUTE: Final[str] = "service.instance.id"
 _HEADER_PREFIX: Final[str] = "# forze-metrics-snapshot v1 "
 _HEADER: Final[re.Pattern[str]] = re.compile(
     r"# forze-metrics-snapshot v1 written_at=(\d+(?:\.\d+)?) mono=(\d+(?:\.\d+)?) "
-    r"pid=(\d+) instance=(.*)"
+    r"pid=(\d+) instance=(.+)"
 )
 _SNAPSHOT_NAME: Final[re.Pattern[str]] = re.compile(r"(\d+)-[0-9a-f]{32}\.prom")
 _TEMP_NAME: Final[re.Pattern[str]] = re.compile(r"\.tmp-(\d+)-.*")
@@ -797,7 +797,7 @@ class MetricsSnapshots:
         served: list[_Snapshot] = []
 
         for instance, claimants in by_instance.items():
-            if instance and len(claimants) > 1:
+            if len(claimants) > 1:
                 # Two processes behind one id interleave into one series — the very bug
                 # this mode exists to fix. Usually bootstrap_telemetry ran before the fork.
                 pids = sorted(snapshot.pid for snapshot in claimants)
@@ -841,17 +841,16 @@ class MetricsSnapshots:
         out = [
             heads[name][0] + heads[name][1] + "".join(chunks) for name, chunks in samples.items()
         ]
+        # Every served snapshot names its instance (the header requires it), so every
+        # served worker gets its age sample.
         ages = "".join(
             f'{_AGE_FAMILY}{{service_instance_id="{snapshot.instance}"}} {snapshot.age:.3f}\n'
             for snapshot in served
-            if snapshot.instance
         )
-
-        if ages:
-            out.append(
-                f"# HELP {_AGE_FAMILY} Seconds since the worker wrote the snapshot this "
-                f"scrape serves.\n# TYPE {_AGE_FAMILY} gauge\n{ages}"
-            )
+        out.append(
+            f"# HELP {_AGE_FAMILY} Seconds since the worker wrote the snapshot this "
+            f"scrape serves.\n# TYPE {_AGE_FAMILY} gauge\n{ages}"
+        )
 
         return "".join(out)
 

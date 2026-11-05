@@ -1120,3 +1120,10 @@ async def test_a_snapshot_named_with_an_impossible_pid_is_swept(
         pass
 
     assert not impossible.exists(), "no process can hold that pid"
+
+
+def test_a_snapshot_naming_no_instance_is_not_served(tmp_path: Path) -> None:
+    # Its series could carry no age sample, and every served worker carries one.
+    _write(tmp_path, "", body=_body("w-0"))
+
+    assert _snapshots(tmp_path).union()[0] == 503
