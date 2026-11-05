@@ -136,8 +136,11 @@ class _PoolEvents(monitoring.ConnectionPoolListener):
     pymongo has no public pool snapshot, so each connection's state is kept per server:
     opening from ``connection_created``, checked out from ``connection_checked_out``, idle
     from ``connection_ready`` and ``connection_checked_in``, gone at ``connection_closed`` or
-    with its server's ``pool_closed``. Events may arrive from another thread, so they update
-    under a lock and publish an immutable snapshot that :attr:`stats` reads without one.
+    with its server's ``pool_closed``. After ``pool_closed`` that server's events are ignored
+    until its next ``pool_created``: pymongo checks a connection from a closed pool in before
+    it closes it, and that close can be cancelled. Events may arrive from another thread, so
+    they update under a lock and publish an immutable snapshot that :attr:`stats` reads
+    without one.
 
     A connection still opening counts as in use only until *open_within* has passed since
     its ``connection_created``. pymongo publishes no ``connection_closed`` for a connection
@@ -149,6 +152,8 @@ class _PoolEvents(monitoring.ConnectionPoolListener):
     def __init__(self, max_size: int | None, open_within: timedelta) -> None:
         self.__lock = threading.Lock()
         self.__servers: dict[object, _ServerPool] = {}
+        self.__closed: set[object] = set()
+        """Servers whose pool closed and has not been created again."""
         self.__max_size = max_size
         self.__open_within = open_within.total_seconds()
         self.__published: tuple[tuple[int, int, tuple[float, ...]], ...] = ()
@@ -178,6 +183,9 @@ class _PoolEvents(monitoring.ConnectionPoolListener):
         """Record connection *conn_id* as opening, checked out, idle, or gone (``None``)."""
 
         with self.__lock:
+            if address in self.__closed:
+                return
+
             now = monotonic()
             server = self.__servers.setdefault(address, _ServerPool())
             server.opening.pop(conn_id, None)
@@ -224,13 +232,15 @@ class _PoolEvents(monitoring.ConnectionPoolListener):
 
     def pool_closed(self, event: monitoring.PoolClosedEvent) -> None:
         with self.__lock:
+            self.__closed.add(event.address)
             self.__servers.pop(event.address, None)
             self.__publish(monotonic())
 
-    # Not needed for the counts: a cleared pool closes its connections one event at a time.
     def pool_created(self, event: monitoring.PoolCreatedEvent) -> None:
-        pass
+        with self.__lock:
+            self.__closed.discard(event.address)
 
+    # Not needed for the counts: a cleared pool closes its connections one event at a time.
     def pool_ready(self, event: monitoring.PoolReadyEvent) -> None:
         pass
 

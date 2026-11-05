@@ -156,21 +156,29 @@ class TestPoolEvents:
         assert events.stats == _stats(2, 1)
 
     def test_a_closed_pool_drops_its_connections(self) -> None:
-        """A connection checked out and never returned goes with its server's pool."""
+        """A connection checked out and never returned goes with its server's pool.
+
+        One server only, so every snapshot below can come from nothing but that pool.
+        """
 
         events = _events()
         _open(events, PRIMARY, 1)
         _check_out(events, PRIMARY, 1)
-        _open(events, SECONDARY, 1)
 
         events.pool_closed(monitoring.PoolClosedEvent(PRIMARY))
+        assert events.stats == _stats(0, 0)
 
-        assert events.stats == _stats(0, 1)
-
-        # A late check-in from the closed pool does not resurrect it as in use.
+        # pymongo checks a connection from a closed pool in before it closes it, and the close
+        # can be cancelled: the late check-in must not bring the pool back, even as idle.
         _check_in(events, PRIMARY, 1)
-        _close(events, PRIMARY, 1)
+        assert events.stats == _stats(0, 0)
 
+        _close(events, PRIMARY, 1)
+        assert events.stats == _stats(0, 0)
+
+        # A pool created again for the server counts from scratch.
+        events.pool_created(monitoring.PoolCreatedEvent(PRIMARY, {}))
+        _open(events, PRIMARY, 1)
         assert events.stats == _stats(0, 1)
 
     def test_events_from_several_threads_keep_the_counts(self) -> None:
