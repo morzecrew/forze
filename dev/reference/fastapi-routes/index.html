@@ -7804,12 +7804,23 @@ writes a route without a response model. Either way an infinite or NaN float is 
 <li><code>attach_liveness_route(router, *, path="/livez")</code> — 200 unconditionally; reaching
   the handler is the check. Deliberately blind to drain, so a draining pod reads as
   alive-but-not-ready instead of dead. Excluded from the schema.</li>
-<li><code>attach_metrics_route(router, reader, *, path="/metrics")</code> — a Prometheus pull
-  endpoint over an already-registered <code>PrometheusMetricReader</code> (needs
+<li><code>attach_metrics_route(router, reader, *, path="/metrics", snapshots=None)</code> — a
+  Prometheus pull endpoint over an already-registered <code>PrometheusMetricReader</code> (needs
   <code>opentelemetry-exporter-prometheus</code>; any other reader is refused). Renders off
   the event loop, since collection runs every observable callback in the process.
-  <strong>Single-process deployments only</strong> — see <a href="../../running-in-prod/grafana-stack/#pull-metrics-and-why-not">The Grafana
-  stack</a>.</li>
+  Without <code>snapshots</code>, <strong>single-process deployments only</strong> — see <a href="../../running-in-prod/grafana-stack/#pull-metrics-and-why-not">The Grafana
+  stack</a>. With
+  <code>snapshots</code>, it serves every worker of a pre-fork group from their shared
+  directory, renders nothing itself, and answers <code>503</code> when nothing is fresh — see
+  <a href="../../running-in-prod/grafana-stack/#several-workers-one-scrape">Several workers, one scrape</a>.</li>
+<li><code>MetricsSnapshots(directory, *, interval=10s, ttl=3 × interval, max_snapshot_bytes=16 MiB)</code>
+  — the shared directory, checked once and then held open, and how fresh a snapshot must
+  be. <code>writer_step(reader)</code> is the lifecycle step each worker runs to write its own, from
+  the per-worker build that also calls <code>bootstrap_telemetry</code>; a <code>ttl</code> under two intervals,
+  or an unsafe directory at startup, is refused.</li>
+<li><code>worker_metrics_reader()</code> — a <code>PrometheusMetricReader</code> with its own registry and
+  <code>service.instance.id</code> on every series, the reader <code>MetricsSnapshots</code> needs (exporter
+  0.66b0 or newer).</li>
 </ul>
 <h2 id="document-auth-in-openapi">Document auth in OpenAPI<a class="headerlink" href="#document-auth-in-openapi" title="Permanent link">&para;</a></h2>
 <p><code>SecurityContextMiddleware</code> extracts identity; it doesn't tell the schema. By

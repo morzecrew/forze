@@ -6579,6 +6579,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#worker-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worker snapshots
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6800,6 +6811,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Grants invalidation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worker snapshots
       </span>
     </span>
   </a>
@@ -7591,6 +7613,31 @@ every process's grants cache current. Labelled <code>forze.grants_invalidation</
 cache's TTL. A steady <code>flushes</code> rate is a flapping connection: the cache stays correct and stops
 helping. A rising <code>bypasses</code> count in a process that should be subscribed means the lifecycle
 step is not registered there, or its stream has ended. See <a href="../../identity-tenancy-enc/identity/#reaching-every-process">Identity</a>.</p>
+<h2 id="worker-snapshots">Worker snapshots<a class="headerlink" href="#worker-snapshots" title="Permanent link">&para;</a></h2>
+<p>Rendered by <code>attach_metrics_route(..., snapshots=...)</code> itself, not by an <code>instrument_*</code> call:
+one sample per worker the scrape serves, labelled <code>service_instance_id</code>. Prometheus sees it as
+<code>forze_metrics_snapshot_age_seconds</code>. See <a href="../../running-in-prod/grafana-stack/#several-workers-one-scrape">Several workers, one scrape</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.metrics.snapshot.age</code></td>
+<td>gauge</td>
+<td>s</td>
+<td>seconds since that worker wrote the snapshot served; never above the <code>ttl</code></td>
+</tr>
+</tbody>
+</table>
+<p>It describes a worker's whole snapshot, not each series in it. <code>count()</code> of it is the number of
+workers served: alert when it falls below the worker count, because <code>up</code> stays 1 while a
+worker is missing.</p>
 
 
 
