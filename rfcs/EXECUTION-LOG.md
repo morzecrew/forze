@@ -5865,3 +5865,24 @@ to the reader (a plain route scraped during a slow tick joins the tick's render)
 family named `forze_metrics_snapshot_age_seconds` is dropped from the merge with a warning; the
 sweep judges a dead pid's snapshot by its header and deletes a dead pid's temp file at once; and
 the docs and the worker test's app factory call `bootstrap_telemetry` in the per-worker build.
+
+## Review findings — 2026-11-05 (second round)
+
+The PR review of `89aa00950`. Each fix has a test that failed on the commit before it.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-11 | Bug | `_instance_of` split samples with `splitlines()`, which also breaks at CR, NEL and U+2028 that the text format leaves raw in a label value | Fixed (`a88459028`): LF only |
+| R-12 | Bug | An `OSError` from `fstat` or a read escaped the union and failed the whole scrape | Fixed (`72b1b9958`): that file is skipped, logged once |
+| R-13 | Bug | The union read the clocks before listing; a snapshot replaced after that reading looked negative-aged | Fixed (`021792f52`): each snapshot is aged against clocks read after its own header |
+| R-14 | Bug | A pid no process can have made `os.kill` raise `OverflowError` in the sweep, refusing the writer's startup | Fixed (`a6aa3f3f2`): such a pid counts as gone |
+| R-15 | Bug | Header clocks rounded up could read as a negative age | Fixed in `0919ff874` (truncated to the millisecond) |
+| R-16 | Design | A blocked observable callback holds the worker's exit: the final render's budget bounds the hook, not its thread | Documented (`b599affeb`); daemon render threads not adopted, since renders share one gate with the plain route |
+| R-17 | Docs | The unit said `SNAPSHOT_AGE_GAUGE` is exported from `forze_fastapi.routes` | Fixed (`cdd9641a0`) |
+| R-18 | Test | The tick-failure test relied on file modes, which root bypasses | Fixed (`93ff3a99e`): the refused create is injected |
+| R-19 | Bug | A snapshot naming no instance was served without its worker's age sample (row 2) | Fixed (`40277e568`): such a header reads as malformed |
+
+The directory descriptor leak a reviewer named was already closed in `0919ff874`. Unbounded merged
+responses were left as designed: a scrape holds at most one snapshot per fresh worker, each under
+`max_snapshot_bytes` (§9). The final render now runs under one timeout (`1327fef5a`), and the
+module's edge paths are covered (`db063a745`).
