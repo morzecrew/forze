@@ -592,13 +592,13 @@ default.
 | 17 | `ASSUMED` | Each tick sweeps files older than `ttl` whose pid no longer exists, and stray temp files by the same rule. A stalled but live worker is withheld, not swept. |
 | 18 | `ASSUMED` | The code lives in `forze_fastapi.routes`, behind a private module, with the age gauge's constant declared there. There is no core change, no new dependency and no new extra. The Redis store, if built, adds the only core port. |
 | 19 | `ASSUMED` | The snapshot file's token is derived from the process's `instance_id()`, so every writer in one process writes the same file. (D-211) |
-| 20 | `ASSUMED` | The final render's budget is one `interval`, accepted by the maintainer over a smaller fixed bound that would skip a wedged final render before the runtime's step timeout. (D-212) |
+| 20 | `ASSUMED` | The final render's budget is one `interval`, accepted by the maintainer over a smaller fixed bound that would skip a wedged final render before the runtime's step timeout. A final render past the budget is skipped and writes nothing, so row 6's final snapshot then holds the last tick's counters, and increments since that tick are lost. (D-212) |
 | 21 | `ASSUMED` | `MetricsSnapshots.union()` is public: blocking, returning `(status, body)` exactly as the route answers. (D-213) |
 | 22 | `ASSUMED` | One descriptor per process, opened and checked by whichever of the writer and the route comes first. A route that cannot open it answers `503`. (D-217) |
 
 Rows 19 to 22 were added by execution and accepted by the maintainer on 2026-11-05; each cites
 the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
-as designed.
+as designed. Row 20 bounds the final snapshot of row 6, which stays `LOCKED` as written.
 
 ## 12. Phasing
 
