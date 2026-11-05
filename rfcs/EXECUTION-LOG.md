@@ -5668,8 +5668,8 @@ row 16 is amended by D-220 and D-226, row 30 by D-219.
 **Drift count: 4.** Fourteen entries, D-219 to D-232: four `drift` (D-221, D-222, D-223,
 D-226), eight `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's
 wording, §6 and §7, not from a decision row. A review of the first commit found one bug and
-fifteen risks; the PR's review found ten more and refuted one. The tables at the end record
-each and where it was fixed.
+fifteen risks; the PR's two review rounds found sixteen more, and two were refuted. The
+tables at the end record each and where it was fixed.
 
 **Where each item lives.** Credentials in
 [`forze_load/auth.py`](../src/forze_load/auth.py); the plan, `Call` and the write guard in
@@ -5919,3 +5919,17 @@ Automated review of `c7e20bab9`. Findings raised by more than one reviewer are o
 | R-25 | Bug | `access_expires_in: 0` read as 900 s | Fixed in `a87f7e393` |
 | R-26 | Bug | An unloadable plan reference or an unparsable URL printed a traceback (exit 1) | Fixed in `278b9bc2b`, with the fixture cleanup and the census comment |
 | R-27 | Design | Open-model arrivals continue while a step drains | Refuted: load is continuous across step boundaries in both models, and the next step's `warm_s` keeps the transition out of its numbers |
+
+## Review findings — 2026-11-05 (PR #847, second round)
+
+CodeRabbit's review of `345967512`.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-28 | Bug | A plan module or factory that raised `CoreException` printed a traceback (exit 1) | Fixed in `599107f8e`: exit 2 |
+| R-29 | Bug | An infinite or NaN `access_expires_in` was accepted; an infinite one never came due | Fixed in `9b8179e7d` |
+| R-30 | Bug | `ClosedRamp(steps=[1.5])` ran two workers and reported 1.5 | Fixed in `b249092a3`: whole numbers only |
+| R-31 | Bug | `http://localhost:bad` passed validation and failed later in httpx | Fixed in `615ce2097`: the port is read during validation |
+| R-32 | Bug | NaN or Infinity in a run file's metrics made `--fail-on` comparisons false | Fixed in `a37e77bc3` |
+| R-33 | Bug | A step with `"ms": {}` passed, so its latency thresholds could not fail | Fixed in `a37e77bc3`: p50, p95 and p99 are required, null allowed |
+| R-34 | Docs | The review body's docstring-coverage pre-merge check | Refuted: every public class and function in `forze_load` has a docstring; the undocumented definitions are methods of private classes, local closures, and protocol methods documented on `Auth.session` and `AuthSession.headers`, and the repository's gates set no docstring threshold |
