@@ -322,8 +322,8 @@ class HttpClient(HttpClientPort):
         counts from the moment it is sent, queued for one of httpx's pooled connections or
         not, until :meth:`request` has read its response, or until the :meth:`stream` or
         :meth:`send` block exits. Leaving the block closes the response, but closing the
-        response inside the block does not end the count. A block that never exits holds its
-        connection, and this count, up for good.
+        response inside the block does not end the count. A block that never exits keeps this
+        count up for good, whether or not its response, and so its connection, was closed.
 
         :returns: The count, or ``None`` before :meth:`initialize` and after :meth:`close`.
         """

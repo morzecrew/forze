@@ -274,7 +274,7 @@ instead: `instrument_http_clients` from `forze_http` exports
 `forze.http.client.in_flight` per `HttpClient`: requests sent and not
 finished, until `request` has read the response or until a `stream` or
 `send` block exits. A count that never falls back is a block that never
-exits, holding its connection.
+exits; it may or may not still hold its connection.
 
 ```python
 from forze_http import instrument_http_clients

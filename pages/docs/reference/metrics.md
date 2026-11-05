@@ -134,8 +134,9 @@ response, but closing the response inside the block does not end the count. A cl
 before `initialize` or after `close` reports nothing. A `RoutedHttpClient` is refused.
 
 **The alert that matters:** a count that climbs under steady load and never falls back is
-a `stream` or `send` block that never exits, holding its connection. For a service
-transport, that is an SDK response nobody closes.
+a `stream` or `send` block that never exits. It may still hold its connection, or may have
+closed its response already; the count alone does not tell which. For a service transport,
+it is usually an SDK response nobody closes.
 
 ## Crypto and KMS
 

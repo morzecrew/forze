@@ -43,7 +43,8 @@ def instrument_http_clients(
     their block exits. A client before ``initialize`` or after ``close`` reports nothing.
 
     The alert that matters: a count that climbs under steady load and never falls back is a
-    ``stream`` or ``send`` block that never exits, holding its connection.
+    ``stream`` or ``send`` block that never exits. It may still hold its connection, or may
+    have closed the response already; the count alone does not tell which.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at assembly time,
     alongside the other ``instrument_*`` calls.
