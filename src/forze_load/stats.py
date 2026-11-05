@@ -212,10 +212,10 @@ def find_knee(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any
 
     Closed model: the first step whose goodput is under :data:`KNEE_GAIN` above the previous
     step's, confirmed by the next step (also under the gain over the same previous step).
-    Open model: the first rate whose p99 more than doubles over the previous rate's,
-    confirmed by the next rate, each with at least :data:`KNEE_MIN_SAMPLES` answered calls;
-    or whose goodput falls more than :data:`KNEE_GAIN` below the offered rate less its
-    ``conflict`` and ``not_found`` answers.
+    Open model: the first rate whose p99 more than doubles over the previous rate's, each
+    with at least :data:`KNEE_MIN_SAMPLES` answered calls; or whose goodput falls more than
+    :data:`KNEE_GAIN` below the offered rate less its ``conflict`` and ``not_found``
+    answers. Either is confirmed only when the next rate repeats it.
 
     A step whose client was saturated, or that was misconfigured, is never named and never
     confirms a knee; the search stops there, because nothing after it measures the server.
@@ -287,19 +287,28 @@ def _open_knee(
     here: Mapping[str, Any],
     after: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
-    if here["goodput_rps"] < _expected_ok(here) * (1.0 - KNEE_GAIN):
-        return {"knee": _key(here), "confirmed": True, "note": None}
+    # Each test needs the next rate to repeat it, as the closed model's does: one step that
+    # falls short or spikes can be a transient, not a capacity limit.
+    def spiked(row: Mapping[str, Any]) -> bool:
+        return _p99_doubled(before, row)
 
-    if not _p99_doubled(before, here):
-        return None
+    for holds in (_short, spiked):
+        if not holds(here):
+            continue
 
-    if after is None:
-        return {"knee": _key(here), "confirmed": False, "note": "last step, unconfirmed"}
+        if after is None:
+            return {"knee": _key(here), "confirmed": False, "note": "last step, unconfirmed"}
 
-    if _p99_doubled(before, after):
-        return {"knee": _key(here), "confirmed": True, "note": None}
+        if holds(after):
+            return {"knee": _key(here), "confirmed": True, "note": None}
 
     return None
+
+
+def _short(row: Mapping[str, Any]) -> bool:
+    """Goodput more than :data:`KNEE_GAIN` below what the offered rate should yield."""
+
+    return bool(row["goodput_rps"] < _expected_ok(row) * (1.0 - KNEE_GAIN))
 
 
 def _expected_ok(row: Mapping[str, Any]) -> float:

@@ -211,10 +211,24 @@ class TestOpenKnee:
 
         assert find_knee(rows, model="open")["knee"] is None
 
-    def test_goodput_behind_the_offer_is_a_knee(self) -> None:
-        rows = [_open(10, 10, 20.0), _open(20, 17, 21.0)]
+    def test_goodput_behind_the_offer_confirmed_by_the_next_rate_is_a_knee(self) -> None:
+        rows = [_open(10, 10, 20.0), _open(20, 17, 21.0), _open(40, 30, 22.0)]
 
-        assert find_knee(rows, model="open")["knee"] == {"rate": 20}
+        assert find_knee(rows, model="open") == {
+            "knee": {"rate": 20},
+            "confirmed": True,
+            "note": None,
+        }
+
+    def test_a_shortfall_the_next_rate_does_not_repeat_is_not_a_knee(self) -> None:
+        rows = [_open(10, 10, 20.0), _open(20, 17, 21.0), _open(40, 40, 22.0)]
+
+        assert find_knee(rows, model="open")["knee"] is None
+
+    def test_a_shortfall_at_the_last_rate_is_unconfirmed(self) -> None:
+        knee = find_knee([_open(10, 10, 20.0), _open(20, 17, 21.0)], model="open")
+
+        assert knee == {"knee": {"rate": 20}, "confirmed": False, "note": "last step, unconfirmed"}
 
     def test_expected_conflicts_are_not_a_knee(self) -> None:
         rows = [_open(rate, rate * 0.94, 20.0, conflict=int(rate * 0.06)) for rate in (50, 100)]

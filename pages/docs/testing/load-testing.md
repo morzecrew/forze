@@ -135,11 +135,11 @@ like excellent throughput and measures nothing.
 
 The summary names the **knee**: in a closed ramp, the first step whose goodput is less than
 5 % above the previous step's, confirmed by the step after it. In an open ramp, it is the
-first rate whose p99 more than doubles, confirmed by the next rate, with at least 100
-answered calls in each; or whose goodput falls more than 5 % below the offered rate less its
-`conflict` and `not_found` answers. A step whose client was saturated, or that was
-misconfigured, is never named and never confirms a knee; the summary's `note` says why no
-knee was named.
+first rate whose p99 more than doubles, with at least 100 answered calls in each step, or
+whose goodput falls more than 5 % below the offered rate less its `conflict` and `not_found`
+answers; either is confirmed only when the next rate repeats it. A step whose client was
+saturated, or that was misconfigured, is never named and never confirms a knee; the
+summary's `note` says why no knee was named.
 
 ## Compare two runs
 
