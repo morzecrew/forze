@@ -265,5 +265,6 @@ def test_the_group_refuses_without_the_extra(monkeypatch) -> None:
 
     result = runner.invoke(app, ["load", "compare", "a", "b"])
 
-    assert result.exit_code == 1
+    # 2, not 1: exit 1 means --fail-on was crossed, and a missing extra is no regression.
+    assert result.exit_code == 2
     assert "forze[cli,load]" in result.output
