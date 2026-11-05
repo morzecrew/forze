@@ -14,6 +14,7 @@ import httpx
 
 from forze.base.exceptions import exc
 
+from ._target import require_path
 from .auth import Auth, AuthSession, HeadersFn
 
 # ----------------------- #
@@ -66,15 +67,7 @@ class Call:
             scheme or a host.
         """
 
-        parts = urlsplit(url)
-
-        if parts.scheme or parts.netloc:
-            raise exc.configuration(
-                "Call.request takes a path relative to the plan's base URL, not a URL "
-                "with a scheme or a host",
-                code="load_plan_invalid",
-            )
-
+        require_path(url, "Call.request")
         merged = {**self.headers, **(headers or {})}
 
         return await self.client.request(method, url, json=json, params=params, headers=merged)

@@ -22,6 +22,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
 from ._seams import process_seconds, seeded_random
+from ._target import no_cookies, target_guard
 from ._version import __version__
 from .auth import Auth, AuthSession, HeadersFn
 from .plan import TENANT_HEADER, Call, LoadPlan, Principal, Scenario, safe_target, validate_plan
@@ -212,11 +213,20 @@ async def run(
             # the client and be measured as server latency.
             limits=httpx.Limits(max_connections=connections, max_keepalive_connections=connections),
             transport=transport,
+            # Both clients are shared by every principal: they keep no cookie, and refuse any
+            # request off the plan's target, so no credential reaches another principal or
+            # another host.
+            cookies=no_cookies(),
+            event_hooks={"request": [target_guard(plan.base_url)]},
         ) as client,
         # Sign-in and refresh get their own pool: a refresh must never wait behind a full
         # request pool, and its time is the credential's, not the request's.
         httpx.AsyncClient(
-            base_url=plan.base_url, timeout=plan.timeout_s, transport=transport
+            base_url=plan.base_url,
+            timeout=plan.timeout_s,
+            transport=transport,
+            cookies=no_cookies(),
+            event_hooks={"request": [target_guard(plan.base_url)]},
         ) as auth_client,
     ):
         state = _Run(

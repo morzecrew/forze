@@ -20,6 +20,8 @@ import httpx
 from forze.base.exceptions import exc
 from forze.base.primitives import monotonic
 
+from ._target import require_path
+
 # ----------------------- #
 
 type HeadersFn = Callable[[httpx.AsyncClient], Awaitable[Mapping[str, str]]]
@@ -130,11 +132,12 @@ class PasswordLogin:
     password_env: str
     """Environment variable holding the password."""
 
-    login_path: str = "/login"
-    """Path of the login route, relative to the plan's base URL."""
+    login_path: str = attrs.field(default="/login")
+    """Path of the login route, relative to the plan's base URL; a URL with a host is refused,
+    so the password and refresh token never leave the target."""
 
-    refresh_path: str = "/refresh"
-    """Path of the refresh route, relative to the plan's base URL."""
+    refresh_path: str = attrs.field(default="/refresh")
+    """Path of the refresh route, relative to the plan's base URL; same rule."""
 
     refresh_margin: float = attrs.field(default=0.1)
     """Share of the access token's lifetime left when it is renewed."""
@@ -145,6 +148,11 @@ class PasswordLogin:
     def _check_margin(self, _attribute: Any, value: float) -> None:
         if not 0.0 <= value < 1.0:
             raise exc.configuration("refresh_margin must be in [0, 1)")
+
+    @login_path.validator  # pyright: ignore[reportAttributeAccessIssue, reportUntypedFunctionDecorator]
+    @refresh_path.validator  # pyright: ignore[reportAttributeAccessIssue, reportUntypedFunctionDecorator]
+    def _check_path(self, attribute: Any, value: str) -> None:
+        require_path(value, f"PasswordLogin.{attribute.name}")
 
     def session(self) -> AuthSession:
         return PasswordSession(config=self)

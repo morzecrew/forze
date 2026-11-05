@@ -17,7 +17,8 @@ A plan names the target, who signs in, and what each of them sends. A scenario i
 function that sends one request through the `Call` it is given; `Call.request` adds the
 principal's credential and tenant headers. It takes a path relative to the plan's base URL:
 a URL with a scheme or a host, such as a pagination `next` link, is refused before anything
-is sent, so the credential never leaves the target the guard checked.
+is sent, so the credential never leaves the target the guard checked. The run's clients
+refuse any request to another origin, from a scenario or a credential, the same way.
 
 ```python
 from forze_load import Call, LoadPlan, Principal, Scenario, api_key, password_login
@@ -60,8 +61,10 @@ plan = LoadPlan(
   `X-API-Key` (or the header you name), `bearer` sends a pre-issued token, and
   `password_login` signs in through the `/login` and `/refresh` routes that
   `attach_authn_routes` serves. Any async callable that takes the client and returns headers
-  works too, for cookies or an external IdP. Each run opens a fresh session, so a plan can be
-  run again.
+  works too, for an external IdP or a cookie-mode app. The run's clients keep no cookies,
+  because every principal shares them: a cookie-mode credential returns its session as an
+  explicit `Cookie` header. `password_login`'s routes are paths on the target; a URL with a
+  host is refused. Each run opens a fresh session, so a plan can be run again.
 - **`tenant`** is sent as `X-Tenant-Id`. A token's tenant claim wins over it, and the app
   reads the header only with `trust_tenant_header=True`.
 
