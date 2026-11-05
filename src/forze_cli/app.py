@@ -13,6 +13,7 @@ import typer
 
 from forze._version import __version__
 from forze_cli.dst import dst_app
+from forze_cli.load import load_app
 from forze_cli.mock import mock_app_cli
 from forze_cli.ops.commands import ops_cli
 
@@ -32,7 +33,8 @@ app = typer.Typer(
         "Point a command at an object you expose as 'module:attribute': an OpsApp for "
         "'ops' (call operations, governed as over HTTP), a Simulation for 'dst' (hunt "
         "concurrency and consistency bugs; needs the 'dst' extra), a MockApp for 'mock' "
-        "(serve on in-memory backends; needs the 'mock-server' extra)."
+        "(serve on in-memory backends; needs the 'mock-server' extra), a LoadPlan for 'load' "
+        "(load-test a running app; needs the 'load' extra)."
     ),
 )
 
@@ -61,3 +63,4 @@ def root(
 app.add_typer(ops_cli, name="ops")
 app.add_typer(dst_app, name="dst")
 app.add_typer(mock_app_cli, name="mock")
+app.add_typer(load_app, name="load")

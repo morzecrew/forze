@@ -96,6 +96,7 @@ nav = [
         { "Testing" = [
             "testing/overview.md",
             "testing/concurrency.md",
+            "testing/load-testing.md",
         ] },
     ] },
     { "Simulation" = [

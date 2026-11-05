@@ -747,3 +747,6 @@ openapi_extra  # unused variable (src/forze_fastapi/realtime/sse.py:133) — a T
 media_type  # unused variable (src/forze_fastapi/realtime/sse.py:139) — read by FastAPI's OpenAPI generator
 metrics_union  # unused function (src/forze_fastapi/routes/health.py:229) — a route handler, registered by its decorator
 _.writer_step  # unused method (src/forze_fastapi/routes/_snapshots.py:374) — public API, called by applications
+compare_command  # unused function (src/forze_cli/load.py:124) — a Typer command callback
+_._check_margin  # unused method (src/forze_load/auth.py:129) — an attrs validator
+_._check_path  # unused method (src/forze_load/auth.py:152) — an attrs validator

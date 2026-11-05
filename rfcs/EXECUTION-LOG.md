@@ -5886,3 +5886,308 @@ The directory descriptor leak a reviewer named was already closed in `0919ff874`
 responses were left as designed: a scrape holds at most one snapshot per fresh worker, each under
 `max_snapshot_bytes` (§9). The final render now runs under one timeout (`1327fef5a`), and the
 module's edge paths are covered (`db063a745`).
+
+---
+
+# Unit 20 · RFC 0084 P1 — the generic load core
+
+Branch `feat/forze-load-p1`, cut from `main` at `a4572aece`. RFC 0084 P1 per §12: §5.2–§5.4,
+§5.6 and §5.9–§5.11, the §6 unit tests, the §7 docs page and the changelog. RFC 0084 is not on
+`main` yet; it is measured here as it stands on `docs/rfcs-0083-0084` at `59f75a59e`. Its
+amendments up to there are built as written: 504s count in the stop rule (`5c62404f2`), the
+in-flight cap is the 1 − 10⁻⁶ Poisson quantile and a refusal counts as a call (`9699757e4`),
+no knee is confirmed by a saturated or misconfigured step, the open-model comparison discounts
+`conflict` and `not_found` answers, `target` keeps scheme, host and port only, the meta line
+records the mixes and `compare` warns when they differ (`9699757e4`–`59f75a59e`). Not built,
+as §12 assigns them to later phases: operation references and `x-forze-kind` (P2), realtime
+(P3), the soak (P4). Rows 1–15, 17–18, 20–29 and 31–33 hold as written or do not apply to P1;
+row 16 is amended by D-220 and D-226, row 30 by D-219.
+
+**Drift count: 4.** Fourteen entries, D-219 to D-232: four `drift` (D-221, D-222, D-223,
+D-226), eight `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's
+wording, §6 and §7, not from a decision row. A review of the first commit found one bug and
+fifteen risks; the PR's four review rounds found twenty more, and two were refuted. The
+tables at the end record each and where it was fixed.
+
+**Where each item lives.** Credentials in
+[`forze_load/auth.py`](../src/forze_load/auth.py); the plan, `Call` and the write guard in
+[`plan.py`](../src/forze_load/plan.py); outcome classes, step recorders and the knee in
+[`stats.py`](../src/forze_load/stats.py); the two models, sign-in, the in-flight cap and the
+client probe in [`engine.py`](../src/forze_load/engine.py); the run file and `compare` in
+[`report.py`](../src/forze_load/report.py); the CLI group in
+[`forze_cli/load.py`](../src/forze_cli/load.py). The only raw RNG and process-CPU calls are in
+[`_seams.py`](../src/forze_load/_seams.py), which is the determinism guard's single allowlist
+entry for the package; nothing under `src/forze_dst` imports `forze_load`.
+
+`uv.lock` is unchanged, by the executing session's rules; `uv lock` adds `load` to the
+package's `provides-extras`, pending the maintainer.
+
+## D-219 — Saturation is judged on the event loop's thread CPU, and not at all in process
+
+- **Touches:** row 30 (`ASSUMED`), §5.10.
+- **RFC said:** client CPU is `time.process_time()` over wall time per step; saturated at
+  ≥ 0.85 cores.
+- **Found:** an app served by another thread of the same process (the integration test)
+  adds its CPU to `process_time`, so a light client next to a busy server reads as saturated.
+  One event loop runs Python on one core, so the loop thread's CPU is what saturates. An app
+  served on the same loop through `run(..., transport=...)` runs on that very thread, so not
+  even the thread's CPU belongs to the client then.
+- **Built:** `loop_cpu` from `time.thread_time()` drives the flag; `process_cpu` is reported
+  beside it. With `transport=` the row says `loop_cpu_judged: false` and saturation is judged
+  on loop lag and late sends only.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a row's `client.saturated` reads the event loop's
+  thread CPU (`time.thread_time()`), at ≥ 0.85 cores, except with an in-process transport,
+  where the loop CPU is reported and not judged; process CPU is reported, not judged.
+
+## D-220 — The open-model p99 test is confirmed and needs 100 answered calls
+
+- **Touches:** row 16 (`ASSUMED`), §5.6.
+- **RFC said:** an open-model knee is the first rate where p99 more than doubles, or where
+  goodput falls more than 5 % below the offered rate less its `conflict` and `not_found`
+  answers. Row 16 asks for the thresholds chosen to be logged.
+- **Found:** below 100 samples a p99 is the maximum, and one slow answer doubles it; an
+  unconfirmed doubling names a knee on noise.
+- **Built:** the p99 test needs the next rate to double over the same previous rate, and both
+  steps to have at least `KNEE_MIN_SAMPLES = 100` answered calls (rows carry `sampled`). The
+  goodput test stands alone, as written. Thresholds: `KNEE_GAIN = 0.05`, doubling = 2.0.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the open-model p99 test is confirmed by the next
+  rate and compares only steps with at least 100 answered calls.
+
+## D-221 — The public API differs from §5.2's sketch
+
+- **Touches:** §5.2, §5.4. No row fixes these shapes.
+- **RFC said:** `Scenario.call(...)` and `Scenario.op(...)`, `LoadPlan(mixes=...)`,
+  `closed_ramp(...)` / `open_ramp(...)`, and sign-in concurrency "default 4, settable".
+- **Built:** `Scenario(name, send, writes=...)`, a mix on each `Principal`, profile classes
+  `ClosedRamp` / `OpenRamp`, `LOGIN_CONCURRENCY = 4` as a constant, and credentials as
+  `Auth` values whose `session()` opens one `AuthSession` per run. `run()` takes a
+  `transport=` for tests.
+- **Because:** a mix belongs to the principal it describes. `Scenario.op` is P2's, and a
+  `Scenario.call` alias adds a second spelling. The profile classes are the values a function
+  would return. A per-run session is what lets a plan run twice (R-4).
+- **Class:** `drift`.
+- **Proposed row (RFC 0084):** `ASSUMED` — P1's API is `LoadPlan`, `Principal(mix=...)`,
+  `Scenario(name, send, writes=)`, `ClosedRamp`, `OpenRamp`, `Auth.session()` and
+  `run(plan, profile, out=)`; P2 adds operation references beside `Scenario`.
+
+## D-222 — No separate `load_ramp` recipe, and no `-m perf` knee-band test
+
+- **Touches:** §6 ("Example").
+- **RFC said:** an `examples/recipes/load_ramp/` app with a fixed bulkhead and armed latency,
+  a test asserting the file's shape, and a `-m perf` twin asserting a plateau near
+  limit ÷ latency.
+- **Built:** `tests/integration/test_forze_load/` serves the existing mock-server recipe with
+  uvicorn on a socket, in a thread, and drives it: a three-step ramp, writes on loopback, the
+  guard refusing an unlisted host with zero requests reaching the server, and a CPU-bound
+  client flagged saturated and never named the knee. The knee rule is tested on synthetic rows.
+- **Because:** a plateau band asserted on shared CI runners is a flaky gate, and the recipe
+  already exists and is test-backed.
+- **Class:** `drift`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the kit's own tests assert behavior (rows, outcome
+  classes, guards, flags) over a real socket and the knee on synthetic rows; no timing band.
+
+## D-223 — The docs page is `testing/load-testing.md`
+
+- **Touches:** §7.
+- **RFC said:** `pages/docs/testing/load-and-soak.md`.
+- **Built:** `pages/docs/testing/load-testing.md`. P1 has no soak, and a page named for one
+  would promise it. P4 can rename the page when the soak lands.
+- **Class:** `drift`.
+
+## D-224 — `forze_load` is deferred (D4) in the skills census
+
+- **Touches:** nothing in the RFC; `tools/skills_check/coverage.toml` requires a doctrine for
+  every shipped package and extra.
+- **Found:** D1 needs a worked example in the skills corpus. P1 has no forze-specific wiring
+  to show beyond an HTTP client, so the example would teach httpx.
+- **Built:** `load` in `extras.whole-package` and `forze_load` as D4, with the trigger "RFC
+  0084 P2 lands, or a consumer app ports its harness onto `forze_load`".
+- **Class:** `spec-gap`.
+
+## D-225 — Exit codes, and a scenario that never suspends
+
+- **Touches:** §5.2 (the CLI), §5.3.
+- **Found, exit codes:** the RFC gives `forze load` no exit-code contract. Built: 0 on a
+  finished run (a ramp that stopped on its stop rule included: a stop is a result, gated with
+  `compare --fail-on`) or a report; 1 when `--fail-on` is crossed; 2 on a refusal (a refused
+  plan, a missing credential, a sign-in that fails in transport or answers no JSON token, a
+  refresh that fails after expiry, an unreadable run file, a bad `--fail-on`) or a usage error
+  (fractional closed-model steps included, which `int()` would have truncated).
+- **Found, scheduling:** a scenario that answers without suspending held the event loop in the
+  closed model's worker loop, and the step timer never fired. The worker yields after every
+  call (`asyncio.sleep(think_s)` even at 0), and the arrival loop yields when it is behind.
+- **Class:** `discovery` (scheduling); the exit codes are a `spec-gap` folded in here.
+- **Proposed row (RFC 0084):** `ASSUMED` — `forze load` exits 0 on a finished run, its stop
+  included, 1 when `--fail-on` is crossed, and 2 on a refusal, an unreadable run file or a
+  usage error.
+
+## D-226 — The summary's note names what blocked the knee
+
+- **Touches:** §5.6 ("the summary says 'no knee found below saturation' instead").
+- **Built:** `note` names the cause and the step: `client saturated at {'workers': 8}`,
+  `misconfigured at …`, `unconfirmed: the next step was client saturated at …`,
+  `no goodput at …`, `one step, no comparison`, `last step, unconfirmed`, or
+  `goodput rose at every step`. Zero goodput no longer reads as rising.
+- **Because:** the step is what the reader needs to rerun below it, and saturation is one of
+  several reasons a knee goes unnamed.
+- **Class:** `drift`.
+
+## D-227 — A scenario's URL cannot leave the target
+
+- **Touches:** §5.11, row 9 (`LOCKED`). The guard checks the plan's `base_url`; the RFC is
+  silent on the URL a scenario passes.
+- **Found (review R-1):** `Call.request` handed its URL to httpx as is, so an absolute or
+  `//host` URL (a pagination `next` link) went to another host with the principal's
+  `Authorization` or `X-API-Key`, past the write guard.
+- **Built:** a URL whose `urlsplit` has a scheme or a netloc is refused with
+  `load_plan_invalid` before anything is sent, and the run stops.
+- **Class:** `spec-gap`. Row 9's guard holds only if every request stays on the checked host.
+- **Proposed row (RFC 0084):** `ASSUMED` — `Call.request` takes a path relative to the base
+  URL and refuses a URL with a scheme or a host before sending.
+
+## D-228 — Credentials have their own pool, and their time is not latency
+
+- **Touches:** §5.2–§5.4 (logins are not measured), row 10 (`ASSUMED`).
+- **Built:**
+  - sign-in and refresh use a second client with its own pool, so a refresh never waits
+    behind a full request pool;
+  - a call resolves its headers before its latency clock counts, and the time is reported per
+    step as `auth.total_s` and `auth.max_ms`;
+  - a refresh that fails in transport or with a 5xx keeps the current token while it is valid
+    and retries after 0.5 s, doubling to 30 s; after expiry the failure stops the run;
+  - each run opens a fresh session: a plan reused across `asyncio.run` builds no lock on a dead
+    loop and carries no token.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — credentials resolve on their own connection pool,
+  outside the latency clock, with refresh retried under backoff while the token is valid and
+  one session per run.
+
+## D-229 — A call counts in the step that sent it
+
+- **Touches:** §5.3, §5.6.
+- **Found (review R-5, R-6, R-9):** a call recorded into whichever step was current when it
+  answered, rates divided by the nominal window, and transport failures fed the latency
+  sketch with the time spent failing.
+- **Built:** the step is bound when a call is sent; at the step's end new sends count nowhere
+  until the next step opens, and the row waits up to the request timeout plus 1 s for the
+  calls the step sent (`unfinished` counts any left). Rates divide by the measured window's
+  real length. A transport failure is counted with no latency: percentiles cover answered
+  calls (`sampled`).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a call counts in the step that sent it, rates use
+  the measured window, and latency percentiles cover answered calls only.
+
+## D-230 — Poisson arrivals draw from their own stream
+
+- **Touches:** §5.3.
+- **Found (review R-7):** arrivals, scenario picks and `Call.rng` shared one RNG, so a
+  scenario that drew more numbers moved every later arrival time.
+- **Built:** `seeded_random(seed, stream)` seeds one RNG per stream with a string (SHA-512 in
+  `random.seed`, stable across processes): `picks`, shared with `Call.rng`, and `arrivals`.
+- **Class:** `discovery`.
+
+## D-231 — The run's clients keep no cookie and refuse every other origin
+
+- **Touches:** row 9 (`LOCKED`), D-227 and D-228. The write guard checks the base URL; the
+  RFC is silent on cookies and on URLs built outside `Call.request`.
+- **Found (PR #847 review):** both clients kept httpx's ordinary cookie jar, shared by every
+  principal, so a session cookie one principal received was sent with the others' requests.
+  `password_login`'s `login_path` and `refresh_path` went to httpx as given, so an absolute
+  URL posted the password or refresh token to that host.
+- **Built:** both clients keep a `CookieJar` whose policy accepts nothing; a cookie-mode
+  credential returns its session as an explicit header. `login_path` and `refresh_path` are
+  refused unless they are paths. A request hook on both clients refuses, before sending, any
+  request whose origin differs from the plan's, which covers a scenario or a credential
+  callable that builds an absolute URL itself, and a redirect.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the run's clients store no cookies and refuse any
+  request off the plan's origin; credential routes are paths on the target.
+
+## D-232 — An open-model shortfall is confirmed by the next rate too
+
+- **Touches:** row 16 (`ASSUMED`), D-220.
+- **Found (PR #847 review):** a rate whose goodput fell short of the offered rate was named a
+  confirmed knee on its own, so one transient dip read as a capacity limit, while the p99 test
+  (D-220) and the closed model required the next step to agree.
+- **Built:** the shortfall test needs the next rate to fall short too; at the last rate the
+  knee is reported unconfirmed.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — both open-model knee tests, p99 doubling and the
+  goodput shortfall, are confirmed only when the next rate repeats them (amends D-220's row).
+
+## Review findings — 2026-11-05
+
+Fresh-eyes review of `4c3f6dd8f`, with the #840 round's RFC amendments.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | An absolute or `//host` URL in `Call.request` left the target with the credential | Fixed (D-227); a test proves no request leaves and no credential is sent |
+| R-2 | Risk | CLI: fractional closed steps truncated; a sign-in transport error or non-JSON body, and an unreadable run file, exited 1 | Fixed (D-225): each exits 2; a stop exits 0, documented |
+| R-3 | Risk | Auth state (lock, tokens) lived on the plan, bound to the first loop and carried across runs; a refresh failure was retried on every request | Fixed (D-228): a session per run; backoff while valid, a stop after expiry |
+| R-4 | Risk | Auth shared the request pool with no headroom, and its time counted as latency | Fixed (D-228) |
+| R-5 | Risk | A call counted in the step it answered in | Fixed (D-229) |
+| R-6 | Risk | Goodput and `duration_s` used the nominal window | Fixed (D-229) |
+| R-7 | Risk | Poisson arrivals shared the picks' RNG | Fixed (D-230) |
+| R-8 | Risk | With `transport=`, loop-thread CPU counted the app's CPU | Fixed (D-219): reported, not judged |
+| R-9 | Risk | Transport failures fed the latency sketch | Fixed (D-229) |
+| R-10 | Risk | Zero goodput read as rising; one step gave no note; the open p99 test was unconfirmed | Fixed (D-220, D-226) |
+| R-11 | Risk | The integration test skipped green when uvicorn was missing | Fixed: imported directly, as are typer and httpx in the CLI test |
+| R-12 | Risk | The determinism allowlist covered all of `engine.py`, with a wrong comment | Fixed: one entry for `_seams.py`, which holds the two raw calls |
+| R-13 | RFC | In-flight cap as a Poisson quantile; a refusal is a call | Built as amended |
+| R-14 | RFC | No knee confirmed by a saturated or misconfigured step; open comparison less expected answers | Built as amended |
+| R-15 | RFC | `target` scheme://host:port only; mixes in meta; `compare` warns on weights or mixes | Built as amended |
+| R-16 | RFC | Docs: `writes` is a declaration the kit trusts | Written on the docs page |
+
+## Review findings — 2026-11-05 (PR #847)
+
+Automated review of `c7e20bab9`. Findings raised by more than one reviewer are one row.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-17 | Bug | A session cookie set for one principal was sent with every principal's requests | Fixed in `c9b4fce03` (D-231) |
+| R-18 | Bug | `login_path` or `refresh_path` given as a URL sent the password or refresh token off the target | Fixed in `c9b4fce03` (D-231) |
+| R-19 | Bug | A call still awaiting its credential when the step closed was lost from the row | Fixed in `d29fc286d` |
+| R-20 | Bug | `compare` keyed steps as text (`rate=50` ≠ `rate=50.0`) and kept one row of a repeated step | Fixed in `4308c29a1` |
+| R-21 | Bug | A run file with a non-numeric latency or key, or a plan that is not an object, crashed `compare` | Fixed in `50a891af7` |
+| R-22 | Bug | `nan`/`inf` rates crashed the in-flight cap; a `nan` stop rate or `--fail-on` threshold disabled it | Fixed in `1447cb7b3` |
+| R-23 | Bug | `--steps 1,,4` ran a different ramp from the one typed | Fixed in `81573ed96` |
+| R-24 | Risk | An open-model shortfall was a confirmed knee without the next rate | Fixed in `b9e293ed0` (D-232) |
+| R-25 | Bug | `access_expires_in: 0` read as 900 s | Fixed in `a87f7e393` |
+| R-26 | Bug | An unloadable plan reference or an unparsable URL printed a traceback (exit 1) | Fixed in `278b9bc2b`, with the fixture cleanup and the census comment |
+| R-27 | Design | Open-model arrivals continue while a step drains | Refuted: load is continuous across step boundaries in both models, and the next step's `warm_s` keeps the transition out of its numbers |
+
+## Review findings — 2026-11-05 (PR #847, second round)
+
+CodeRabbit's review of `345967512`.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-28 | Bug | A plan module or factory that raised `CoreException` printed a traceback (exit 1) | Fixed in `599107f8e`: exit 2 |
+| R-29 | Bug | An infinite or NaN `access_expires_in` was accepted; an infinite one never came due | Fixed in `9b8179e7d` |
+| R-30 | Bug | `ClosedRamp(steps=[1.5])` ran two workers and reported 1.5 | Fixed in `b249092a3`: whole numbers only |
+| R-31 | Bug | `http://localhost:bad` passed validation and failed later in httpx | Fixed in `615ce2097`: the port is read during validation |
+| R-32 | Bug | NaN or Infinity in a run file's metrics made `--fail-on` comparisons false | Fixed in `a37e77bc3` |
+| R-33 | Bug | A step with `"ms": {}` passed, so its latency thresholds could not fail | Fixed in `a37e77bc3`: p50, p95 and p99 are required, null allowed |
+| R-34 | Docs | The review body's docstring-coverage pre-merge check | Refuted: every public class and function in `forze_load` has a docstring; the undocumented definitions are methods of private classes, local closures, and protocol methods documented on `Auth.session` and `AuthSession.headers`, and the repository's gates set no docstring threshold |
+
+## Review findings — 2026-11-05 (PR #847, third round)
+
+Greptile's review after the merge of `main`.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-35 | Bug | The open-model search skipped the first rate, though a shortfall compares a step with its own offer | Fixed in `3db09c71e`: the search starts at the first rate; only the p99 test needs an earlier one |
+| R-36 | Bug | `compare --fail-on` against a run with no step (cut short before its first) matched nothing and exited 0 | Fixed in `080f2b557`: refused as `load_compare_empty`, exit 2; a report-only compare warns that nothing was compared |
+| R-37 | Test | Found while gating this round: the loop-CPU probe test busy-looped and failed when the scheduler took its time | Fixed in `de5fe7cb5`: driven by a fake clock |
+
+## Review findings — 2026-11-05 (PR #847, fourth round)
+
+CodeRabbit's re-review of `a844c8a1f`. Its body repeats the docstring-coverage check refuted at
+R-34.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-38 | Bug | `--fail-on ""` (an unset CI variable) compared with no gate and exited 0 | Fixed in `c660cf7b5`: only an absent option disables the gate; an empty one is refused, exit 2 |
+| R-39 | Bug | A gated latency with a value in the base run and null in the head (no call answered) was skipped | Fixed in `02f552cd8`: reported as a failure |
