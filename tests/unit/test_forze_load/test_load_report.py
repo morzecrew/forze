@@ -164,18 +164,35 @@ class TestCompare:
         assert "workers=2: only in one run" in comparison.warnings
         assert "workers=4: only in one run" in comparison.warnings
 
-    def test_different_weights_or_mixes_are_warned(self) -> None:
+    def test_every_differing_meta_field_is_named_except_the_start_time(self) -> None:
         base, head = _run(_row(1, 10, 5)), _run(_row(1, 10, 5))
-        base.meta["plan"] = {"principals": {"a": 1}, "mixes": {"a": {"x": 1}}, "seed": 0}
-        head.meta["plan"] = {"principals": {"a": 2}, "mixes": {"a": {"x": 1, "y": 1}}, "seed": 1}
+        shared = {"steps": [1, 2], "step_s": 30}
+        base.meta.update(
+            forze_load="0.23.0",
+            started_at="2026-11-05T00:00:00",
+            client={"cpus": 8, "python": "3.13.1", "loop": "uvloop"},
+            profile={**shared, "warm_s": 5},
+            plan={"principals": {"a": 1}, "mixes": {"a": {"x": 1}}, "seed": 0},
+        )
+        head.meta.update(
+            forze_load="0.24.0",
+            started_at="2026-11-06T00:00:00",
+            client={"cpus": 4, "python": "3.14.0", "loop": "asyncio"},
+            profile={**shared, "warm_s": 0},
+            plan={"principals": {"a": 2}, "mixes": {"a": {"x": 1, "y": 1}}, "seed": 0},
+        )
 
         warnings = compare_runs(base, head).warnings
 
-        assert (
-            "runs differ in principal weights: a different mix is a different workload" in warnings
-        )
-        assert "runs differ in principal mixes: a different mix is a different workload" in warnings
-        assert "runs differ in plan (scenarios, timeout or seed): comparing anyway" in warnings
+        assert warnings == [
+            "runs differ in forze_load version: comparing anyway",
+            "runs differ in client cores: comparing anyway",
+            "runs differ in client Python: comparing anyway",
+            "runs differ in client event loop: comparing anyway",
+            "runs differ in profile warm_s: comparing anyway",
+            "runs differ in principal weights: comparing anyway",
+            "runs differ in principal mixes: comparing anyway",
+        ]
 
     def test_equal_rates_match_whatever_their_number_type(self) -> None:
         base, head = _row(1, 10, 5), _row(1, 10, 5)

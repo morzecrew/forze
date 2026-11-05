@@ -28,7 +28,15 @@ SCHEMA = 1
 
 _LOWER_IS_WORSE = frozenset({"goodput"})
 _METRICS: tuple[str, ...] = ("goodput", "p50", "p95", "p99")
-_META_KEYS: tuple[str, ...] = ("target", "model", "client")
+_META_IGNORED = frozenset({"kind", "schema", "started_at"})
+_META_LABELS: dict[str, str] = {
+    "forze_load": "forze_load version",
+    "client.cpus": "client cores",
+    "client.python": "client Python",
+    "client.loop": "client event loop",
+    "plan.principals": "principal weights",
+    "plan.mixes": "principal mixes",
+}
 
 
 # ....................... #
@@ -201,23 +209,11 @@ def compare_runs(
     so a default threshold would make a gate flaky.
     """
 
+    # Another host, runtime or mix is another measurement, not a regression: say which.
     warnings = [
-        f"runs differ in {key}: comparing anyway"
-        for key in _META_KEYS
-        if base.meta.get(key) != head.meta.get(key)
+        f"runs differ in {_META_LABELS.get(name, name.replace('.', ' '))}: comparing anyway"
+        for name in _meta_differences(base.meta, head.meta)
     ]
-    base_plan, head_plan = base.meta.get("plan") or {}, head.meta.get("plan") or {}
-    warnings.extend(
-        f"runs differ in principal {label}: a different mix is a different workload"
-        for key, label in (("principals", "weights"), ("mixes", "mixes"))
-        if base_plan.get(key) != head_plan.get(key)
-    )
-    other = ("principals", "mixes")
-
-    if {k: v for k, v in base_plan.items() if k not in other} != {
-        k: v for k, v in head_plan.items() if k not in other
-    }:
-        warnings.append("runs differ in plan (scenarios, timeout or seed): comparing anyway")
     base_rows, head_rows = _keyed(base.rows), _keyed(head.rows)
     lines: list[str] = []
     failures: list[str] = []
@@ -244,6 +240,30 @@ def compare_runs(
 
 
 # ....................... #
+
+
+def _meta_differences(base: Mapping[str, Any], head: Mapping[str, Any]) -> list[str]:
+    """Every meta field the two runs disagree on but ``started_at``, nested one level."""
+
+    names: list[str] = []
+
+    for key in [*base, *(k for k in head if k not in base)]:
+        if key in _META_IGNORED:
+            continue
+
+        old, new = base.get(key), head.get(key)
+
+        if isinstance(old, dict) and isinstance(new, dict):
+            names.extend(
+                f"{key}.{sub}"
+                for sub in [*old, *(k for k in new if k not in old)]
+                if old.get(sub) != new.get(sub)
+            )
+
+        elif old != new:
+            names.append(key)
+
+    return names
 
 
 type _StepKey = tuple[str, float, int]

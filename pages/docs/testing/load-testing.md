@@ -152,8 +152,10 @@ Steps are matched by worker count or rate, and goodput, p50, p95 and p99 are pri
 side. Without `--fail-on` the command only reports: load runs vary far more than
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
 exits 1 when a named metric is worse by more than its share, and 2 when a file cannot be
-read as a run. Runs against a different target, client machine, principal weights or mixes
-are compared with a warning: a different mix is a different workload.
+read as a run. When the two meta lines differ in any field but the start time (the target,
+the client's cores, Python or event loop, the `forze_load` version, the profile, the
+principal weights or mixes), the command compares anyway and names each field in a warning:
+another host, runtime or mix is another measurement, not a regression.
 
 ## Writes and shared environments
 
