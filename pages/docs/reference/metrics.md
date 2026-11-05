@@ -70,6 +70,32 @@ rejected while open, so its rate tracks shed load rather than flap count.
 thrash — hot tenants' pools evicted by cold one-off traffic, each rebuild paying full
 connection establishment.
 
+## Connection pools
+
+`instrument_connection_pools({"postgres": client, ...})` — one entry per client that
+implements `SupportsConnectionPoolStats`. Today that is `PostgresClient`; Redis, MongoDB
+and outbound HTTP follow.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `forze.connection_pool.in_use` | observable gauge | 1 | `forze.client` | connections checked out, or being opened or reopened by the pool |
+| `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | open connections not checked out |
+| `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`) |
+| `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; absent where the driver does not expose it |
+
+A client with no open pool reports nothing. A routed client is refused: summing its
+per-tenant pools would hide the one that is saturated. Its connections are not exported;
+the tenant pool gauges above report only its pool cache (size and churn).
+
+**The alert that matters:** `waiting` above zero across scrapes, or `in_use` pinned at
+`max`, means callers queue for connections and will start failing at the acquire timeout.
+`in_use` that climbs under steady load and never falls back is a leaked connection.
+A database that is down shows the same pattern: the pool's reconnect attempts hold `in_use`
+at `max` with `waiting` above zero while no caller saturates the pool, so pair the alert
+with a connectivity signal. On Postgres, a caller that timed out still counts in `waiting`
+until a connection is returned to the pool, so `waiting` stays up for as long as every
+connection is held or the database is unreachable.
+
 ## Crypto and KMS
 
 `instrument_crypto({"default": keyring, ...})`.

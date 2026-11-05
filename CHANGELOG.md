@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_load` load-tests a running app (`load` extra).** It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that `forze load compare` diffs. Writes are refused unless allowed and the host is loopback or allowlisted.
 
+- **`instrument_connection_pools` exports Postgres connection pool gauges.** Per client you name (`forze.client`), `forze.connection_pool.*` reports in use, idle, max and waiting from psycopg_pool's `get_stats()`. A routed client is refused; Redis, MongoDB and outbound HTTP follow.
+
 ### Changed
 
 - ...
