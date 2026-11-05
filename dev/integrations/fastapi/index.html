@@ -3993,6 +3993,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#behind-a-reverse-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Behind a reverse proxy
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6938,6 +6949,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#behind-a-reverse-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Behind a reverse proxy
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7763,6 +7785,22 @@ tenancy rules, the dedup mark and the store-before-ack order are identical:</p>
 accept acks, but a durable signal that lands while a client is disconnected is lost. An <abbr title="Server-Side Encryption">SSE</abbr>
 deployment with no durable signals at all can drop the mailbox: see <a href="#live-only-sse-streams">live-only <abbr title="Server-Side Encryption">SSE</abbr>
 streams</a>.</p>
+<h3 id="behind-a-reverse-proxy">Behind a reverse proxy<a class="headerlink" href="#behind-a-reverse-proxy" title="Permanent link">&para;</a></h3>
+<p>An edge between the browser and the app can break a stream without failing it. One that
+buffers the response holds frames back until its buffer fills. One that compresses it keeps
+a compressor open for as long as each stream lives, which costs edge memory per connection
+and gains little on small frames.</p>
+<p>So every <abbr title="Server-Side Encryption">SSE</abbr> response, the stream (catch-up or live) and a draining replica's <code>retry:</code>
+alike, carries two headers:</p>
+<ul>
+<li><strong><code>X-Accel-Buffering: no</code></strong> turns nginx's response buffering off for that response.</li>
+<li><strong><code>Cache-Control: no-store, no-transform</code></strong> forbids storing it and tells intermediaries
+  not to change it (<a href="https://www.rfc-editor.org/rfc/rfc9111#section-5.2.2.6">RFC 9111 §5.2.2.6</a>).
+  Caddy's <code>encode</code>, whose default matcher covers <code>text/*</code>, skips such a response.</li>
+</ul>
+<p>nginx compresses only its <code>gzip_types</code>, which leave <code>text/event-stream</code> out by default: keep
+it out. Behind a proxy that honours neither header, exclude the stream route from buffering
+and compression in the proxy's own configuration.</p>
 <h2 id="realtime-over-raw-websocket">Realtime over raw WebSocket<a class="headerlink" href="#realtime-over-raw-websocket" title="Permanent link">&para;</a></h2>
 <p><code>attach_realtime_ws_route</code> is the duplex sibling for clients that cannot run
 Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live

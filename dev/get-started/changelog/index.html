@@ -10949,7 +10949,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>hold()</code> no longer warns <code>UnsupportedFieldAttributeWarning</code> for a <code>SerializedBy</code> key field declared with <code>frozen=True</code> or an alias.</strong> The key is validated with the field's constraints and <code>Annotated</code> validators only, as before.</li>
+<li>
+<p><strong>Edge proxies no longer compress realtime <abbr title="Server-Side Encryption">SSE</abbr> streams.</strong> Every <code>text/event-stream</code> response <code>attach_realtime_sse_route</code> serves, the draining <code>retry:</code> included, sends <code>Cache-Control: no-store, no-transform</code>, so an edge such as Caddy's <code>encode</code> keeps no compressor open per stream.</p>
+</li>
+<li>
+<p><strong><code>hold()</code> no longer warns <code>UnsupportedFieldAttributeWarning</code> for a <code>SerializedBy</code> key field declared with <code>frozen=True</code> or an alias.</strong> The key is validated with the field's constraints and <code>Annotated</code> validators only, as before.</p>
+</li>
 </ul>
 <h2 id="0220-2026-11-04"><a href="https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0">0.22.0</a> - 2026-11-04<a class="headerlink" href="#0220-2026-11-04" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
