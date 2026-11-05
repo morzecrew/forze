@@ -263,3 +263,17 @@ Every `publish_failures` increment leaves other processes on the old grants for 
 cache's TTL. A steady `flushes` rate is a flapping connection: the cache stays correct and stops
 helping. A rising `bypasses` count in a process that should be subscribed means the lifecycle
 step is not registered there, or its stream has ended. See [Identity](../identity-tenancy-enc/identity.md#reaching-every-process).
+
+## Worker snapshots
+
+Rendered by `attach_metrics_route(..., snapshots=...)` itself, not by an `instrument_*` call:
+one sample per worker the scrape serves, labelled `service_instance_id`. Prometheus sees it as
+`forze_metrics_snapshot_age_seconds`. See [Several workers, one scrape](../running-in-prod/grafana-stack.md#several-workers-one-scrape).
+
+| Metric | Instrument | Unit | Notes |
+|---|---|---|---|
+| `forze.metrics.snapshot.age` | gauge | s | seconds since that worker wrote the snapshot served; never above the `ttl` |
+
+It describes a worker's whole snapshot, not each series in it. `count()` of it is the number of
+workers served: alert when it falls below the worker count, because `up` stays 1 while a
+worker is missing.

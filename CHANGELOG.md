@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **One Prometheus scrape can cover every worker of a pre-fork server.** Pass `snapshots=MetricsSnapshots(...)` to `attach_metrics_route` and run its `writer_step` in each worker: the route serves every worker's series, labelled `service_instance_id`, with an age gauge. Needs `worker_metrics_reader()` (exporter 0.66b0+).
 
 ### Changed
 

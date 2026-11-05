@@ -5648,3 +5648,241 @@ RFC tracks neither question, so neither gets a row.
 | 0028 | 14 | Accepted | `ASSUMED` | A bounded Postgres read costs one round trip at the root and five exchanges in a transaction | D-195 |
 | 0028 | 15 | Accepted | `ASSUMED` | An autocommit procedure route carries no route timeout; the role's or the database's `statement_timeout` bounds it | D-196 |
 | 0028 | 16 | Accepted | `ASSUMED` | A timeout that is not a whole number of the engine's unit, or beyond what it can hold, is refused; nothing is rounded | D-197 |
+
+---
+
+# Unit 19 · RFC 0083 P1 — one scrape for every worker of a pre-fork server
+
+Branch `feat/multi-worker-metrics-p1`. RFC 0083 P1 per §12: W1 (the writer step), W2 (the
+union route), W3 (the age gauge) and `worker_metrics_reader()`, the §6 tests, and the §7 docs
+for the snapshot mode. No P2 (collector recipe) and no P3 (Redis store). Measured against the
+decision table as the maintainer settled it on 2026-11-05, where rows 4 to 10 are `LOCKED`,
+and against §5.2 and §6 as the review of the RFC's PR amended them (the shared render future,
+and no file until a render names the worker).
+Rows 1 to 18 hold as written, as the second #840 review round amended rows 11, 12, 14, 16 and
+17 and §5.2 to §5.4 (`2df244dba`, `668c2e697`, `ec8c2a4d6`): every sample line checked, the
+directory held open after one `fstat` check, freshness on the monotonic clock, the render
+gate held per reader, and `bootstrap_telemetry` in the per-worker build. Nothing here
+conflicts with a `LOCKED` row. The dev-group floor
+of `opentelemetry-exporter-prometheus` moves to 0.66b0 so the tests can build the reader row 8
+names. `uv.lock`'s specifier line follows, with no change to what it resolves.
+
+**Drift count: 0.** Nine entries, D-210 to D-218: five `discovery`, four `spec-gap`.
+
+**Where each item lives.** `MetricsSnapshots`, `worker_metrics_reader`, the writer, the union and
+the `SNAPSHOT_AGE_GAUGE` constant are in
+[`routes/_snapshots.py`](../src/forze_fastapi/routes/_snapshots.py). `MetricsSnapshots` and
+`worker_metrics_reader` are exported from `forze_fastapi.routes`. The constant is not exported;
+it stays in the private module, where the catalog parity test finds it.
+`attach_metrics_route(..., snapshots=)` is in
+[`routes/health.py`](../src/forze_fastapi/routes/health.py). The reader check that route always
+ran moved into `_snapshots.py` (`_prometheus_renderer`), unchanged, behind the `render_gate`
+that the writer and the route share. The tests are `tests/unit/test_forze_fastapi/test_metrics_snapshots.py` (unit) and
+`test_metrics_snapshot_workers.py` (real `uvicorn --workers` processes, after
+`test_serve_workers.py`).
+
+## D-210 — The route answers 503 when every fresh snapshot is withheld, too
+
+- **Touches:** row 16 and row 13.
+- **RFC said:** `503` "with no fresh snapshot at all"; otherwise `200` with whatever is fresh.
+  Row 13 withholds two snapshots that claim one instance id.
+- **Found:** a group whose only fresh snapshots are withheld, which is every worker under
+  gunicorn `--preload` with `bootstrap_telemetry` at import, has fresh snapshots and serves
+  none of them. Read literally, row 16 answers `200` with an empty body, so `up == 1` hides a
+  group that exports nothing.
+- **Class:** `spec-gap`.
+- **Consequence:** `503` whenever no snapshot is left after withholding: none fresh, or every
+  fresh one withheld. A worker whose renders name no instance yet writes no file (amended §5.2),
+  so a group that has recorded nothing answers `503` too. The real-worker test runs two workers
+  on one forced id and asserts `503` on every scrape.
+- **Proposed row (RFC 0083):** `ASSUMED`. The route answers `503` when no snapshot is left to
+  serve after row 13 withholds shared ids, and `200` otherwise.
+
+## D-211 — The file token is derived from the process, not minted per writer
+
+- **Touches:** row 12 (`<pid>-<token>.prom`) and §5.2 ("a random hex string minted once per
+  writer").
+- **RFC said:** a random token minted once per writer.
+- **Found:** `runtime_lifespan(build=...)` may build a second runtime in the same process after
+  tearing the first down, and that runtime builds a new writer. With a fresh token, the first
+  writer's final snapshot (row 6 keeps it until `ttl`) and the second writer's both claim the
+  process's instance id. Row 13 then withholds both for up to `ttl`.
+- **Class:** `discovery`.
+- **Consequence:** the token is the first 32 hex digits of the SHA-256 of
+  `forze.base.primitives.instance_id()`. That value is stable for the life of a process and
+  new in every fork, so a rebuilt writer overwrites its own file. A unit test runs two scopes in
+  one process and finds one file.
+- **Proposed row (RFC 0083):** `ASSUMED`. The snapshot file's token is derived from the
+  process's `instance_id()`, so every writer in one process writes the same file.
+
+## D-212 — The final render's budget is one interval, and the loop's stop usually spends it first
+
+- **Touches:** amended §5.2 ("if waiting would pass the shutdown budget, the final render is
+  skipped") and row 6.
+- **RFC said:** the writer owns one render future, shared by its ticks and the final render. A
+  tick cancelled at shutdown is waited for, within a shutdown budget the RFC does not size.
+- **Found:**
+  - A tick is cancelled at shutdown only by the loop's own stop. `periodic_lifecycle_step`
+    gives a tick up to 5 s (`DEFAULT_STOP_GRACE_SECONDS`) to finish before it cancels the
+    loop.
+  - The runtime's `stop_all` does not cancel the loop. It cancels the `stop()` call at its
+    deadline, and the step's own shutdown hook then waits for the tick again.
+  - So with a render under 5 s, the final render follows a finished tick. The shared future
+    engages only for a render over 5 s.
+  - Each shutdown hook is bounded by `shutdown_step_timeout` (10 s by default). A wedged render
+    can therefore spend 5 s in the loop's stop, then up to one interval waiting. Past those
+    10 s the runtime abandons the hook, with its own log line.
+- **Class:** `discovery`.
+- **Consequence:** the final render's budget is one `interval`, counted from when the loop has
+  stopped. The wait on an unfinished render and the final render both come out of it. Past it,
+  the final render is skipped and the last snapshot stands, with a warning. Either way no
+  second render starts beside the first. The unit test cancels a tick mid-render at the writer
+  and checks both outcomes. Under sabotage (no shared future, no wait) both cases fail with two
+  renders at once.
+- **Proposed row (RFC 0083):** `ASSUMED`. The final render's budget is one `interval`. The
+  maintainer may prefer a smaller fixed bound, so that a wedged render skips the final render
+  itself instead of meeting the runtime's step timeout.
+
+## D-213 — `MetricsSnapshots.union()` is public
+
+- **Touches:** row 10 (the API's shape).
+- **RFC said:** `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` with
+  `writer_step(reader)`, and `attach_metrics_route(..., snapshots=)`.
+- **Found:** the route needs the union, and §8 names a stdlib listener serving it as a likely
+  follow-up. A load test also wants it without HTTP.
+- **Class:** `spec-gap`.
+- **Consequence:** `union() -> tuple[int, bytes]` is public and blocking. It returns the status
+  and the body the route serves, and the route runs it in a thread. `writer_step` also takes
+  `step_id=` (default `"metrics_snapshot_writer"`), like the other step factories.
+- **Proposed row (RFC 0083):** `ASSUMED`. `MetricsSnapshots.union()` is public: blocking,
+  returning `(status, body)` exactly as the route answers.
+
+## D-214 — `/dev/shm/<dir>`, not a default tmpfs mount
+
+- **Touches:** §7 ("the §5.2 wiring and a tmpfs mount") and row 12 (a directory group- or
+  world-writable is refused).
+- **RFC said:** recommend a tmpfs mount private to the container.
+- **Found:** Docker's `tmpfs:` mount defaults to mode `1777`, so the writer refuses the mount
+  point itself. `/dev/shm` is a per-container tmpfs, also `1777`, but the writer creates a
+  subdirectory of it as `0700`, owned by the app's user, with no compose change.
+- **Class:** `discovery`.
+- **Consequence:** the docs use `Path("/dev/shm/forze-metrics")`. They say a directory any
+  other user can write into is refused, and that the directory serves one group.
+- **Proposed row (RFC 0083):** none.
+
+## D-215 — Measured: the render is the writer's cost; the union of four takes about 7–10 ms
+
+- **Touches:** §5.5 (writer and scrape cost) and §9 ("measured again in P1").
+- **RFC said:** render 24 to 36 ms, merge of four 2.3 ms, both for 200 operation label sets.
+- **Found:** through the built writer, on the same 200 label sets and the same versions
+  (exporter 0.66b1, `prometheus_client` 0.26.0) under Python 3.14, on a shared machine:
+  - one write took a median of 54 ms in one run and 88 ms in another;
+  - `generate_latest` was 98% of it under cProfile, and the label check, encode, write and
+    sweep the rest;
+  - the snapshot was 0.96 MB;
+  - `union()` over four such snapshots took a median of 7 to 10 ms, with the file reads and
+    header parse, and returned 3.5 MB.
+- **Class:** `discovery`.
+- **Consequence:** the writer adds nothing material beyond the render it replaces. At the 10 s
+  default, one render costs about 0.5 to 0.9% of a core per worker. The RFC's render numbers
+  came from a quieter run, and §9's risk stands as written.
+- **Proposed row (RFC 0083):** none.
+
+## D-216 — A malformed block costs only that family
+
+- **Touches:** §5.3 steps 1, 2 and 4 (list and read, parse each header, split at line-start
+  `# HELP`).
+- **RFC said:** a malformed header skips the file. It said nothing of a malformed family, of
+  the order of reading header and body, or of concurrent scrapes.
+- **Found:** P1 skipped a whole snapshot for one malformed family. A `# TYPE` line, or any
+  comment line, without a `# HELP` above it was folded into the family before it, so another
+  family's samples were served under the wrong `TYPE`. The route also read and decoded up to
+  `max_snapshot_bytes` before it knew the snapshot's age. Each concurrent scrape ran its own
+  pass over the directory.
+- **Class:** `spec-gap`.
+- **Consequence:**
+  - A block is malformed when its `# TYPE` line does not follow its `# HELP`, when a comment
+    line sits among its samples, or when it is text before the first `# HELP`. Only that
+    block is dropped, logged once, by the route and by the writer alike.
+  - The route reads the header line first, so a stale or foreign file costs one short read.
+  - Concurrent scrapes share one in-flight read. That is not the render gate: row 5 still
+    holds, and the snapshot route renders nothing.
+- **Proposed row (RFC 0083):** none.
+
+## D-217 — The route opens the directory itself when its process has no writer yet
+
+- **Touches:** amended §5.2 step 1 (the route "reaches the descriptor through the shared
+  `MetricsSnapshots` value").
+- **RFC said:** the writer opens and checks the directory, and the route uses that descriptor.
+- **Found:** a process can serve the route before its writer's startup has run, or with no
+  writer step in its plan at all. Every unit test of the union is such a process. The RFC
+  leaves open what such a route reads.
+- **Class:** `spec-gap`.
+- **Consequence:** `MetricsSnapshots` holds one descriptor per process. Whichever comes first,
+  the writer's startup (which creates the directory) or the route's first scrape (which does
+  not), opens it and runs the same `O_DIRECTORY | O_NOFOLLOW` open and `fstat` checks. Either
+  one then reuses it for the life of the process, and the path is never resolved again. A
+  route whose directory is missing or unsafe answers `503` and logs the reason once. It tries
+  again on the next scrape, since nothing was held.
+- **Proposed row (RFC 0083):** `ASSUMED`. One descriptor per process, opened and checked by
+  whichever of the writer and the route comes first. A route that cannot open it answers
+  `503`.
+
+## D-218 — The clocks are read through forze's time seam
+
+- **Touches:** amended §5.2 ("Freshness": `time.time()` and
+  `time.clock_gettime(time.CLOCK_MONOTONIC)`).
+- **RFC said:** read the two clocks directly.
+- **Found:** `tests/unit/test_determinism_guard.py` refuses raw clock calls in `src/`, outside
+  the time seam.
+- **Class:** `discovery`.
+- **Consequence:** `written_at` comes from `utcnow()` and `mono` from `monotonic()` in
+  `forze.base.primitives`. By default these are `datetime.now(UTC)` and `time.monotonic()`,
+  and `time.monotonic()` is `CLOCK_MONOTONIC` on Linux. A bound time source therefore controls
+  both, which is how the wall-clock step tests inject their clocks.
+- **Proposed row (RFC 0083):** none.
+
+## Review findings — 2026-11-05
+
+Fresh-eyes review of `f6602e68b`, before it was published. Every behaviour fix below has a test
+that fails on `f6602e68b`. Eight such tests ran against that commit and all eight failed.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | A FIFO named like a snapshot blocked `os.open` and pinned a thread per scrape | Fixed: opened `O_NONBLOCK`, and the `S_ISREG` check is kept; a FIFO test |
+| R-2 | Security | The directory check ran once on the leaf; a parent writable by others without the sticky bit let the directory be swapped after boot | Fixed as #840 decided: the directory is opened once, with `O_DIRECTORY` and `O_NOFOLLOW`, checked with `fstat`, and every write, sweep and read goes through that descriptor; the route skips files the effective uid does not own (D-217). Tests swap the directory for a symlink after startup, and read a foreign-owned file |
+| R-3 | Cost | A snapshot was read and decoded up to 16 MiB before its age was known, and every concurrent scrape ran its own full read | Fixed (D-216): the header line is read first, and concurrent scrapes share one in-flight read; tests for a stale file with an undecodable body and for ten concurrent scrapes making one read |
+| R-4 | Bug | A `# TYPE` or other comment line without `# HELP` folded into the previous family | Fixed (D-216): that family is dropped and logged once; a test |
+| R-5 | Bug | The instance check read each family's first sample only | Fixed as amended row 11 says: every line, one value across the render; tests with an unlabelled and a foreign line, and with a data point attribute naming another instance |
+| R-6 | Bug | With every family dropped, a header-only snapshot still showed an age for a worker with no series | Fixed: nothing is written when nothing is kept; a test |
+| R-7 | Design | Ages and the ttl use the wall clock | Fixed as #840 decided (amended row 14): the header carries `mono`, a snapshot is fresh only while both its monotonic and wall-clock ages lie in `[0, ttl]`, and the age gauge shows the monotonic age, unclamped (D-218). Tests step the wall clock both ways and replay a pre-reboot `mono` |
+| R-8 | Flake | The worker test's `sum(...) == 60` depended on timing | Fixed: it polls until it holds, within 10 s. The `free_port` race stays as in `test_serve_workers.py`, the precedent, which accepts it |
+| R-9 | Quality | `SNAPSHOT_AGE_GAUGE` was unused and whitelisted | Fixed: the rendered family name derives from it, and the whitelist entry is gone |
+| R-10 | Noise | A persistent tick failure logged CRITICAL with a traceback every interval | Fixed: an oversized snapshot and an `OSError` are logged once per cause, forgotten after the next successful write; a test |
+
+The #840 amendments also brought, each with a test: the render gate moved from the plain route
+to the reader (a plain route scraped during a slow tick joins the tick's render); a snapshot
+family named `forze_metrics_snapshot_age_seconds` is dropped from the merge with a warning; the
+sweep judges a dead pid's snapshot by its header and deletes a dead pid's temp file at once; and
+the docs and the worker test's app factory call `bootstrap_telemetry` in the per-worker build.
+
+## Review findings — 2026-11-05 (second round)
+
+The PR review of `89aa00950`. Each fix has a test that failed on the commit before it.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-11 | Bug | `_instance_of` split samples with `splitlines()`, which also breaks at CR, NEL and U+2028 that the text format leaves raw in a label value | Fixed (`a88459028`): LF only |
+| R-12 | Bug | An `OSError` from `fstat` or a read escaped the union and failed the whole scrape | Fixed (`72b1b9958`): that file is skipped, logged once |
+| R-13 | Bug | The union read the clocks before listing; a snapshot replaced after that reading looked negative-aged | Fixed (`021792f52`): each snapshot is aged against clocks read after its own header |
+| R-14 | Bug | A pid no process can have made `os.kill` raise `OverflowError` in the sweep, refusing the writer's startup | Fixed (`a6aa3f3f2`): such a pid counts as gone |
+| R-15 | Bug | Header clocks rounded up could read as a negative age | Fixed in `0919ff874` (truncated to the millisecond) |
+| R-16 | Design | A blocked observable callback holds the worker's exit: the final render's budget bounds the hook, not its thread | Documented (`b599affeb`); daemon render threads not adopted, since renders share one gate with the plain route |
+| R-17 | Docs | The unit said `SNAPSHOT_AGE_GAUGE` is exported from `forze_fastapi.routes` | Fixed (`cdd9641a0`) |
+| R-18 | Test | The tick-failure test relied on file modes, which root bypasses | Fixed (`93ff3a99e`): the refused create is injected |
+| R-19 | Bug | A snapshot naming no instance was served without its worker's age sample (row 2) | Fixed (`40277e568`): such a header reads as malformed |
+
+The directory descriptor leak a reviewer named was already closed in `0919ff874`. Unbounded merged
+responses were left as designed: a scrape holds at most one snapshot per fresh worker, each under
+`max_snapshot_bytes` (§9). The final render now runs under one timeout (`1327fef5a`), and the
+module's edge paths are covered (`db063a745`).
