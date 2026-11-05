@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`instrument_connection_pools` exports Postgres, Redis and MongoDB connection pool gauges.** Per client you name (`forze.client`), `forze.connection_pool.*` reports in use, idle, max and, on Postgres, waiting. A routed client is refused.
 
+- **`instrument_http_clients` exports outbound HTTP requests in flight** per `HttpClient`, as `forze.http.client.in_flight`: requests sent whose response is not closed yet.
+
 - **`instrument_process` exports the process's CPU time and resident memory to OpenTelemetry.** It registers `process.cpu.time` per `cpu.mode` and, on Linux only, `process.memory.usage` from `/proc/self/statm`, with no new dependency. One scrape sees every pre-fork worker's series only through `MetricsSnapshots`.
 
 - **`instrument_resilience` reports how many calls hold each bulkhead's slots.** New gauge `forze.resilience.bulkhead.in_use` covers fixed, AIMD and Gradient2 bulkheads. `forze.resilience.bulkhead.limit` now also carries a fixed bulkhead's cap (**behaviour change**), so `in_use / limit` is occupancy for every kind.

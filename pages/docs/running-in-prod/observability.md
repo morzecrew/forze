@@ -266,6 +266,18 @@ down shows the same pattern, because the pool's reconnect attempts hold
 `in_use` at `max` while callers wait. Pair the alert with a connectivity
 signal, such as the health check.
 
+httpx exposes no pool numbers, so outbound HTTP gets a count of requests
+instead: `instrument_http_clients` from `forze_http` exports
+`forze.http.client.in_flight` per `HttpClient`, the requests sent whose
+response is not closed yet. A count that never falls back is a streamed
+response nobody closes.
+
+```python
+from forze_http import instrument_http_clients
+
+instrument_http_clients({"payments": payments})
+```
+
 ## Document L1 metrics
 
 The [in-process L1](../data-events/caching.md#an-in-process-l1-for-hot-documents)

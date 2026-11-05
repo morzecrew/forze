@@ -113,6 +113,22 @@ with a connectivity signal. On Postgres, a caller that timed out still counts in
 until a connection is returned to the pool, so `waiting` stays up for as long as every
 connection is held or the database is unreachable.
 
+## Outbound HTTP
+
+`instrument_http_clients({"payments": client, ...})` from `forze_http` — one entry per
+`HttpClient`. httpx exposes no pool numbers, so outbound HTTP has no connection pool
+gauges. The client counts requests at its own methods instead.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `forze.http.client.in_flight` | observable gauge | 1 | `forze.client` | requests sent whose response is not closed yet, including those queued for a connection |
+
+It counts requests, not connections. A client before `initialize` or after `close`
+reports nothing. A `RoutedHttpClient` is refused.
+
+**The alert that matters:** a count that climbs under steady load and never falls back is
+a streamed response nobody closes, holding its connection.
+
 ## Crypto and KMS
 
 `instrument_crypto({"default": keyring, ...})`.

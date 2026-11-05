@@ -13,6 +13,7 @@ from forze_http.kernel.client import (
     HttpRoutingCredentials,
     RoutedHttpClient,
 )
+from forze_http.observability import instrument_http_clients
 
 from .settings import HttpSettings
 
@@ -32,4 +33,5 @@ __all__ = [
     "RoutedHttpClient",
     "http_lifecycle_step",
     "http_service_transport",
+    "instrument_http_clients",
 ]

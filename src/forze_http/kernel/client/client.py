@@ -1,8 +1,8 @@
 """Async HTTP client wrapper using httpx."""
 
 import zlib
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Final, cast, final
 from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
@@ -311,6 +311,32 @@ class HttpClient(HttpClientPort):
     __max_response_bytes: int | None = attrs.field(default=None, init=False)
     __default_headers: dict[str, str] = attrs.field(factory=dict, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
+    __in_flight: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def in_flight_requests(self) -> int | None:
+        """Requests sent through this client whose response is not closed yet.
+
+        Counted at this client's own methods, since httpx exposes no pool numbers. A request
+        queued for one of httpx's pooled connections counts, and so does a streamed response
+        the caller has not closed: one that never closes holds its connection, and this
+        count, up for good.
+
+        :returns: The count, or ``None`` before :meth:`initialize` and after :meth:`close`.
+        """
+
+        return None if self.__client is None else self.__in_flight
+
+    @contextmanager
+    def __counted(self) -> Iterator[None]:
+        self.__in_flight += 1
+
+        try:
+            yield
+
+        finally:
+            self.__in_flight -= 1
 
     # ....................... #
 
@@ -414,16 +440,17 @@ class HttpClient(HttpClientPort):
         # Stream the response so an oversized body can be refused before (or while)
         # it is buffered, instead of httpx materializing the whole body in memory
         # first. With no cap configured this reads the full body exactly as before.
-        async with client.stream(
-            method,
-            request_url,
-            params=params,
-            json=json,
-            data=data,
-            headers=headers,
-            timeout=request_timeout,
-        ) as streaming:
-            response = await _buffered(streaming, max_bytes)
+        with self.__counted():
+            async with client.stream(
+                method,
+                request_url,
+                params=params,
+                json=json,
+                data=data,
+                headers=headers,
+                timeout=request_timeout,
+            ) as streaming:
+                response = await _buffered(streaming, max_bytes)
 
         if raise_for_status:
             response.raise_for_status()
@@ -449,33 +476,34 @@ class HttpClient(HttpClientPort):
         client = self._require_client()
         request_timeout = timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
 
-        async with client.stream(
-            method,
-            _merge_url(self.__base_url, url),
-            params=params,
-            json=json,
-            data=data,
-            headers=headers,
-            timeout=request_timeout,
-        ) as streaming:
-            # A rejected response is read whole under the same cap as `request`, so the
-            # error carries its body; only a success is handed over unread.
-            if not streaming.is_success:
-                response = await _buffered(streaming, self.__max_response_bytes)
+        with self.__counted():
+            async with client.stream(
+                method,
+                _merge_url(self.__base_url, url),
+                params=params,
+                json=json,
+                data=data,
+                headers=headers,
+                timeout=request_timeout,
+            ) as streaming:
+                # A rejected response is read whole under the same cap as `request`, so the
+                # error carries its body; only a success is handed over unread.
+                if not streaming.is_success:
+                    response = await _buffered(streaming, self.__max_response_bytes)
 
-                if raise_for_status:
-                    response.raise_for_status()
+                    if raise_for_status:
+                        response.raise_for_status()
 
-                yield response
-                return
+                    yield response
+                    return
 
-            try:
-                yield streaming
+                try:
+                    yield streaming
 
-            except httpx.HTTPError as error:
-                # A failed read surfaces in the caller's block, past the interceptor's
-                # enter, so it is mapped here the way `request` maps one.
-                reraise_mapped(exc_interceptor.mapper, error, site="httpx.stream")
+                except httpx.HTTPError as error:
+                    # A failed read surfaces in the caller's block, past the interceptor's
+                    # enter, so it is mapped here the way `request` maps one.
+                    reraise_mapped(exc_interceptor.mapper, error, site="httpx.stream")
 
     # ....................... #
 
@@ -508,21 +536,22 @@ class HttpClient(HttpClientPort):
         request.headers.update(self.__default_headers)
         request.headers.update(headers or {})
 
-        # Never followed here: a redirect goes back to whoever built the request, and its
-        # next hop is held to the base URL again on the way out.
-        upstream = await client.send(request, stream=True, follow_redirects=False)
+        with self.__counted():
+            # Never followed here: a redirect goes back to whoever built the request, and its
+            # next hop is held to the base URL again on the way out.
+            upstream = await client.send(request, stream=True, follow_redirects=False)
 
-        try:
-            max_bytes = self.__max_response_bytes
-            _refuse_declared_oversize(upstream, max_bytes)
-            cap = None if max_bytes is None else _DecodedCap(upstream.headers, max_bytes)
+            try:
+                max_bytes = self.__max_response_bytes
+                _refuse_declared_oversize(upstream, max_bytes)
+                cap = None if max_bytes is None else _DecodedCap(upstream.headers, max_bytes)
 
-            yield httpx.Response(
-                status_code=upstream.status_code,
-                headers=upstream.headers,
-                stream=_WireRelay(upstream, cap),
-                extensions=upstream.extensions,
-            )
+                yield httpx.Response(
+                    status_code=upstream.status_code,
+                    headers=upstream.headers,
+                    stream=_WireRelay(upstream, cap),
+                    extensions=upstream.extensions,
+                )
 
-        finally:
-            await upstream.aclose()
+            finally:
+                await upstream.aclose()
