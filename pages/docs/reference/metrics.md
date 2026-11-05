@@ -16,7 +16,7 @@ documented metric that no longer exists.
 
 Conventions that hold throughout:
 
-- **Unit `1`** means a plain count. `ms` is milliseconds, `s` seconds.
+- **Unit `1`** means a plain count. `ms` is milliseconds, `s` seconds, `By` bytes.
 - **Observable** instruments are sampled by the SDK at collection time from a live object
   (pool, keyring, cache, mailbox). They are *cumulative per process*, so a restart resets
   them — `rate()` handles that correctly only if each process carries a distinct
@@ -127,6 +127,32 @@ read/write path is skipping `warm` / `ensure_unwrapped`.
 
 Sustained evictions while `size == capacity` is the scan-pollution signature that
 justifies W-TinyLFU (`L1Spec(store_factory=tiny_lfu_l1_store)`) or a bigger capacity.
+
+## Process
+
+`instrument_process()` — this process's own CPU and memory, from the standard library. The
+names are OpenTelemetry's
+[process semantic conventions](https://opentelemetry.io/docs/specs/semconv/system/process-metrics/),
+not `forze.*`.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `process.cpu.time` | observable counter | s | `cpu.mode` | `user` / `system`, from `os.times()`; `rate()` is the cores this process uses |
+| `process.memory.usage` | observable up-down counter | By | — | resident memory from `/proc/self/statm`. **Linux only**: absent elsewhere |
+
+Outside Linux the standard library has only the *peak* resident size, and a peak exported
+as the current value would hide the leak it is meant to show, so the instrument is skipped.
+
+The OpenTelemetry Prometheus exporter renders these as `process_cpu_time_seconds_total` and
+`process_memory_usage_bytes`, not prometheus_client's `process_cpu_seconds_total` /
+`process_resident_memory_bytes`, so panels built on those need new queries. A default
+`PrometheusMetricReader()` renders the default registry, whose own process collector reports
+that pair beside these; `worker_metrics_reader()` renders a registry without it.
+
+Each process reports its own series. A pre-fork server scraped through one port answers from
+whichever worker takes the scrape, unless every worker writes a snapshot through
+`worker_metrics_reader()` and `MetricsSnapshots`, which label each series
+`service_instance_id`. See [Several workers, one scrape](../running-in-prod/grafana-stack.md#several-workers-one-scrape).
 
 ## Durable execution
 

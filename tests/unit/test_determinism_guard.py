@@ -11,8 +11,9 @@ seam's own definition:
 
 * entropy — ``os.urandom``, ``secrets.token_*``/``randbits``/…, ``random.<fn>``,
   stdlib ``uuid.uuid4``/``uuid1``;
-* clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*`` and
-  ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` / ``monotonic()`` instead);
+* clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*``, ``os.times`` (the
+  same process-CPU clock) and ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` /
+  ``monotonic()`` instead);
 * stable bucketing — ``hash(x) % n`` / ``hash(x) & mask``: Python's builtin ``hash``
   is PYTHONHASHSEED-randomized, so it picks a different bucket every process and breaks
   cross-process replay. Use a stable hash (``zlib.crc32`` / ``derive_seed``).
@@ -65,13 +66,17 @@ _ALLOWLIST: frozenset[str] = frozenset(
         # primitives live in one small module: seeded RNGs for picks and arrivals, and the
         # process CPU time its self-report shows beside the loop thread's.
         "forze_load/_seams.py",
+        # ``instrument_process``'s CPU-time counter reads ``os.times`` here and nowhere else:
+        # metric output only, never program logic, the reason ``perf_counter`` is allowed.
+        "forze/application/execution/_process_clock.py",
     }
 )
 
 # Per-module banned attributes (entropy draws). ``random.*`` bans every call on the
 # module; ``secrets`` bans only the stochastic API (``compare_digest`` is allowed).
 _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
-    "os": frozenset({"urandom"}),
+    # ``times`` reads the process-CPU clock ``time.process_time`` is banned for.
+    "os": frozenset({"urandom", "times"}),
     "secrets": frozenset(
         {
             "token_bytes",
@@ -103,7 +108,7 @@ _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
 # Names that, when imported via ``from <module> import <name>``, become banned
 # bare-name calls.
 _BANNED_FROM_IMPORT: dict[str, frozenset[str]] = {
-    "os": frozenset({"urandom"}),
+    "os": frozenset({"urandom", "times"}),
     "secrets": _BANNED_ATTRS["secrets"],  # type: ignore[dict-item]
     "random": frozenset(
         {
@@ -160,6 +165,14 @@ def _violations_in(path: Path) -> list[str]:
                 if alias.name in allowed:
                     banned_names.add(alias.asname or alias.name)
 
+    # ``import os as o`` binds a banned module under another name.
+    module_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _BANNED_ATTRS and alias.asname:
+                    module_names[alias.asname] = alias.name
+
     found: list[str] = []
     for node in ast.walk(tree):
         # ``hash(x) % n`` / ``hash(x) & mask`` — PYTHONHASHSEED-randomized bucketing.
@@ -181,7 +194,7 @@ def _violations_in(path: Path) -> list[str]:
         func = node.func
         # module.attr(...) form
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-            module, attr = func.value.id, func.attr
+            module, attr = module_names.get(func.value.id, func.value.id), func.attr
             banned = _BANNED_ATTRS.get(module, "missing")
             if banned == "missing":
                 continue
@@ -333,3 +346,9 @@ def test_guard_flags_hash_modulo_bucketing(tmp_path: Path) -> None:
         "    return locks[zlib.crc32(k.encode()) % len(locks)]\n"
     )
     assert not _violations_in(clean), "a stable-hash bucket must not be flagged"
+
+
+def test_guard_follows_an_aliased_module_import(tmp_path: Path) -> None:
+    offender = tmp_path / "offender.py"
+    offender.write_text("import os as o\nimport time as t\no.times()\nt.monotonic()\n")
+    assert len(_violations_in(offender)) == 2
