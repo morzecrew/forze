@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **An authz decision no longer reads the policy principal right after a fast-path admission of it.** With the same `RevocationStates` object on both kernels, a decision later in the request's task, outside a transaction, treats it as active until the cached epoch it was admitted on expires (`ttl` at most); other subjects, delegated requests and transactions still read.
+- **An authz decision skips the policy principal read after a fast-path admission of it.** With one `RevocationStates` object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (`ttl` at most). Other subjects still read.
+
+- **`SessionRevocation.check` returns a `FreshEpoch` when the token is on its principal's current epoch, `None` otherwise, instead of the epoch; `ApiKeyRevocation.fresh` returns `FreshEpoch | None` instead of a bool** (**Breaking**). A custom verifier that compared the epoch tests the result for `None`.
 
 ### Removed
 
