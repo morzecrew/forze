@@ -497,7 +497,6 @@ _.reset_offsets  # unused method (src/forze/application/contracts/stream/ports.p
 _.with_otel_port_spans  # unused method (src/forze/application/execution/deps/registry.py:221)
 _.with_port_logging  # unused method (src/forze/application/execution/deps/registry.py:248)
 _.body_is_empty  # unused method (src/forze/application/execution/operations/planning/scopes.py:432)
-_.adaptive_bulkhead_limits  # unused method (src/forze/application/execution/resilience/executor.py:368)
 _.force_open  # unused method (src/forze/application/execution/resilience/executor.py:436)
 _.retune  # unused method (src/forze/application/execution/resilience/executor.py:490)
 _.select  # unused method (src/forze_dst/loop.py:108)

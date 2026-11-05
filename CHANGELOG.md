@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+### Removed
+
+- **`InProcessResilienceExecutor.adaptive_bulkhead_limits()` is removed** (**Breaking**). Use `bulkhead_occupancy()`: it yields `(policy, route, in_use, limit)` for fixed, AIMD and Gradient2 bulkheads.
+
 ### Fixed
 
 - **Edge proxies no longer compress realtime SSE streams.** Every `text/event-stream` response `attach_realtime_sse_route` serves, the draining `retry:` included, sends `Cache-Control: no-store, no-transform`, so an edge such as Caddy's `encode` keeps no compressor open per stream.

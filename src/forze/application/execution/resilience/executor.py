@@ -365,25 +365,6 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
-    def adaptive_bulkhead_limits(self) -> Iterator[tuple[str, str | None, float]]:
-        """Yield ``(policy, route, limit)`` for every dynamic bulkhead with live state.
-
-        Snapshot accessor for observable gauges: the current AIMD or Gradient2
-        concurrency limit. State appears lazily on first use of the policy.
-        """
-
-        for (policy, route), state in (
-            *self._adaptive_bulkheads.items(),
-            *self._gradient_bulkheads.items(),
-        ):
-            yield (
-                str(policy),
-                str(route) if route is not None else None,
-                state.limit,
-            )
-
-    # ....................... #
-
     def hedge_delays(self) -> Iterator[tuple[str, str | None, float]]:
         """Yield ``(policy, route, delay_seconds)`` for every adaptive hedge delay.
 
