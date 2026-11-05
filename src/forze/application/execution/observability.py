@@ -8,6 +8,7 @@ app.
 """
 
 import os
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
@@ -488,17 +489,15 @@ def instrument_process(*, meter: "Meter | None" = None) -> None:
     except _STATM_ERRORS:
         return
 
-    warned = False
+    # Never released: the first reader to fail warns, even with several readers collecting.
+    warned = threading.Lock()
 
     def _observe_memory(_options: "CallbackOptions") -> Iterable[Observation]:
-        nonlocal warned
-
         try:
             resident = _resident_pages() * page_size
 
         except _STATM_ERRORS as error:
-            if not warned:
-                warned = True
+            if warned.acquire(blocking=False):
                 logger.warning("Cannot read %s for process.memory.usage: %s", _PROC_STATM, error)
 
             return
