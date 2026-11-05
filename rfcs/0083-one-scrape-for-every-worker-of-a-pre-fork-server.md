@@ -1,7 +1,10 @@
 # RFC 0083 — One scrape for every worker of a pre-fork server
 
-- **Status:** 📝 Draft (execution-ready — P1 is one PR, §12). §10 Q1 to Q7 were settled by
-  the maintainer on 2026-11-05, each the lean's way (rows 4 to 10).
+- **Status:** 🚧 In progress — **P1 shipped 2026-11-05** (#846): the snapshot writer, the
+  union route, the age gauge and `worker_metrics_reader()`. §10 Q1 to Q7 were settled by the
+  maintainer on 2026-11-05, each the lean's way (rows 4 to 10), and the rows execution proposed
+  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 19 were accepted the same day (rows 19 to 22).
+  **P2 (the collector recipe) remains, and P3 (a Redis/Valkey store) is demand-gated.**
 - **Scope:** A supported way for one Prometheus scrape to cover every worker of a pre-fork
   server (`uvicorn --workers N`, gunicorn's uvicorn worker) without an OTLP collector. The
   recommendation:
@@ -588,6 +591,14 @@ default.
 | 16 | `ASSUMED` | With no snapshot left to serve, because none is fresh or every fresh one is withheld as a duplicate, the route answers `503`, so `up == 0` shows that no worker is served. Otherwise it answers `200` with whatever is served. |
 | 17 | `ASSUMED` | Each tick sweeps files older than `ttl` whose pid no longer exists, and stray temp files by the same rule. A stalled but live worker is withheld, not swept. |
 | 18 | `ASSUMED` | The code lives in `forze_fastapi.routes`, behind a private module, with the age gauge's constant declared there. There is no core change, no new dependency and no new extra. The Redis store, if built, adds the only core port. |
+| 19 | `ASSUMED` | The snapshot file's token is derived from the process's `instance_id()`, so every writer in one process writes the same file. (D-211) |
+| 20 | `ASSUMED` | The final render's budget is one `interval`, accepted by the maintainer over a smaller fixed bound that would skip a wedged final render before the runtime's step timeout. (D-212) |
+| 21 | `ASSUMED` | `MetricsSnapshots.union()` is public: blocking, returning `(status, body)` exactly as the route answers. (D-213) |
+| 22 | `ASSUMED` | One descriptor per process, opened and checked by whichever of the writer and the route comes first. A route that cannot open it answers `503`. (D-217) |
+
+Rows 19 to 22 were added by execution and accepted by the maintainer on 2026-11-05; each cites
+the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
+as designed.
 
 ## 12. Phasing
 

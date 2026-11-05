@@ -1,8 +1,11 @@
 # RFC 0084 — Load and soak kit for apps built on forze
 
-- **Status:** 📝 Draft — the maintainer settled the open rows on 2026-11-05 (rows 1–4, 6, 9,
-  12, 19, 23–25, 28, 32), each as its lean. P1 is one PR. The soak's gauge half (P4) waits on
-  RFC 0083 and on instruments that do not exist yet (§3.6).
+- **Status:** 🚧 In progress — **P1 shipped 2026-11-05** (#847): `forze_load` under the `load`
+  extra and `forze load run | compare`. The maintainer settled the open rows on 2026-11-05
+  (rows 1–4, 6, 9, 12, 19, 23–25, 28, 32), each as its lean, and accepted the rows execution
+  proposed in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 20 the same day (rows 34 to 41).
+  P2 and P3 remain. The soak's gauge half (P4) waits on RFC 0083 and on instruments that do
+  not exist yet (§3.6).
 - **Scope:** A small library, `forze_load`, under a new `load` extra, that drives a running app
   built on forze over HTTP and writes one JSON line per step or window. It covers:
   - several principals, each logged in once and refreshed in one place;
@@ -898,6 +901,18 @@ under `-m perf`, which `just test` excludes.
 | 31 | `ASSUMED` | `forze_load` imports `forze` core and `httpx` only. It restates the wire names it uses as constants pinned by a test to `forze_fastapi`'s. It joins import-linter's protected list with `forze_cli` as an allowed importer. |
 | 32 | `ASSUMED` | **Several client processes are demand-gated**, accepted by the maintainer on 2026-11-05 over building a process pool in P1. P1 is one process, flagged when saturated. Merging needs `DDSketch` serialization in core, and P1 first measures the single-process ceiling against the served mock. |
 | 33 | `ASSUMED` | The kit's own tests use injected clocks, `httpx.MockTransport` and the served mock (`forze_mock.server`). No real backends. Timing-band assertions run only under `-m perf`. |
+| 34 | `ASSUMED` | A row's `client.saturated` reads the event loop's thread CPU (`time.thread_time()`), at ≥ 0.85 cores, except with an in-process transport, where the loop CPU is reported and not judged; process CPU is reported, not judged. (D-219) |
+| 35 | `ASSUMED` | The open-model p99 test is confirmed by the next rate and compares only steps with at least 100 answered calls. Row 41 amends it. (D-220) |
+| 36 | `ASSUMED` | `forze load` exits 0 on a finished run, its stop included, 1 when `--fail-on` is crossed, and 2 on a refusal, an unreadable run file or a usage error. (D-225) |
+| 37 | `ASSUMED` | `Call.request` takes a path relative to the base URL and refuses a URL with a scheme or a host before sending. (D-227) |
+| 38 | `ASSUMED` | Credentials resolve on their own connection pool, outside the latency clock, with refresh retried under backoff while the token is valid, and one session per run. (D-228) |
+| 39 | `ASSUMED` | A call counts in the step that sent it, rates use the measured window, and latency percentiles cover answered calls only. (D-229) |
+| 40 | `ASSUMED` | The run's clients store no cookies and refuse any request off the plan's origin; credential routes are paths on the target. (D-231) |
+| 41 | `ASSUMED` | Both open-model knee tests, p99 doubling and the goodput shortfall, are confirmed only when the next rate repeats them. It amends row 35. (D-232) |
+
+Rows 34 to 41 were added by execution and accepted by the maintainer on 2026-11-05; each cites
+the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
+as designed. Rows 34 and 35 amend rows 30 and 16, and row 41 amends row 35.
 
 ## 12. Phasing
 

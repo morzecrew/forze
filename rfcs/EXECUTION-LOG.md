@@ -5887,6 +5887,29 @@ responses were left as designed: a scrape holds at most one snapshot per fresh w
 `max_snapshot_bytes` (§9). The final render now runs under one timeout (`1327fef5a`), and the
 module's edge paths are covered (`db063a745`).
 
+## Decision-row outcomes — 2026-11-05 (RFC 0083)
+
+The maintainer accepted D-210, D-211, D-212, D-213 and D-217 as proposed. D-211, D-212, D-213
+and D-217 are now RFC 0083 §11 rows 19 to 22, D-212 at one `interval` over a smaller fixed
+bound. D-210 adds no row: row 16, as the second #840 review round amended it, already answers
+`503` when every fresh snapshot is withheld. D-214, D-215, D-216 and D-218 proposed no row.
+
+The maintainer also decided three points that change no row:
+- Rows 5 to 7 stay `LOCKED` as written.
+- Row 3 holds. `attach_metrics_route` without `snapshots` keeps today's code path, with its
+  render gate held on the reader and shared with the writer, as the #840 amendments put it.
+- A render that hangs at shutdown and so delays the worker's exit stays documented (R-16), and
+  renders do not move to daemon threads. The unit records it as a review finding, not as a
+  decision entry, so it gets no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0083 | 16 | Accepted, already in the row | `ASSUMED` | The route answers `503` when no snapshot is left after row 13 withholds shared ids, and `200` otherwise | D-210 |
+| 0083 | 19 | Accepted | `ASSUMED` | The snapshot file's token derives from the process's `instance_id()`, so every writer in one process writes one file | D-211 |
+| 0083 | 20 | Accepted, **at one `interval`** | `ASSUMED` | The final render's budget is one `interval` | D-212 |
+| 0083 | 21 | Accepted | `ASSUMED` | `MetricsSnapshots.union()` is public: blocking, returning `(status, body)` as the route answers | D-213 |
+| 0083 | 22 | Accepted | `ASSUMED` | One directory descriptor per process, opened by whichever of the writer and the route comes first; a route that cannot open it answers `503` | D-217 |
+
 ---
 
 # Unit 20 · RFC 0084 P1 — the generic load core
@@ -6191,3 +6214,24 @@ R-34.
 |---|---|---|---|
 | R-38 | Bug | `--fail-on ""` (an unset CI variable) compared with no gate and exited 0 | Fixed in `c660cf7b5`: only an absent option disables the gate; an empty one is refused, exit 2 |
 | R-39 | Bug | A gated latency with a value in the base run and null in the head (no call answered) was skipped | Fixed in `02f552cd8`: reported as a failure |
+
+## Decision-row outcomes — 2026-11-05 (RFC 0084)
+
+The maintainer accepted D-219, D-220, D-225, D-227, D-228, D-229, D-231 and D-232 as proposed,
+now RFC 0084 §11 rows 34 to 41. Rows 34 and 35 amend rows 30 and 16, and row 41, from D-232,
+amends row 35. The four drifts are accepted as departures: D-221 from §5.2's API sketch, D-222
+from §6's example and its timing band, D-223 from §7's page name, and D-226 from §5.6's
+wording. Those sections stand as written. The maintainer accepted the drifts as departures
+without rows, so D-221's and D-222's proposed rows are not added. D-224 and D-230 proposed no
+row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0084 | 34 | Accepted | `ASSUMED` | `client.saturated` reads the event loop's thread CPU at ≥ 0.85 cores; with an in-process transport it is reported, not judged | D-219 |
+| 0084 | 35 | Accepted | `ASSUMED` | The open-model p99 test is confirmed by the next rate and needs 100 answered calls in each step | D-220 |
+| 0084 | 36 | Accepted | `ASSUMED` | `forze load` exits 0 on a finished run, its stop included, 1 past `--fail-on`, and 2 on a refusal or a usage error | D-225 |
+| 0084 | 37 | Accepted | `ASSUMED` | `Call.request` takes a path relative to the base URL and refuses a scheme or a host | D-227 |
+| 0084 | 38 | Accepted | `ASSUMED` | Credentials resolve on their own pool, outside the latency clock, with refresh backoff while valid and one session per run | D-228 |
+| 0084 | 39 | Accepted | `ASSUMED` | A call counts in the step that sent it; rates use the measured window; percentiles cover answered calls | D-229 |
+| 0084 | 40 | Accepted | `ASSUMED` | The run's clients store no cookies and refuse any request off the plan's origin | D-231 |
+| 0084 | 41 | Accepted, **amends row 35** | `ASSUMED` | Both open-model knee tests are confirmed only when the next rate repeats them | D-232 |
