@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`instrument_process` exports the process's CPU time and resident memory to OpenTelemetry.** It registers `process.cpu.time` per `cpu.mode` and, on Linux only, `process.memory.usage` from `/proc/self/statm`, with no new dependency. One scrape sees every pre-fork worker's series only through `MetricsSnapshots`.
 
-- **`instrument_resilience` reports how many calls hold each bulkhead's slots.** New gauge `forze.resilience.bulkhead.in_use` covers fixed, AIMD and Gradient2 bulkheads. `forze.resilience.bulkhead.limit` now also carries a fixed bulkhead's cap, so `in_use / limit` is occupancy for every kind.
+- **`instrument_resilience` reports how many calls hold each bulkhead's slots.** New gauge `forze.resilience.bulkhead.in_use` covers fixed, AIMD and Gradient2 bulkheads. `forze.resilience.bulkhead.limit` now also carries a fixed bulkhead's cap (**behaviour change**), so `in_use / limit` is occupancy for every kind.
 
 ### Changed
 
