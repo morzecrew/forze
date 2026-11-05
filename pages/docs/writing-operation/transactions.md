@@ -122,6 +122,46 @@ A nested scope whose kind **doesn't** match the active transaction is a
 programming error and is rejected immediately — you can't open a cache
 transaction inside a database one and expect them to commit together.
 
+## Dry runs: roll back on purpose
+
+Sometimes you want the work done and then thrown away. A dry run of an import goes
+through every write, guard and constraint against the live database, so it reports
+the problems only the database finds, such as a duplicate key or a missing
+reference, and keeps nothing. Raising through the scope would roll back too, but
+every backend logs that as an error. Mark the scope instead:
+
+```python
+async with ctx.tx_ctx.scope("orders") as tx:
+    report = await import_rows(ctx, rows)
+
+    if dry_run:
+        tx.rollback_only()
+# rolled back if dry_run, and report is still here
+```
+
+`rollback_only()` decides how the scope ends, not when: the body runs to the end,
+then the scope rolls back instead of committing. Call it first thing to declare a
+dry run up front.
+
+- **At the root**, the whole transaction rolls back. Work deferred with
+  [`run_or_defer`](#after-the-commit) never runs, as after any rollback, and
+  nothing logs above `DEBUG`.
+- **In a nested scope**, only its savepoint rolls back, together with the work it
+  deferred, and the outer scope carries on. Mongo, Firestore, Neo4j and the mock's
+  default `journal` mode have no savepoints, because a nested scope shares the
+  root's transaction. There `rollback_only()` raises `exc.precondition`
+  (`code="tx_nested_rollback_unsupported"`) at the call instead of keeping writes
+  you asked to discard. The mock's `transactions="strict"` mode has savepoints.
+- **An exception after the mark** propagates as usual: the scope rolls back, and the
+  error is logged and raised like any other. The mark never swallows an error.
+- **After the scope exits**, `rollback_only()` raises `exc.precondition`
+  (`code="tx_scope_ended"`), since the outcome is already decided.
+
+The scope rolls back by throwing `RollbackSignal` into the transaction manager and
+catching it again on the way out. It is a `BaseException`, like a cancellation, so a
+custom manager that rolls back on a cancel handles it with no change. A manager
+reports savepoints through `TxCapabilities(savepoints=True)`.
+
 ## Read-only transactions
 
 `QUERY` operations open their scope `read_only=True`, so the backend begins a
@@ -341,7 +381,8 @@ needs. It rolls back what a database would — documents, outbox rows, inbox mar
 document-backed identity stores — and deliberately **not** the non-transactional
 backends (queues, streams, storage, caches, counters, locks, search/analytics):
 rolling those back would hide the cross-system gaps the [outbox](#after-the-commit)
-exists to close. Nested scopes act as savepoints, a `QUERY` root enforces `read_only`
+exists to close. Nested scopes share the root's transaction, with no savepoint of
+their own (see [Dry runs](#dry-runs-roll-back-on-purpose)). A `QUERY` root enforces `read_only`
 (a participating write raises `code="read_only_tx"`), and the manager honors the
 declared [isolation](#isolation) level through its MVCC overlay.
 

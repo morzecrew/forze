@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`instrument_realtime_hub` exports the SSE/WebSocket hub's subscribers and dropped live signals**, as `forze.realtime.hub.subscribers` and `forze.realtime.hub.dropped`, labelled per channel. `instrument_realtime_mailbox` also records `forze.realtime.mailbox.replay_size`: each finished connect replay's unacked backlog.
 
+- **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a handle: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
+
 ### Changed
 
 - **An authz decision skips the policy principal read after a fast-path admission of it.** With one `RevocationStates` object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (`ttl` at most). Other subjects still read.

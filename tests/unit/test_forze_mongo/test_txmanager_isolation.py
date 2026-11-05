@@ -17,9 +17,7 @@ class _FakeClient:
         self.options: MongoTransactionOptions | None = None
 
     @asynccontextmanager
-    async def transaction(
-        self, *, options: MongoTransactionOptions
-    ) -> AsyncGenerator[None]:
+    async def transaction(self, *, options: MongoTransactionOptions) -> AsyncGenerator[None]:
         self.options = options
         yield
 
@@ -36,6 +34,7 @@ def test_reports_snapshot_but_not_serializable() -> None:
     assert IsolationLevel.SNAPSHOT in caps
     assert IsolationLevel.READ_COMMITTED in caps
     assert IsolationLevel.SERIALIZABLE not in caps  # Mongo has no serializable mode
+    assert not adapter.capabilities().savepoints  # nested scopes share the root's transaction
     assert not isinstance(adapter, ReadOnlyAware)  # no read-only mode: a hint, so it marks
 
 

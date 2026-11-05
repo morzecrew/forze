@@ -118,6 +118,24 @@ async def test_a_rolled_back_root_discards_what_it_staged() -> None:
     assert _notes(state) == ["kept"]
 
 
+async def test_a_rollback_only_root_discards_what_it_staged_and_flushed() -> None:
+    """A dry run publishes nothing: neither the rows it flushed nor the events still staged."""
+
+    ctx, state = _ctx()
+
+    async with ctx.tx_ctx.scope("mock") as tx:
+        await _stage(ctx, "flushed")
+        await _flush(ctx)
+        tx.rollback_only()
+
+    async with ctx.tx_ctx.scope("mock") as tx:
+        await _stage(ctx, "staged")
+        tx.rollback_only()
+
+    assert ctx.outbox_staging.peek() == []
+    assert _notes(state) == []
+
+
 async def test_a_rolled_back_savepoint_discards_its_staging_and_its_flush() -> None:
     ctx, state = _ctx()
 

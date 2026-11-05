@@ -69,7 +69,7 @@ class TransactionRunner(Protocol):
         *,
         read_only: bool | None = None,
         isolation: IsolationLevel | None = None,
-    ) -> AbstractAsyncContextManager[None]: ...
+    ) -> AbstractAsyncContextManager[object]: ...
 
 
 # ....................... #

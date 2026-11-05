@@ -217,6 +217,7 @@ class MockStrictTxManagerAdapter(TransactionManagerPort, TxLockCapable):
         # serializable; nested scopes are real savepoints.
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
+            savepoints=True,
         )
 
     # ....................... #

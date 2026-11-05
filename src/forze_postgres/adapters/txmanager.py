@@ -88,8 +88,9 @@ class PostgresTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     # ....................... #
 
     def capabilities(self) -> TxCapabilities:
-        # Postgres honors every level natively (snapshot via REPEATABLE READ).
-        return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+        # Postgres honors every level natively (snapshot via REPEATABLE READ), and a nested
+        # scope is a real savepoint.
+        return TxCapabilities(isolation=frozenset(CoreIsolationLevel), savepoints=True)
 
     # ....................... #
 

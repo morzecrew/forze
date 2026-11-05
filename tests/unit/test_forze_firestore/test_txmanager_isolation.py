@@ -30,6 +30,7 @@ def test_reports_all_levels_serializable_satisfies_any() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
+    assert not adapter.capabilities().savepoints  # nested scopes share the root's transaction
     assert not isinstance(adapter, ReadOnlyAware)  # no read-only mode: a hint, so it marks
 
 

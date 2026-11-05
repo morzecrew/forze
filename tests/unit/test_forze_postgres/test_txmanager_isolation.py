@@ -41,9 +41,7 @@ class _FakeClient:
         return None  # push-down disabled for this isolation-only stub
 
     @asynccontextmanager
-    async def transaction(
-        self, *, options: PostgresTransactionOptions
-    ) -> AsyncGenerator[None]:
+    async def transaction(self, *, options: PostgresTransactionOptions) -> AsyncGenerator[None]:
         self.options = options
         yield
 
@@ -57,6 +55,7 @@ def test_is_isolation_aware_and_reports_all_levels() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
+    assert adapter.capabilities().savepoints  # a nested scope is a real savepoint
 
 
 @pytest.mark.parametrize(

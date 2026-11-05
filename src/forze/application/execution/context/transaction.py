@@ -7,7 +7,7 @@ from contextlib import (
     nullcontext,
 )
 from contextvars import ContextVar
-from typing import cast
+from typing import cast, final
 
 import attrs
 
@@ -19,6 +19,7 @@ from forze.application.contracts.transaction import (
     IsolationAware,
     IsolationLevel,
     ReadOnlyAware,
+    RollbackSignal,
     TransactionallyEnlistable,
     TransactionHandle,
     TransactionManagerPort,
@@ -81,6 +82,81 @@ failure must surface to the caller — it re-raises after every callback has run
 callback is a best-effort effect (cache invalidation, event dispatch, an idempotency-record
 write) whose failure must **not** turn an already-committed operation into a caller-visible
 error — it is logged and reported to the wired :class:`AfterCommitErrorHandler` instead."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, eq=False)
+class TransactionScopeHandle:
+    """What :meth:`TransactionContext.scope` yields: a way to end the scope with a rollback on purpose.
+
+    :meth:`rollback_only` marks the scope; when the body then finishes cleanly, the scope rolls
+    back instead of committing, and the caller carries on as after a commit (a dry run). The
+    rules:
+
+    - **Root scope** — the whole transaction rolls back. It is no commit point, and its
+      after-commit callbacks never run, as on any rollback.
+    - **Nested scope** — only its savepoint rolls back, with the after-commit callbacks it
+      deferred, and the enclosing scope carries on. On a backend whose nested scopes share the
+      root's transaction instead (its
+      :class:`~forze.application.contracts.transaction.TxCapabilities` reports no
+      ``savepoints``), :meth:`rollback_only` refuses with a ``precondition``: the writes could
+      only be discarded with the whole transaction.
+    - **An exception after the mark** propagates as it would without it: the scope rolls back
+      and the error is logged and raised as any error is. The mark never swallows an error.
+    - **Logging** — a rollback on request is not an error, so nothing logs it above ``DEBUG``.
+    """
+
+    _nested_in: TransactionManagerPort | None = attrs.field(default=None, alias="nested_in")
+    """The manager a nested scope runs on, asked about savepoints; ``None`` at the root."""
+
+    _rollback: bool = attrs.field(default=False, init=False)
+    """Whether :meth:`rollback_only` was called."""
+
+    _ended: bool = attrs.field(default=False, init=False)
+    """Whether the scope has exited (set by :meth:`TransactionContext.scope`)."""
+
+    # ....................... #
+
+    @property
+    def rollback_requested(self) -> bool:
+        """Whether the scope will roll back instead of committing."""
+
+        return self._rollback
+
+    # ....................... #
+
+    def rollback_only(self) -> None:
+        """Roll the scope back when it exits, instead of committing. Calling it again is a no-op.
+
+        :raises CoreException: ``precondition`` (``tx_scope_ended``) once the scope has exited,
+            when the outcome is already decided; ``precondition``
+            (``tx_nested_rollback_unsupported``) in a nested scope on a backend without
+            savepoints.
+        """
+
+        if self._ended:
+            raise exc.precondition(
+                "rollback_only() called after its transaction scope exited: the scope has "
+                "already committed or rolled back.",
+                code="tx_scope_ended",
+            )
+
+        manager = self._nested_in
+
+        if manager is not None and not (
+            isinstance(manager, IsolationAware) and manager.capabilities().savepoints
+        ):
+            raise exc.precondition(
+                "A nested transaction scope on this backend shares the root's transaction, "
+                "with no savepoint, so it cannot roll back on its own. Call rollback_only() on "
+                "the root scope, or raise to roll back the whole transaction.",
+                code="tx_nested_rollback_unsupported",
+            )
+
+        self._rollback = True
 
 
 # ....................... #
@@ -318,11 +394,17 @@ class TransactionContext:
         *,
         read_only: bool | None = None,
         isolation: IsolationLevel | None = None,
-    ) -> AsyncGenerator[None]:
-        """Enter a transaction scope.
+    ) -> AsyncGenerator[TransactionScopeHandle]:
+        """Enter a transaction scope, yielding its :class:`TransactionScopeHandle`.
 
         ``read_only`` opens a read-only transaction where the backend supports it (a
         ``QUERY`` operation passes this), so the database rejects writes.
+
+        The handle's :meth:`~TransactionScopeHandle.rollback_only` makes a clean exit roll
+        back instead of committing (a dry run): the root rolls back the whole transaction,
+        a nested scope its savepoint only. The scope throws :class:`RollbackSignal` into the
+        manager to do it and catches it again, so the caller sees a normal exit and nothing
+        logs an error. See the handle for the rules.
 
         ``isolation`` requests an explicit :class:`IsolationLevel` (honored at root only,
         like ``read_only``). It is checked fail-closed at first resolve: the resolved manager
@@ -399,17 +481,36 @@ class TransactionContext:
             # Set by the root alongside the depth, so a nested scope always finds it.
             entered = self.__tx_routes.get() or set()
             token_d = self.__tx_depth.set(depth + 1)
+            nested = TransactionScopeHandle(nested_in=tx)
+            nested_signal: RollbackSignal | None = None
+            # The root's queue (set with the depth), and where this scope's callbacks begin in it.
+            callbacks = self.__cb_stack.get()
+            callbacks_mark = len(callbacks) if callbacks is not None else 0
 
             try:
                 with self._staging_scope(root=False):
                     async with tx.transaction():
-                        yield
+                        yield nested
+
+                        if nested.rollback_requested:
+                            nested_signal = RollbackSignal()
+                            raise nested_signal
 
                         # Recorded once the body succeeds, before leaving commits it: a body
                         # that failed rolled back, and committed nothing beside the root.
                         entered.add(str(getattr(route, "value", route)))
 
+            except RollbackSignal as caught:
+                if caught is not nested_signal:
+                    raise
+
+                # The callbacks it deferred follow writes its savepoint just discarded.
+                if callbacks is not None:
+                    del callbacks[callbacks_mark:]
+                logger.debug("Nested transaction scope rolled back on request (rollback_only)")
+
             finally:
+                nested._ended = True  # pyright: ignore[reportPrivateUsage]
                 self.__tx_depth.reset(token_d)
 
             return
@@ -449,7 +550,8 @@ class TransactionContext:
         # so the oracle groups port calls by transaction — operation spans cannot, since concurrent
         # transactions interleave. The scope always emits a tx ``exit`` event under this id (from the
         # ``finally`` below); its ``outcome`` is ``commit`` on a clean exit and ``rollback`` when an
-        # exception escaped, so a rolled-back scope is never mistaken for a commit.
+        # exception escaped or the scope was marked ``rollback_only()``, so a rolled-back scope is
+        # never mistaken for a commit.
         tx_id = next_tx_id()
         token_id = self.__tx_id.set(tx_id)
 
@@ -458,51 +560,73 @@ class TransactionContext:
         deferred: list[_DeferredCallback] | None = None
         committed = False
         commit_reached = False
+        handle = TransactionScopeHandle()
+        signal: RollbackSignal | None = None
 
         try:
             try:
-                with self._staging_scope(root=True):
-                    async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
-                        yield
-
-                        # Body completed cleanly; leaving this block runs the driver commit.
-                        # No await sits between the yield returning and here, so this always
-                        # runs *before* the commit. Marking now means a cancellation
-                        # (deadline / disconnect) landing inside that commit — or the shielded
-                        # post-commit drain below — surfaces as a non-retryable
-                        # ``commit_ambiguous`` (below, or at the boundary via the mark) rather
-                        # than a retryable deadline, so an at-least-once caller cannot
-                        # double-execute an operation that may have (or has) committed. A
-                        # body failure/cancel throws into the yield, skips this, and follows
-                        # the rollback path (safely retryable). Not reset here: it must
-                        # survive to the boundary.
-                        #
-                        # A read-only root the backend refuses writes in commits nothing, so it is
-                        # no commit point. Asked of the transaction actually opened, not the
-                        # manager: a root that became a savepoint in an outer transaction is not
-                        # read-only. Only while it is the sole route entered: another route's
-                        # nested scope may have committed a transaction of its own. Only with no
-                        # deferred callback: one runs after the root exits and may write.
-                        # Fail-closed: an unaware manager, or any answer but ``True``, marks it
-                        # like a write.
-                        if not (
-                            root_read_only
-                            and len(routes) == 1
-                            and not self.__cb_stack.get()
-                            and isinstance(tx, ReadOnlyAware)
-                            and tx.read_only_enforced() is True
+                try:
+                    with self._staging_scope(root=True):
+                        async with self._open_root(
+                            tx, read_only=root_read_only, isolation=isolation
                         ):
-                            mark_commit_started()
-                            commit_reached = True
+                            yield handle
 
-                # Reached only on a clean exit (no exception thrown into the scope) — capture the
-                # after-commit callbacks to drain below, and mark the transaction committed. An escaping
-                # exception skips this, leaving ``deferred`` as ``None`` (nothing runs after a rollback)
-                # and ``committed`` False, so the exit event records a rollback, not a commit.
-                deferred = self.__cb_stack.get()
-                committed = True
+                            # A rollback on request is no commit point: nothing is marked, and
+                            # the signal unwinds the staging scope and the manager as any
+                            # exception would, discarding what the body wrote and staged.
+                            if handle.rollback_requested:
+                                signal = RollbackSignal()
+                                raise signal
+
+                            # Body completed cleanly; leaving this block runs the driver commit.
+                            # No await sits between the yield returning and here, so this always
+                            # runs *before* the commit. Marking now means a cancellation
+                            # (deadline / disconnect) landing inside that commit — or the shielded
+                            # post-commit drain below — surfaces as a non-retryable
+                            # ``commit_ambiguous`` (below, or at the boundary via the mark) rather
+                            # than a retryable deadline, so an at-least-once caller cannot
+                            # double-execute an operation that may have (or has) committed. A
+                            # body failure/cancel throws into the yield, skips this, and follows
+                            # the rollback path (safely retryable). Not reset here: it must
+                            # survive to the boundary.
+                            #
+                            # A read-only root the backend refuses writes in commits nothing, so it is
+                            # no commit point. Asked of the transaction actually opened, not the
+                            # manager: a root that became a savepoint in an outer transaction is not
+                            # read-only. Only while it is the sole route entered: another route's
+                            # nested scope may have committed a transaction of its own. Only with no
+                            # deferred callback: one runs after the root exits and may write.
+                            # Fail-closed: an unaware manager, or any answer but ``True``, marks it
+                            # like a write.
+                            if not (
+                                root_read_only
+                                and len(routes) == 1
+                                and not self.__cb_stack.get()
+                                and isinstance(tx, ReadOnlyAware)
+                                and tx.read_only_enforced() is True
+                            ):
+                                mark_commit_started()
+                                commit_reached = True
+
+                except RollbackSignal as caught:
+                    if caught is not signal:
+                        raise
+
+                    # Rolled back on request: not an error, so it is logged at debug only.
+                    # ``deferred`` stays ``None`` and ``committed`` False, as on any rollback.
+                    logger.debug("Transaction rolled back on request (rollback_only)")
+
+                else:
+                    # Reached only on a clean exit (no exception thrown into the scope) — capture the
+                    # after-commit callbacks to drain below, and mark the transaction committed. An escaping
+                    # exception skips this, leaving ``deferred`` as ``None`` (nothing runs after a rollback)
+                    # and ``committed`` False, so the exit event records a rollback, not a commit.
+                    deferred = self.__cb_stack.get()
+                    committed = True
 
             finally:
+                handle._ended = True  # pyright: ignore[reportPrivateUsage]
                 self._tx_tracer.on_scope_exit(
                     route=route_name,
                     depth=self.__tx_depth.get(),

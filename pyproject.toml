@@ -555,6 +555,28 @@ lock. The manager is not TxLockCapable, so a lock asked of its route is refused 
 (tx_lock_unsupported).\
 """
 
+[tool.conformance_manifest.planes.tx_rollback_only]
+scenario = "tests.support.tx_rollback_only_conformance:TX_ROLLBACK_ONLY_BATTERY"
+dep_keys = []
+engines = ["mock", "postgres", "mongo"]
+# A rollback on request travels through whatever transaction manager the route resolves, so
+# whoever provides a manager owes a leg, or the reason it has none.
+derive_from = ["transaction_manager"]
+
+[tool.conformance_manifest.planes.tx_rollback_only.waivers]
+firestore = """
+No Firestore emulator leg: the battery's checks are the kernel's, and the Firestore client \
+rolls back on the signal as on a cancellation (tests/unit/test_forze_firestore/\
+test_firestore_client_tx.py pins it), while a nested scope is refused by its capabilities, \
+which report no savepoints (test_txmanager_isolation.py).\
+"""
+neo4j = """
+Neo4j registers its transaction manager for the graph plane. Its client rolls back on any \
+BaseException, the signal included, and a nested scope reuses the root's transaction, so its \
+capabilities report no savepoints and a nested rollback_only() is refused; \
+tests/unit/test_forze_neo4j/test_txmanager.py pins the manager's half of both.\
+"""
+
 [tool.conformance_manifest.planes.owned_reads]
 scenario = "tests.support.owned_reads_conformance:OWNED_READS_BATTERY"
 dep_keys = []
