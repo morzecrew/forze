@@ -8,6 +8,7 @@ tokens or ids.
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -175,7 +176,8 @@ def parse_fail_on(spec: str) -> dict[str, float]:
         except ValueError:
             share = 0.0
 
-        if metric not in _METRICS or share <= 0:
+        # `nan > limit` is always false: a nan threshold would never fail anything.
+        if metric not in _METRICS or not (math.isfinite(share) and share > 0):
             raise exc.configuration(
                 f"--fail-on takes metric:percent with a metric in {list(_METRICS)}, got {part!r}",
                 code="load_fail_on_invalid",

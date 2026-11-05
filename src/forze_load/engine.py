@@ -65,8 +65,10 @@ def _floats(values: Iterable[float]) -> tuple[float, ...]:
 
 
 def _positive_steps(values: Sequence[float], what: str) -> None:
-    if not values or any(value <= 0 for value in values):
-        raise exc.configuration(f"{what} must be a non-empty list of positive numbers")
+    # `nan <= 0` is false, so finiteness is checked first: a nan or inf rate would crash the
+    # in-flight cap's quantile instead of being refused.
+    if not values or not all(math.isfinite(value) and value > 0 for value in values):
+        raise exc.configuration(f"{what} must be a non-empty list of positive, finite numbers")
 
 
 @attrs.frozen(kw_only=True)
@@ -82,8 +84,12 @@ class _Ramp:
     ramp."""
 
     def __attrs_post_init__(self) -> None:
-        if not 0.0 <= self.warm_s < self.step_s:
-            raise exc.configuration("warm_s must be at least 0 and below step_s")
+        if not math.isfinite(self.step_s) or not 0.0 <= self.warm_s < self.step_s:
+            raise exc.configuration("step_s must be finite, and warm_s at least 0 and below it")
+
+        # A nan threshold would make every comparison false and never stop the ramp.
+        if not 0.0 <= self.stop_error_rate <= 1.0:
+            raise exc.configuration("stop_error_rate must be a share between 0 and 1")
 
 
 @attrs.frozen(kw_only=True)
@@ -104,6 +110,9 @@ class ClosedRamp(_Ramp):
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
         _positive_steps(self.steps, "steps")
+
+        if not (math.isfinite(self.think_s) and self.think_s >= 0):
+            raise exc.configuration("think_s must be a finite number of seconds, at least 0")
 
 
 @attrs.frozen(kw_only=True)

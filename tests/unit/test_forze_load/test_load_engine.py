@@ -305,6 +305,14 @@ class TestBeforeLoad:
             lambda: ClosedRamp(steps=[0], step_s=1),
             lambda: ClosedRamp(steps=[1], step_s=1, warm_s=1),
             lambda: OpenRamp(rates=[-1.0], step_s=1),
+            lambda: OpenRamp(rates=[float("nan")], step_s=1),
+            lambda: OpenRamp(rates=[float("inf")], step_s=1),
+            lambda: ClosedRamp(steps=[1], step_s=float("inf")),
+            lambda: ClosedRamp(steps=[1], step_s=1, warm_s=float("nan")),
+            lambda: ClosedRamp(steps=[1], step_s=1, think_s=float("nan")),
+            lambda: ClosedRamp(steps=[1], step_s=1, think_s=-1),
+            lambda: ClosedRamp(steps=[1], step_s=1, stop_error_rate=float("nan")),
+            lambda: ClosedRamp(steps=[1], step_s=1, stop_error_rate=1.5),
         ],
     )
     def test_bad_profiles_are_refused(self, make: Callable[[], object]) -> None:

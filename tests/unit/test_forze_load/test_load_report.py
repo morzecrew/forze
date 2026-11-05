@@ -120,7 +120,9 @@ class TestParseFailOn:
     def test_it_parses_percentages(self) -> None:
         assert parse_fail_on("p95:15%, goodput:10") == {"p95": 0.15, "goodput": 0.10}
 
-    @pytest.mark.parametrize("spec", ["p42:10%", "p95", "p95:abc", "p95:-5%", "goodput:0"])
+    @pytest.mark.parametrize(
+        "spec", ["p42:10%", "p95", "p95:abc", "p95:-5%", "goodput:0", "p95:nan%", "goodput:inf"]
+    )
     def test_it_refuses_bad_specs(self, spec: str) -> None:
         with pytest.raises(CoreException) as error:
             parse_fail_on(spec)

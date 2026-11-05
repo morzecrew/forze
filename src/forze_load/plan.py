@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import os
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -169,8 +170,8 @@ def validate_plan(plan: LoadPlan) -> None:
 
     host = _check_url(plan.base_url)
 
-    if plan.timeout_s <= 0:
-        raise _invalid("timeout_s must be positive")
+    if not (math.isfinite(plan.timeout_s) and plan.timeout_s > 0):
+        raise _invalid("timeout_s must be a positive, finite number of seconds")
 
     names = [scenario.name for scenario in plan.scenarios]
 

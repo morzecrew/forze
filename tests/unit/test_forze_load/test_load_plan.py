@@ -166,6 +166,10 @@ class TestPlanShape:
         with pytest.raises(CoreException):
             validate_plan(_plan(timeout_s=0))
 
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(CoreException):
+                validate_plan(_plan(timeout_s=bad))
+
     def test_the_output_target_keeps_scheme_host_and_port_only(self) -> None:
         assert safe_target("http://h:1/tenants/123/api?token=x#y") == "http://h:1"
         assert safe_target("https://h") == "https://h"
