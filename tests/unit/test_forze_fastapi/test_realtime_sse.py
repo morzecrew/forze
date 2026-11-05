@@ -164,7 +164,8 @@ class TestReplay:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["cache-control"] == "no-store, no-transform"
+        assert response.headers["x-accel-buffering"] == "no"
 
         frames = _frames(response.text)
         assert [f["id"] for f in frames] == ids
@@ -479,7 +480,10 @@ class TestLiveOnly:
 
         [start] = [m for m in sent if m["type"] == "http.response.start"]
         assert start["status"] == 200
-        assert dict(start["headers"])[b"content-type"].startswith(b"text/event-stream")
+        headers = dict(start["headers"])
+        assert headers[b"content-type"].startswith(b"text/event-stream")
+        assert headers[b"cache-control"] == b"no-store, no-transform"
+        assert headers[b"x-accel-buffering"] == b"no"
         assert [frame["data"] for frame in frames()] == [
             {"id": None, "data": {"n": 1}},
             {"id": "durable-2", "data": {"n": 2}},

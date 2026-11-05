@@ -109,7 +109,9 @@ connection that resolves no tenant (``tenant_required``) before asking. A hand-w
 WebSocket resolver must do the same."""
 
 _SSE_HEADERS = {
-    "Cache-Control": "no-store",
+    # no-transform: an edge that compresses by content type would otherwise hold one
+    # compressor per open stream to save a few bytes a frame (RFC 9111 §5.2.2.6).
+    "Cache-Control": "no-store, no-transform",
     "X-Accel-Buffering": "no",  # proxies must not buffer an event stream
 }
 
