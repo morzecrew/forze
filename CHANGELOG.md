@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **An authz decision no longer reads the policy principal right after a fast-path admission of it.** With the same `RevocationStates` on both kernels, a decision later in the request's task, outside a transaction, treats it as active for up to `ttl`; other subjects, delegated requests and transactions still read.
 
 ### Removed
 

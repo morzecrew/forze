@@ -9,6 +9,10 @@ The deactivation cases run on the mock stores and on Postgres and Redis, since t
 the command port each backend builds. The skip cases run on Postgres only: the skip is refused
 on any other backend, the mock included, whose locking read does not exclude a deactivation.
 
+The authorization cases check the same skip in the authz decision: after a fast-path admission,
+an authorization of the admitted principal, in the same task and outside a transaction, reads no
+policy principal either.
+
 Used by:
 
 - ``tests/unit/test_forze_identity/authn/test_eligibility_skip.py``
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -35,7 +40,7 @@ from forze.application.contracts.authn import (
     PrincipalEligibilityDepKey,
     TokenVerifierDepKey,
 )
-from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.authz import AuthzRequest, AuthzSpec, AuthzSubject
 from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import KeyedUpdate, UpsertItem
 from forze.application.execution import ExecutionContext
@@ -472,6 +477,211 @@ SKIP_CASES: Mapping[str, Callable[[Stack], Awaitable[None]]] = {
     "token_ahead_of_epoch": a_token_ahead_of_the_epoch_reads,
     "password_after_token": a_password_after_a_token_forgets_the_admission,
 }
+
+
+# ----------------------- #
+# The authorization read, skipped after a fast-path admission of the same principal
+
+ACTION = "articles.read"
+"""An action no principal of the stacks is granted: each decision is a denial, by its reason."""
+
+
+async def authorization_reads(stack: Stack, subject: AuthzSubject) -> int:
+    """The policy principal reads one authorization of *subject* made, in the current task."""
+
+    decision = stack.ctx.authz.decision(AuthzSpec(name=stack.authz_route))
+    before = len(stack.principal_reads)
+    await decision.authorize(AuthzRequest(subject=subject, action=ACTION))
+
+    return len(stack.principal_reads) - before
+
+
+async def authorized_after[T](
+    stack: Stack,
+    authenticate: Callable[[], Awaitable[object]],
+    authorize: Callable[[], Awaitable[T]],
+) -> T:
+    """*authorize* after *authenticate*, in one request of its own (its own task)."""
+
+    async def request() -> T:
+        await authenticate()
+        return await authorize()
+
+    return await asyncio.create_task(stack.run(request))
+
+
+def with_token(stack: Stack, issued: IssuedTokens) -> Callable[[], Awaitable[object]]:
+    """Authenticate with *issued*'s access token, as a request's transport does."""
+
+    return lambda: stack.ctx.authn.authn(stack.spec).authenticate_with_token(issued.access.token)
+
+
+async def an_authorization_after_a_fast_path_admission_skips_the_read(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    subject = AuthzSubject(principal_id=principal)
+
+    async def twice() -> list[int]:
+        return [await authorization_reads(stack, subject) for _ in range(2)]
+
+    # Not consumed: every authorization of the subject in the request skips it.
+    assert await authorized_after(stack, with_token(stack, issued), twice) == [0, 0]
+
+    async def reason() -> str | None:
+        decision = stack.ctx.authz.decision(AuthzSpec(name=stack.authz_route))
+        return (await decision.authorize(AuthzRequest(subject=subject, action=ACTION))).reason
+
+    # Treated as present and active: refused for the grant it lacks, not for its row.
+    assert await authorized_after(stack, with_token(stack, issued), reason) == (
+        f"No grant for permission {ACTION!r}"
+    )
+
+
+async def an_authorization_of_another_principal_reads(stack: Stack) -> None:
+    principal, other = await stack.principal(), await stack.principal()
+    issued = await login(stack, principal)
+
+    reads = await authorized_after(
+        stack,
+        with_token(stack, issued),
+        lambda: authorization_reads(stack, AuthzSubject(principal_id=other)),
+    )
+
+    assert reads == 1
+
+
+async def an_authorization_in_another_task_reads(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    subject = AuthzSubject(principal_id=principal)
+
+    async def spawned() -> int:
+        # A task spawned after the verification copies its context; it is not the request.
+        return await asyncio.create_task(authorization_reads(stack, subject))
+
+    assert await authorized_after(stack, with_token(stack, issued), spawned) == 1
+
+
+async def an_authorization_in_a_transaction_reads(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    subject = AuthzSubject(principal_id=principal)
+
+    reads = await authorized_after(
+        stack,
+        with_token(stack, issued),
+        lambda: stack.in_tx(lambda: authorization_reads(stack, subject)),
+    )
+
+    assert reads == 1
+
+
+async def an_authorization_after_its_own_deactivation_refuses(stack: Stack) -> None:
+    """The transaction raised the epoch itself, which the cache sees only after commit."""
+
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    decision = stack.ctx.authz.decision(AuthzSpec(name=stack.authz_route))
+    request = AuthzRequest(subject=AuthzSubject(principal_id=principal), action=ACTION)
+
+    async def deactivate_then_authorize() -> str | None:
+        await _update(stack, principal)
+        return (await decision.authorize(request)).reason
+
+    reason = await authorized_after(
+        stack,
+        with_token(stack, issued),
+        lambda: stack.in_tx(deactivate_then_authorize),
+    )
+
+    assert reason == "Policy principal is inactive"
+
+
+async def an_authorization_after_a_token_from_before_the_fast_path_reads(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = resign(await login(stack, principal), fam=None, pep=None)
+
+    reads = await authorized_after(
+        stack,
+        with_token(stack, issued),
+        lambda: authorization_reads(stack, AuthzSubject(principal_id=principal)),
+    )
+
+    assert reads == 1
+
+
+async def an_authorization_after_a_password_reads(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    credentials = PasswordCredentials(login=f"{principal}@example.com", password="horse battery")
+    provisioning = stack.ctx.authn.password_account_provisioning(stack.spec)
+    await stack.run(lambda: provisioning.register_with_password(principal, credentials))
+    authn = stack.ctx.authn.authn(stack.spec)
+
+    async def token_then_password() -> None:
+        await authn.authenticate_with_token(issued.access.token)
+        await authn.authenticate_with_password(credentials)
+
+    reads = await authorized_after(
+        stack,
+        token_then_password,
+        lambda: authorization_reads(stack, AuthzSubject(principal_id=principal)),
+    )
+
+    assert reads == 1
+
+
+async def an_authorization_after_an_api_key_reads_until_its_state_is_warm(stack: Stack) -> None:
+    """Needs a stack whose authn route verifies API keys."""
+
+    principal = await stack.principal()
+    key = await issue_key(stack, principal)
+    subject = AuthzSubject(principal_id=principal)
+
+    async def with_key() -> object:
+        return await stack.ctx.authn.authn(stack.spec).authenticate_with_api_key(key)
+
+    # The miss writes the key's state; only a state recording the current epoch is a skip.
+    reads = [
+        await authorized_after(stack, with_key, lambda: authorization_reads(stack, subject))
+        for _ in range(2)
+    ]
+
+    assert reads == [1, 0]
+
+
+async def a_delegated_admission_reads_every_authorization(stack: Stack) -> None:
+    """Needs a stack whose authn module reads the ``act`` claim. The actor's eligibility check
+    reads, so no decision in the request skips, not even the subject's."""
+
+    principal, agent = await stack.principal(), await stack.principal()
+    issued = await login(stack, principal)
+
+    async def as_the_guard_does(acting: UUID) -> list[int]:
+        # The subject first, carrying its actor; then the actor, as the subject of its own call.
+        actor = AuthzSubject(principal_id=acting)
+        subject = AuthzSubject(principal_id=principal, actor=actor)
+        return [await authorization_reads(stack, subject), await authorization_reads(stack, actor)]
+
+    # Another principal acting, and the subject acting for itself.
+    for acting in (agent, principal):
+        delegated = with_token(stack, resign(issued, act={"sub": str(acting)}))
+        reads = await authorized_after(stack, delegated, partial(as_the_guard_does, acting))
+
+        assert reads == [1, 1]
+
+
+AUTHORIZATION_CASES: Mapping[str, Callable[[Stack], Awaitable[None]]] = {
+    "skips": an_authorization_after_a_fast_path_admission_skips_the_read,
+    "another_principal": an_authorization_of_another_principal_reads,
+    "another_task": an_authorization_in_another_task_reads,
+    "transaction": an_authorization_in_a_transaction_reads,
+    "own_deactivation": an_authorization_after_its_own_deactivation_refuses,
+    "token_before_fast_path": an_authorization_after_a_token_from_before_the_fast_path_reads,
+    "password_after_token": an_authorization_after_a_password_reads,
+    "api_key": an_authorization_after_an_api_key_reads_until_its_state_is_warm,
+}
+"""Needs a stack with an authz decision route and an authn route that verifies API keys."""
 
 
 # ----------------------- #

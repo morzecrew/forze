@@ -37,7 +37,7 @@ from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import StrKey, utcnow
+from forze.base.primitives import StrKey, monotonic, utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 from forze_identity._transaction import enlisted
 
@@ -202,9 +202,17 @@ class _Fresh:
 
     principal_id: UUID
     task: "asyncio.Task[Any] | None"
+    at: float = 0.0
+    """When, on the monotonic clock; read for :data:`_ON_EPOCH` only."""
 
 
 _FRESH: ContextVar[_Fresh | None] = ContextVar("forze_identity_fresh_admission", default=None)
+
+_ON_EPOCH: ContextVar[_Fresh | None] = ContextVar(
+    "forze_identity_admitted_on_epoch",
+    default=None,
+)
+"""The admission whose eligibility read this task skipped, for :func:`admitted_on_epoch`."""
 
 
 def remember_admitted_session(admitted: AdmittedSession | None, *, fresh: bool = False) -> None:
@@ -226,6 +234,7 @@ def remember_admitted_session(admitted: AdmittedSession | None, *, fresh: bool =
         if fresh and admitted is not None
         else None
     )
+    _ON_EPOCH.set(None)
 
 
 def admitted_just_now(principal_id: UUID) -> bool:
@@ -264,6 +273,44 @@ def remember_admitted_api_key(admitted: AdmittedApiKey | None, *, fresh: bool = 
         _Fresh(admitted.principal_id, asyncio.current_task())
         if fresh and admitted is not None
         else None
+    )
+    _ON_EPOCH.set(None)
+
+
+def remember_admitted_on_epoch(principal_id: UUID | None) -> None:
+    """Record that this task skipped *principal_id*'s eligibility read after its admission, or
+    forget it (``None``).
+
+    For the eligibility skip alone, which holds every precondition it rests on. The next
+    verification in the task forgets it too.
+    """
+
+    _ON_EPOCH.set(
+        _Fresh(principal_id, asyncio.current_task(), monotonic())
+        if principal_id is not None
+        else None
+    )
+
+
+def admitted_on_epoch(principal_id: UUID, *, within: timedelta) -> bool:
+    """Whether this task skipped *principal_id*'s eligibility read less than *within* ago.
+
+    Not consumed, unlike :func:`admitted_just_now`: every check of the principal later in the
+    task may rely on it, up to the next verification or *within*. A deactivation committed since
+    then reaches such a check only once *within* has passed, so pass the revocation states'
+    ``ttl``, the bound a lost write-through already has. It never answers for a task spawned
+    after the verification, nor knows of an epoch the current transaction raised: the caller
+    reads inside a transaction.
+    """
+
+    skipped = _ON_EPOCH.get()
+
+    return (
+        skipped is not None
+        and skipped.principal_id == principal_id
+        and skipped.task is not None
+        and skipped.task is asyncio.current_task()
+        and monotonic() - skipped.at < within.total_seconds()
     )
 
 

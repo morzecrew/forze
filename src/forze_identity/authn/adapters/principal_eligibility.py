@@ -10,7 +10,7 @@ from forze.base.exceptions import exc
 from forze_identity._secure_spec import forbid_cache_and_history
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 
-from ..services import admitted_just_now
+from ..services import admitted_just_now, remember_admitted_on_epoch
 
 # ----------------------- #
 
@@ -72,7 +72,9 @@ class AdmittedTokenEligibilityAdapter(PrincipalEligibilityPort):
     the principal was read active after that epoch. Only the call that
     follows that verification in the same task may rely on it, and only a non-locking one about
     the token's own subject: an issue locks and always reads, and an actor check comes after
-    the subject's and always reads.
+    the subject's and always reads. A skip is recorded for the authz decision
+    (:func:`~forze_identity.authn.services.admitted_on_epoch`), and any check that reads forgets
+    it, so a delegated request's decisions read too.
     """
 
     inner: PrincipalEligibilityPort
@@ -88,8 +90,12 @@ class AdmittedTokenEligibilityAdapter(PrincipalEligibilityPort):
     ) -> None:
         # Consumed whatever this call asks, so no later call inherits the verification.
         if admitted_just_now(principal_id) and not for_update:
+            # An authz decision about the same principal, later in this task, skips its read too.
+            remember_admitted_on_epoch(principal_id)
             return
 
+        # Any other check reads, a delegated actor's included, and so does every decision after.
+        remember_admitted_on_epoch(None)
         await self.inner.require_authentication_allowed(principal_id, for_update=for_update)
 
 

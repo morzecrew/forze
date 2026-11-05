@@ -23,7 +23,9 @@ from .revocation_states import (
     SessionRevocation,
     StateMacKeys,
     admitted_just_now,
+    admitted_on_epoch,
     remember_admitted_api_key,
+    remember_admitted_on_epoch,
     remember_admitted_session,
 )
 from .signing import (
@@ -67,6 +69,8 @@ __all__ = [
     "SessionRevocation",
     "StateMacKeys",
     "admitted_just_now",
+    "admitted_on_epoch",
     "remember_admitted_api_key",
+    "remember_admitted_on_epoch",
     "remember_admitted_session",
 ]

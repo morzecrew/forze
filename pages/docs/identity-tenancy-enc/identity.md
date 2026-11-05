@@ -239,8 +239,9 @@ kernel = AuthzKernelConfig(grants_cache=grants_cache)
 - Nothing is cached unless you pass one.
 - It remembers the roles and permissions the catalog bindings grant, per principal, tenant and
   scope, up to `max_entries` (10,000 by default), dropping the least recently used first.
-- Read on every decision, never cached: whether the principal is active, what providers derive,
-  and delegation (`may_act`) grants. `list_roles` reads the bindings too, and tenant membership
+- Read on every decision, never cached: whether the principal is active (unless a
+  [fast-path admission](../integrations/authn.md#skip-the-eligibility-read) just checked it),
+  what providers derive, and delegation (`may_act`) grants. `list_roles` reads the bindings too, and tenant membership
   is outside the cache altogether.
 - A revocation reaches the cache when its write commits, so a request elsewhere can still be
   served the revoked grant between the commit and that moment.

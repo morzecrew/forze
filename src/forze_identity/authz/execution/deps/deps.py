@@ -170,11 +170,15 @@ class ConfigurableAuthzDecision:
     shared: AuthzSharedServices
 
     def __call__(self, ctx: ExecutionContext, spec: AuthzSpec) -> AuthzDecisionPort:
+        states = self.shared.revocation_states
+
         return AuthzDecisionAdapter(
             spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx, self.shared),
             policy=self.shared.policy,
+            admission_window=states.ttl if states is not None else None,
+            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
 

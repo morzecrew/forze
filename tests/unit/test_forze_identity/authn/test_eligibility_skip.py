@@ -26,7 +26,7 @@ from forze.application.contracts.authn import (
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
-from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.authz import AuthzRequest, AuthzSpec, AuthzSubject
 from forze.application.contracts.deps import backend_of
 from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import (
@@ -54,9 +54,16 @@ from forze_identity.authn.services import (
     EpochRaise,
     PasswordConfig,
     PolicyPrincipalEpochHook,
+    remember_admitted_on_epoch,
     revocation_states,
 )
-from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
+from forze_identity.authz import (
+    AuthzDepsModule,
+    AuthzKernelConfig,
+    ConfigurableAuthzDecision,
+    build_authz_shared_services,
+)
+from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import (
     CreatePolicyPrincipalCmd,
@@ -89,6 +96,14 @@ CONFIG = RevocationStates(
     ttl=timedelta(minutes=5),
     key_mac=StateMacKeys(active=b"m" * 32),
 )
+
+
+_CATALOG = tuple(
+    name
+    for name in AuthzResourceName
+    if name not in (AuthzResourceName.POLICY_PRINCIPALS, AuthzResourceName.DELEGATION_GRANTS)
+)
+"""The authz catalog's resources, for the decision route."""
 
 
 class _AnyTenant:
@@ -176,6 +191,7 @@ def _stack(
             AuthzDepsModule(
                 kernel=AuthzKernelConfig(revocation_states=authz),
                 principal_registry={ROUTE},
+                decision={ROUTE},
             )()
         )
         .merge(
@@ -186,6 +202,7 @@ def _stack(
                         policy_principal_spec.name: principals,
                         password_account_spec.name: document,
                         api_key_account_spec.name: keys,
+                        **dict.fromkeys(_CATALOG, document),
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -915,3 +932,80 @@ async def test_a_delegated_keys_actor_is_always_read(
         assert await battery.verify_key(stack, issued.key) == "admitted"
         # The subject's check skipped; the actor's read, even when it is the subject.
         assert stack.principal_reads == ["find"]
+
+
+# ....................... #
+# The authorization read. As the eligibility read, skipped on Postgres's footing only.
+
+
+async def test_the_mock_never_skips_the_authorization_read() -> None:
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+
+    reads = await battery.authorized_after(
+        stack,
+        battery.with_token(stack, issued),
+        lambda: battery.authorization_reads(stack, AuthzSubject(principal_id=principal)),
+    )
+
+    assert reads == 1
+
+
+@pytest.mark.parametrize("case", sorted(battery.AUTHORIZATION_CASES))
+async def test_the_authorization_skip(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _as_postgres(monkeypatch)
+    await battery.AUTHORIZATION_CASES[case](_stack())
+
+
+async def test_a_delegated_admission_reads_every_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    await battery.a_delegated_admission_reads_every_authorization(_stack(actor_claim="act"))
+
+
+async def test_an_authorization_a_ttl_after_the_admission_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A deactivation committed since the admission reaches the decision within ttl.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+    subject = AuthzSubject(principal_id=principal)
+    clock = revocation_states.monotonic
+    elapsed = timedelta(0)
+    monkeypatch.setattr(revocation_states, "monotonic", lambda: clock() + elapsed.total_seconds())
+
+    async def at(after: timedelta) -> int:
+        nonlocal elapsed
+        elapsed = after
+        return await battery.authorization_reads(stack, subject)
+
+    async def later() -> list[int]:
+        return [await at(CONFIG.ttl - timedelta(seconds=1)), await at(CONFIG.ttl)]
+
+    reads = await battery.authorized_after(stack, battery.with_token(stack, issued), later)
+
+    assert reads == [0, 1]
+
+
+@pytest.mark.parametrize(("states", "reads"), [(CONFIG, 0), (None, 1)])
+async def test_a_decision_skips_only_with_revocation_states_on_its_kernel(
+    states: RevocationStates | None, reads: int
+) -> None:
+    stack = _stack()
+    principal = await stack.principal()
+    shared = build_authz_shared_services(AuthzKernelConfig(revocation_states=states))
+    decision = ConfigurableAuthzDecision(shared=shared)(stack.ctx, AuthzSpec(name=ROUTE))
+    request = AuthzRequest(subject=AuthzSubject(principal_id=principal), action=battery.ACTION)
+
+    async def skipped_then_decided() -> int:
+        # What the eligibility skip records, here without its preconditions.
+        remember_admitted_on_epoch(principal)
+        before = len(stack.principal_reads)
+        await decision.authorize(request)
+        return len(stack.principal_reads) - before
+
+    assert await asyncio.create_task(skipped_then_decided()) == reads
