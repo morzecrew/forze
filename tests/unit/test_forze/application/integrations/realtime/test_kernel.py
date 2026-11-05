@@ -9,9 +9,11 @@ the SSE route both consume these helpers, so their delivery semantics cannot dri
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import aclosing
 
 import pytest
+import structlog
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import Audience, MailboxEntry, RealtimeSignal
@@ -87,6 +89,7 @@ class _WindowedMailbox:
     def __init__(self, inner: InMemoryRealtimeMailbox, cap: int) -> None:
         self.inner = inner
         self.cap = cap
+        self.on_replay: Callable[[int], None] | None = None
 
     async def replay_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
         fetched = 0
@@ -101,6 +104,21 @@ class _WindowedMailbox:
 
     def __getattr__(self, name: str) -> object:
         return getattr(self.inner, name)
+
+
+class _FailingMailbox:
+    """A store that delivers one entry, then fails mid-replay."""
+
+    def __init__(self) -> None:
+        self.on_replay: Callable[[int], None] | None = None
+
+    async def replay_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
+        yield MailboxEntry(event_id="a", hlc=_hlc(1), event="e", payload={})
+        raise RuntimeError("store down")
+
+
+def _raise(_count: int) -> None:
+    raise ValueError("metrics backend broken")
 
 
 async def _store(mailbox: InMemoryRealtimeMailbox, event_id: str, ms: int) -> None:
@@ -225,6 +243,74 @@ class TestIterBacklog:
         await stream.aclose()
 
         assert closed == [True]  # cleanup ran synchronously with the aclose
+
+    async def test_on_replay_hears_one_count_per_drain(self) -> None:
+        # Two cap-filled rounds re-fetch e2; the hook still hears once, counting it once.
+        inner = InMemoryRealtimeMailbox()
+
+        for n in range(1, 7):
+            await _store(inner, f"e{n}", n)
+
+        mailbox = _WindowedMailbox(inner, cap=2)
+        sizes: list[int] = []
+        mailbox.on_replay = sizes.append
+
+        got, _ = await self._drain(mailbox, max_rounds=2)
+
+        assert got == ["e1", "e2", "e3"]
+        assert sizes == [3]
+
+    async def test_a_drain_stopped_early_records_nothing(self) -> None:
+        # A client gone mid-replay says nothing about the backlog; a partial count
+        # beside healthy connects would read as devices catching up.
+        inner = InMemoryRealtimeMailbox()
+        await _seed(inner)
+        mailbox = _WindowedMailbox(inner, cap=10)
+        sizes: list[int] = []
+        mailbox.on_replay = sizes.append
+
+        stream = iter_backlog(
+            mailbox,  # type: ignore[arg-type]
+            principal="p1",
+            since=None,
+            outcome=BacklogDrain(),
+        )
+        await anext(stream)
+        await stream.aclose()
+
+        assert sizes == []
+
+    async def test_a_failed_drain_records_nothing(self) -> None:
+        mailbox = _FailingMailbox()
+        sizes: list[int] = []
+        mailbox.on_replay = sizes.append
+
+        with pytest.raises(RuntimeError, match="store down"):
+            await self._drain(mailbox)
+
+        assert sizes == []  # an outage must not read as a caught-up device
+
+    async def test_a_raising_hook_leaves_a_finished_drain_intact(self) -> None:
+        inner = InMemoryRealtimeMailbox()
+        ids = await _seed(inner)
+        mailbox = _WindowedMailbox(inner, cap=10)
+        mailbox.on_replay = _raise
+
+        with structlog.testing.capture_logs() as logs:
+            got, outcome = await self._drain(mailbox)
+
+        assert got == ids
+        assert outcome.complete is True
+        assert [one["log_level"] for one in logs if "on_replay" in str(one["event"])] == [
+            "warning"
+        ]
+
+    async def test_a_raising_hook_never_replaces_the_drains_own_error(self) -> None:
+        mailbox = _FailingMailbox()
+        mailbox.on_replay = _raise
+
+        with pytest.raises(RuntimeError, match="store down"):
+            await self._drain(mailbox)
 
     async def test_falls_back_to_read_since(self) -> None:
         class _BufferedOnly:

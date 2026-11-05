@@ -254,6 +254,24 @@ deploy means a balancer still routes to a replica it should have dropped, and an
 `drain_closed{outcome="timed_out"}` means the drain's tail is too short for this node's
 closes.
 
+## Realtime hub
+
+`instrument_realtime_hub(hub)` from `forze_fastapi.realtime`, with the `RealtimeSseHub` the SSE
+and WebSocket routes share. Labelled `forze.realtime.channel`.
+
+| Metric | Instrument | Unit | Notes |
+|---|---|---|---|
+| `forze.realtime.hub.subscribers` | observable up-down counter | 1 | SSE and WebSocket streams subscribed to the live tail on this node |
+| `forze.realtime.hub.dropped` | observable counter | 1 | live signals dropped on a full subscriber queue; each is a lost live frame |
+
+These are not folded into `forze.realtime.connections`, which only Socket.IO feeds: the
+FastAPI WebSocket route reports to the hub alone, and no Socket.IO connection subscribes to
+it. The two never overlap, so their sum is the node's live realtime connections. A
+catch-up-only SSE stream or a replay-only WebSocket never joins the live tail, so it is in
+neither. **What to watch:** a `dropped` rate means some
+client reads slower than signals arrive. With a mailbox wired, its durable signals arrive on
+its next reconnect; ephemeral ones are gone.
+
 ## Realtime mailbox
 
 `instrument_realtime_mailbox(mailbox, cursors)`. Labelled `forze.realtime.channel`.
@@ -265,9 +283,20 @@ closes.
 | `forze.realtime.mailbox.trimmed` | observable counter | 1 | dropped by retention/ack trimming |
 | `forze.realtime.mailbox.acked` | observable counter | 1 | per-device cursor advances |
 | `forze.realtime.mailbox.overflowed` | observable counter | 1 | replays that lost their oldest backlog to the cap |
+| `forze.realtime.mailbox.replay_size` | histogram | 1 | per connect, the entries past the device's acked cursor that its replay read; recorded only when the replay finishes; the SDK's default buckets cover the default `cap` of 1000 |
 
 **The alert that matters:** every `overflowed` increment is a device that fell more than
-`cap` entries behind and lost signals it will never see.
+`cap` entries behind and lost signals it will never see. `replay_size` warns earlier: a
+tail that keeps growing means devices fall behind on acks. It is a trend, not the backlog's
+size: no gauge counts mailbox rows, since that takes a store query a scrape must not run.
+
+`replay_size` counts the unacked backlog, not the frames sent. A resume with a last-seen id
+(SSE `Last-Event-ID`, WebSocket `last_event_id`) skips the entries delivered before the
+tear, and they still count. A replay the client leaves, or the store fails, records nothing.
+The counters and the replay hook live on the mailbox passed to `instrument_realtime_mailbox`:
+instrument the instance your `mailbox_factory` returns. A factory that builds a new mailbox
+per connect records nothing, and neither does the mailbox the gateway or
+`RealtimeMailboxWriter` builds inside its own step.
 
 ## Access-token signing
 

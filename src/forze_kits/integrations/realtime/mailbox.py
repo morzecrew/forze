@@ -18,7 +18,7 @@ packed (monotonic int, range-queryable). Encryption is whatever the app sets on 
 ``realtime_mailbox_spec(encryption=...)`` seals the stored signal bodies at rest.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta
 from typing import Any, Final, final
 from uuid import UUID, uuid5
@@ -260,6 +260,11 @@ class DocumentRealtimeMailbox:
 
     replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE
     """Per-query page size for :meth:`replay_since` (keyset-paged, well below :attr:`cap`)."""
+
+    on_replay: Callable[[int], None] | None = attrs.field(default=None, init=False)
+    """Told how many entries each connect's finished replay yielded, by
+    :func:`~forze.application.integrations.realtime.iter_backlog`;
+    :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox` sets it."""
 
     # ....................... #
 

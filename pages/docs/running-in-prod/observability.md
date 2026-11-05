@@ -316,6 +316,31 @@ give each worker `worker_metrics_reader()` and serve
 For more — open file descriptors, threads, disk and network I/O — use
 `opentelemetry-instrumentation-system-metrics`, which depends on `psutil`.
 
+## Realtime metrics
+
+Each realtime plane has its own opt-in call; the
+[catalog](../reference/metrics.md#realtime-gateway) lists what each exports. Two cover what a
+soak needs to tell a stuck node from a busy one:
+
+```python
+from forze_fastapi.realtime import instrument_realtime_hub
+from forze_kits.integrations.realtime import instrument_realtime_mailbox
+
+instrument_realtime_hub(hub)  # the hub the SSE and WebSocket routes share
+instrument_realtime_mailbox(mailbox, cursors)
+```
+
+`forze.realtime.hub.subscribers` counts the streams on this node's live tail; a count that only
+rises means streams that never leave. `forze.realtime.hub.dropped` counts live signals lost to
+a full subscriber queue. `forze.realtime.mailbox.replay_size` is a histogram of each
+connect's unacked backlog: the entries past the device's acked cursor that its replay read.
+A tail that keeps growing means devices fall behind on acks. It is a trend, not the
+backlog's size: counting mailbox rows takes a store query, and no scrape callback runs one.
+Only a replay that finishes records; one the client leaves or the store fails does not.
+
+The mailbox metrics live on the mailbox instance you pass. Pass the one your
+`mailbox_factory` returns: a factory that builds a new mailbox per connect records nothing.
+
 ## Configure logging in one call
 
 `bootstrap_logging` wires the whole logging surface: the framework's own loggers
