@@ -122,6 +122,10 @@ _ENTRIES: "weakref.WeakKeyDictionary[Meter, dict[str, list[tuple[Any, dict[str, 
 Weak on the meter only: a meter's instruments hold their callbacks, and those the sources."""
 
 
+_METER_LOCK = threading.Lock()
+"""Serializes the first default-meter fetch: ``cache`` alone lets two threads both compute it."""
+
+
 @cache
 def _forze_meter() -> "Meter":
     """The global ``forze`` meter, fetched once.
@@ -158,43 +162,11 @@ def observe_channel[S](
     :param meter: The meter to register on; the global ``forze`` meter when ``None``.
     """
 
-    from opentelemetry import metrics
+    if meter is None:
+        with _METER_LOCK:
+            meter = _forze_meter()
 
-    meter = meter or _forze_meter()
-    attributes = {"forze.realtime.channel": channel}
-
-    with _ENTRIES_LOCK:
-        by_name = _ENTRIES.setdefault(meter, {})
-        fresh = [instrument for instrument in instruments if instrument.name not in by_name]
-
-        for instrument in instruments:
-            entries = by_name.setdefault(instrument.name, [])
-
-            if not any(known is source and labels == attributes for known, labels in entries):
-                entries.append((source, attributes))
-
-    def _callback(
-        instrument: ChannelInstrument[S],
-    ) -> "Callable[[CallbackOptions], Iterable[Observation]]":
-        def callback(_options: "CallbackOptions") -> "Iterable[Observation]":
-            with _ENTRIES_LOCK:
-                entries = list(by_name[instrument.name])
-
-            observations: list[Observation] = []
-
-            for known, labels in entries:
-                reading = instrument.read(known)
-
-                if isinstance(reading, int | float):
-                    reading = [(reading, {})]
-
-                observations.extend(
-                    metrics.Observation(value, {**labels, **extra}) for value, extra in reading
-                )
-
-            return observations
-
-        return callback
+    by_name, fresh = _enlist(meter, instruments, source, {"forze.realtime.channel": channel})
 
     create = {
         "counter": meter.create_observable_counter,
@@ -206,10 +178,61 @@ def observe_channel[S](
     for instrument in fresh:
         create[instrument.kind](
             instrument.name,
-            callbacks=[_callback(instrument)],
+            callbacks=[_channel_callback(by_name, instrument)],
             unit=instrument.unit,
             description=instrument.description,
         )
+
+
+def _enlist[S](
+    meter: "Meter",
+    instruments: Sequence[ChannelInstrument[S]],
+    source: S,
+    attributes: dict[str, str],
+) -> tuple[dict[str, list[tuple[Any, dict[str, str]]]], list[ChannelInstrument[S]]]:
+    """Add *source* to each instrument's entries on *meter*, once; return the meter's entries
+    and the instruments not registered on it yet."""
+
+    with _ENTRIES_LOCK:
+        by_name = _ENTRIES.setdefault(meter, {})
+        fresh = [instrument for instrument in instruments if instrument.name not in by_name]
+
+        for instrument in instruments:
+            entries = by_name.setdefault(instrument.name, [])
+
+            if not any(known is source and labels == attributes for known, labels in entries):
+                entries.append((source, attributes))
+
+    return by_name, fresh
+
+
+def _channel_callback[S](
+    by_name: dict[str, list[tuple[Any, dict[str, str]]]],
+    instrument: ChannelInstrument[S],
+) -> "Callable[[CallbackOptions], Iterable[Observation]]":
+    """Read every source enlisted for *instrument*, copying the list under the lock first."""
+
+    from opentelemetry import metrics
+
+    def callback(_options: "CallbackOptions") -> "Iterable[Observation]":
+        with _ENTRIES_LOCK:
+            entries = list(by_name[instrument.name])
+
+        observations: list[Observation] = []
+
+        for known, labels in entries:
+            reading = instrument.read(known)
+
+            if isinstance(reading, int | float):
+                reading = [(reading, {})]
+
+            observations.extend(
+                metrics.Observation(value, {**labels, **extra}) for value, extra in reading
+            )
+
+        return observations
+
+    return callback
 
 
 # ----------------------- #
