@@ -410,15 +410,20 @@ class _Run:
         """
 
         name = self.pick(principal)
-        auth_started = time.perf_counter()
-        headers = await self.sessions[principal.name].headers()
-        auth_s = time.perf_counter() - auth_started
 
+        # Joined before the credential is awaited: a call still waiting on a refresh when its
+        # step closes must hold the step's row open, not record into a row already written.
         if step is not None:
             step.enter()
-            step.add_auth(auth_s)
 
         try:
+            auth_started = time.perf_counter()
+            headers = await self.sessions[principal.name].headers()
+            auth_s = time.perf_counter() - auth_started
+
+            if step is not None:
+                step.add_auth(auth_s)
+
             call = Call(client=self.client, headers=headers, principal=principal.name, rng=self.rng)
 
             try:

@@ -361,6 +361,30 @@ class TestRunState:
         assert first["calls"] == 2
         assert first["unfinished"] == 0
 
+    async def test_a_call_waiting_on_its_credential_counts_in_its_step(self) -> None:
+        waits = {"n": 0}
+
+        async def slow_after_sign_in(_client: httpx.AsyncClient) -> dict[str, str]:
+            waits["n"] += 1
+
+            if waits["n"] > 1:  # sign-in is quick; the run's first call waits past the window
+                await asyncio.sleep(0.3)
+
+            return {}
+
+        async def instant(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200)
+
+        result = await run(
+            _plan(principals=[Principal(name="v", mix={"get": 1}, auth=slow_after_sign_in)]),
+            ClosedRamp(steps=[1], step_s=0.2),
+            transport=_transport(instant),
+        )
+
+        row = result.rows[0]
+        assert row["calls"] == 1
+        assert row["auth"]["max_ms"] >= 250
+
     async def test_rates_use_the_measured_window(self) -> None:
         result = await run(
             _plan(), ClosedRamp(steps=[1], step_s=0.3, warm_s=0.1), transport=_transport(_ok)
