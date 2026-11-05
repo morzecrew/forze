@@ -182,8 +182,10 @@ async def iter_backlog(
     once, when the drain finishes on its own. One drain is one connect's replay, read
     from the device's acked cursor, so this is the connect's unacked backlog, counted
     with no extra query. A drain the consumer stops early, or that fails, reports
-    nothing: a partial count would read as a device that caught up. A raising hook is
-    logged and never fails the drain.
+    nothing: a partial count would read as a device that caught up. A drain that ends on
+    the round budget, or on a trailing run too long for one window, reports what it read:
+    a floor, which keeps the devices furthest behind in the histogram instead of dropping
+    them. A raising hook is logged and never fails the drain.
     """
 
     cap = getattr(mailbox, "cap", None)
