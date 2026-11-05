@@ -165,6 +165,14 @@ def _violations_in(path: Path) -> list[str]:
                 if alias.name in allowed:
                     banned_names.add(alias.asname or alias.name)
 
+    # ``import os as o`` binds a banned module under another name.
+    module_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _BANNED_ATTRS and alias.asname:
+                    module_names[alias.asname] = alias.name
+
     found: list[str] = []
     for node in ast.walk(tree):
         # ``hash(x) % n`` / ``hash(x) & mask`` — PYTHONHASHSEED-randomized bucketing.
@@ -186,7 +194,7 @@ def _violations_in(path: Path) -> list[str]:
         func = node.func
         # module.attr(...) form
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-            module, attr = func.value.id, func.attr
+            module, attr = module_names.get(func.value.id, func.value.id), func.attr
             banned = _BANNED_ATTRS.get(module, "missing")
             if banned == "missing":
                 continue
@@ -338,3 +346,9 @@ def test_guard_flags_hash_modulo_bucketing(tmp_path: Path) -> None:
         "    return locks[zlib.crc32(k.encode()) % len(locks)]\n"
     )
     assert not _violations_in(clean), "a stable-hash bucket must not be flagged"
+
+
+def test_guard_follows_an_aliased_module_import(tmp_path: Path) -> None:
+    offender = tmp_path / "offender.py"
+    offender.write_text("import os as o\nimport time as t\no.times()\nt.monotonic()\n")
+    assert len(_violations_in(offender)) == 2
