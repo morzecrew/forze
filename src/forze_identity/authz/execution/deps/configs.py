@@ -135,7 +135,8 @@ class AuthzSharedServices:
 
     revocation_states: RevocationStates | None = None
     """Lets a decision skip its policy principal read after a fast-path admission of the same
-    principal, for its ``ttl``; ``None`` reads it on every decision."""
+    principal under this object, while the epoch it was admitted on is cached; ``None`` reads it
+    on every decision."""
 
 
 # ....................... #

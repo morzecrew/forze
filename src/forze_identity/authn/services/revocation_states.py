@@ -196,14 +196,35 @@ class AdmittedApiKey:
 
 
 @final
-@attrs.define(slots=True, frozen=True)
-class _Fresh:
-    """A token admitted on its principal's current epoch, by a verification in *task*."""
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class FreshEpoch:
+    """A credential admitted on its principal's current epoch, and how long that epoch vouches
+    for the principal: every write that may deactivate or remove it raises the epoch."""
 
     principal_id: UUID
+    states: "RevocationStates"
+    """The configuration the epoch was checked under."""
+
+    until: float
+    """When, on the monotonic clock, the epoch stops vouching: when the cached copy it was read
+    from expires, or ``ttl`` after it was read from the database (a miss caches it that long).
+    A deactivation whose write-through is lost is refused by its epoch from then on."""
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class _Fresh:
+    """A credential admitted on its principal's current epoch, by a verification in *task*."""
+
+    epoch: FreshEpoch
     task: "asyncio.Task[Any] | None"
-    at: float = 0.0
-    """When, on the monotonic clock; read for :data:`_ON_EPOCH` only."""
+
+    def answers(self, principal_id: UUID) -> bool:
+        return (
+            self.epoch.principal_id == principal_id
+            and self.task is not None
+            and self.task is asyncio.current_task()
+        )
 
 
 _FRESH: ContextVar[_Fresh | None] = ContextVar("forze_identity_fresh_admission", default=None)
@@ -215,7 +236,21 @@ _ON_EPOCH: ContextVar[_Fresh | None] = ContextVar(
 """The admission whose eligibility read this task skipped, for :func:`admitted_on_epoch`."""
 
 
-def remember_admitted_session(admitted: AdmittedSession | None, *, fresh: bool = False) -> None:
+def _remember(admitted: AdmittedSession | AdmittedApiKey | None, fresh: FreshEpoch | None) -> None:
+    record_authn_admission(admitted)
+    _FRESH.set(
+        _Fresh(fresh, asyncio.current_task())
+        if fresh is not None and admitted is not None
+        else None
+    )
+    _ON_EPOCH.set(None)
+
+
+def remember_admitted_session(
+    admitted: AdmittedSession | None,
+    *,
+    fresh: FreshEpoch | None = None,
+) -> None:
     """Record the token-backed session this request authenticated with, or forget it.
 
     A credential verified later in the request replaces it: a password forgets it, and an API
@@ -223,42 +258,33 @@ def remember_admitted_session(admitted: AdmittedSession | None, *, fresh: bool =
     credential the request authenticated with last. A transport that runs a connection's
     commands in other tasks carries the record to them.
 
-    :param fresh: The verification compared the token's epoch with the principal's, so the
+    :param fresh: The verification found the token's epoch to be the principal's, so the
         eligibility call that follows it in this task may skip its read (see
         :func:`admitted_just_now`). Never carried to another task.
     """
 
-    record_authn_admission(admitted)
-    _FRESH.set(
-        _Fresh(admitted.principal_id, asyncio.current_task())
-        if fresh and admitted is not None
-        else None
-    )
-    _ON_EPOCH.set(None)
+    _remember(admitted, fresh)
 
 
-def admitted_just_now(principal_id: UUID) -> bool:
-    """Whether this task's last verification admitted a token of *principal_id* on its epoch.
+def admitted_just_now(principal_id: UUID) -> FreshEpoch | None:
+    """The epoch this task's last verification admitted a credential of *principal_id* on, if
+    it was the principal's current one.
 
     One answer per verification: the call consumes it, whatever it asks, so only the
     eligibility check that follows the verification can rely on it, never one after it.
     """
 
     fresh = _FRESH.get()
-
-    if fresh is None:
-        return False
-
     _FRESH.set(None)
 
-    return (
-        fresh.principal_id == principal_id
-        and fresh.task is not None
-        and fresh.task is asyncio.current_task()
-    )
+    return fresh.epoch if fresh is not None and fresh.answers(principal_id) else None
 
 
-def remember_admitted_api_key(admitted: AdmittedApiKey | None, *, fresh: bool = False) -> None:
+def remember_admitted_api_key(
+    admitted: AdmittedApiKey | None,
+    *,
+    fresh: FreshEpoch | None = None,
+) -> None:
     """Record the API key this request authenticated with, or forget the credential before it.
 
     Carried to a connection's other tasks like a session's record.
@@ -268,49 +294,37 @@ def remember_admitted_api_key(admitted: AdmittedApiKey | None, *, fresh: bool = 
         :func:`admitted_just_now`). Never carried to another task.
     """
 
-    record_authn_admission(admitted)
-    _FRESH.set(
-        _Fresh(admitted.principal_id, asyncio.current_task())
-        if fresh and admitted is not None
-        else None
-    )
-    _ON_EPOCH.set(None)
+    _remember(admitted, fresh)
 
 
-def remember_admitted_on_epoch(principal_id: UUID | None) -> None:
-    """Record that this task skipped *principal_id*'s eligibility read after its admission, or
-    forget it (``None``).
+def remember_admitted_on_epoch(fresh: FreshEpoch | None) -> None:
+    """Record that this task skipped an eligibility read on *fresh*, or forget it (``None``).
 
     For the eligibility skip alone, which holds every precondition it rests on. The next
     verification in the task forgets it too.
     """
 
-    _ON_EPOCH.set(
-        _Fresh(principal_id, asyncio.current_task(), monotonic())
-        if principal_id is not None
-        else None
-    )
+    _ON_EPOCH.set(_Fresh(fresh, asyncio.current_task()) if fresh is not None else None)
 
 
-def admitted_on_epoch(principal_id: UUID, *, within: timedelta) -> bool:
-    """Whether this task skipped *principal_id*'s eligibility read less than *within* ago.
+def admitted_on_epoch(principal_id: UUID, *, states: "RevocationStates") -> bool:
+    """Whether this task skipped *principal_id*'s eligibility read on an epoch that still
+    vouches for it, checked under *states* (the same object).
 
     Not consumed, unlike :func:`admitted_just_now`: every check of the principal later in the
-    task may rely on it, up to the next verification or *within*. A deactivation committed since
-    then reaches such a check only once *within* has passed, so pass the revocation states'
-    ``ttl``, the bound a lost write-through already has. It never answers for a task spawned
-    after the verification, nor knows of an epoch the current transaction raised: the caller
-    reads inside a transaction.
+    task may rely on it, up to the next verification or :attr:`FreshEpoch.until`, so no longer
+    than authn admits by that epoch. A deactivation committed since the admission reaches such
+    a check within ``ttl``. It never answers for a task spawned after the verification, nor
+    knows of an epoch the current transaction raised: the caller reads inside a transaction.
     """
 
     skipped = _ON_EPOCH.get()
 
     return (
         skipped is not None
-        and skipped.principal_id == principal_id
-        and skipped.task is not None
-        and skipped.task is asyncio.current_task()
-        and monotonic() - skipped.at < within.total_seconds()
+        and skipped.answers(principal_id)
+        and skipped.epoch.states is states
+        and monotonic() < skipped.epoch.until
     )
 
 
@@ -534,6 +548,39 @@ def _unseal(
     return None if _expired(config, "session", int(not_after), now_ms=now_ms) else value
 
 
+def _cached_until(
+    config: RevocationStates,
+    raw: str | None,
+    *,
+    now_ms: int,
+    started: float,
+) -> float:
+    """When a principal's epoch cached as *raw*, read at the store's *now_ms* by a call begun at
+    *started* on the monotonic clock, stops vouching: at its not-after, ``ttl`` on at most.
+    Unsigned, it carries none, and vouches for nothing past the read."""
+
+    if raw is None or config.key_mac is None:
+        return started
+
+    # Unsealed already, so written by _seal: a value, an integer not-after, then a MAC.
+    not_after = int(raw.rpartition("|")[0].rpartition("|")[2])
+
+    return started + min(not_after - now_ms, _ttl_ms(config)) / 1000
+
+
+def _fresh(
+    config: RevocationStates,
+    principal_id: UUID,
+    *,
+    current: bool,
+    until: float,
+) -> FreshEpoch | None:
+    """What vouches for *principal_id* until *until*, when the credential carried its *current*
+    epoch; ``None`` for one admitted on another."""
+
+    return FreshEpoch(principal_id=principal_id, states=config, until=until) if current else None
+
+
 def _require_transaction(in_transaction: Callable[[], bool], *stores: object) -> None:
     """Refuse outside a transaction, or when one of *stores* would not write in it.
 
@@ -749,7 +796,7 @@ class SessionRevocation:
         family_id: UUID,
         pep: int,
         tenant: str | None,
-    ) -> int:
+    ) -> FreshEpoch | None:
         """Admit the token, or refuse it with the codes the session row would give.
 
         :param principal_id: The token's subject.
@@ -757,12 +804,15 @@ class SessionRevocation:
         :param family_id: The token's family.
         :param pep: The epoch the token carries.
         :param tenant: The token's tenant claim.
-        :returns: The principal's epoch the token was judged against.
+        :returns: The epoch the token was admitted on when *pep* is the principal's current
+            one, which every deactivation raises; ``None`` when admitted ahead of it.
         :raises CoreException: ``session_revoked``, ``session_subject_mismatch`` or
             ``session_tenant_mismatch``.
         """
 
         key = self._state_key(session_id, family_id)
+        started = monotonic()
+        read_through = started + self.config.ttl.total_seconds()
 
         try:
             read = await _bounded(self.config, self.states.read(principal_id, key))
@@ -779,7 +829,7 @@ class SessionRevocation:
                 principal_id, session_id, family_id, by_family=self._by_family
             )
             _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
-            return epoch
+            return _fresh(self.config, principal_id, current=pep == epoch, until=read_through)
 
         cached_epoch = _epoch(
             _unseal(self.config, principal_id, EPOCH_STATE_KEY, read.epoch, now_ms=read.now_ms),
@@ -802,9 +852,11 @@ class SessionRevocation:
 
         if epoch_cached:
             epoch = pep
+            until = _cached_until(self.config, read.epoch, now_ms=read.now_ms, started=started)
 
         else:
             epoch = await self.epochs.current(principal_id)
+            until = read_through
 
             if cached_epoch is None:
                 missing[EPOCH_STATE_KEY] = str(epoch)
@@ -824,7 +876,7 @@ class SessionRevocation:
 
         _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
 
-        return epoch
+        return _fresh(self.config, principal_id, current=pep == epoch, until=until)
 
     # ....................... #
 
@@ -1196,10 +1248,10 @@ class ApiKeyRevocation:
         except ValueError:
             return None
 
-    async def fresh(self, key: CachedApiKey) -> bool:
-        """Whether *key*'s state recorded its principal's current epoch: then nothing has
-        deactivated the principal since the state was written, and the eligibility read that
-        follows may be skipped.
+    async def fresh(self, key: CachedApiKey) -> FreshEpoch | None:
+        """The epoch *key* was admitted on, when its state recorded its principal's current one:
+        then nothing has deactivated the principal since the state was written, and the
+        eligibility read that follows may be skipped. ``None`` otherwise.
 
         The epoch is the principal's cached one, signed as a token reads it. When it is missing,
         the database's is compared instead and written back: as sound, since a deactivation
@@ -1209,9 +1261,10 @@ class ApiKeyRevocation:
         """
 
         if self.skip is None or key.epoch is None or self.in_transaction():
-            return False
+            return None
 
         principal_id = key.principal_id
+        started = monotonic()
 
         try:
             read = await _bounded(self.config, self.skip.states.read(principal_id, EPOCH_STATE_KEY))
@@ -1219,14 +1272,15 @@ class ApiKeyRevocation:
         except Exception as error:
             self.config.counters.add("fallback", "api_key")
             logger.warning("Revocation states read failed, reading eligibility: %r", error)
-            return False
+            return None
 
         cached = _epoch(
             _unseal(self.config, principal_id, EPOCH_STATE_KEY, read.epoch, now_ms=read.now_ms),
         )
 
         if cached is not None:
-            return cached == key.epoch
+            until = _cached_until(self.config, read.epoch, now_ms=read.now_ms, started=started)
+            return _fresh(self.config, principal_id, current=cached == key.epoch, until=until)
 
         try:
             epoch = await self.skip.epochs.current(principal_id)
@@ -1234,11 +1288,16 @@ class ApiKeyRevocation:
         except Exception as error:
             self.config.counters.add("fallback", "api_key")
             logger.warning("Principal epoch read failed, reading eligibility: %r", error)
-            return False
+            return None
 
         await self._fill_epoch(principal_id, epoch, expire_at_ms=read.now_ms + _ttl_ms(self.config))
 
-        return epoch == key.epoch
+        return _fresh(
+            self.config,
+            principal_id,
+            current=epoch == key.epoch,
+            until=started + self.config.ttl.total_seconds(),
+        )
 
     async def _fill_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
         """Write *principal_id*'s epoch, read from the database, back where it is missing."""

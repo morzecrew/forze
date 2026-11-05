@@ -89,9 +89,11 @@ class AdmittedTokenEligibilityAdapter(PrincipalEligibilityPort):
         for_update: bool = False,
     ) -> None:
         # Consumed whatever this call asks, so no later call inherits the verification.
-        if admitted_just_now(principal_id) and not for_update:
+        fresh = admitted_just_now(principal_id)
+
+        if fresh is not None and not for_update:
             # An authz decision about the same principal, later in this task, skips its read too.
-            remember_admitted_on_epoch(principal_id)
+            remember_admitted_on_epoch(fresh)
             return
 
         # Any other check reads, a delegated actor's included, and so does every decision after.

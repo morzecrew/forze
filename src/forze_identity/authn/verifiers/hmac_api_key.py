@@ -98,9 +98,9 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
             if self.revocation is not None
             else None,
             fresh=(
-                self.revocation is not None
-                and isinstance(account, CachedApiKey)
-                and await self.revocation.fresh(account)
+                await self.revocation.fresh(account)
+                if self.revocation is not None and isinstance(account, CachedApiKey)
+                else None
             ),
         )
 

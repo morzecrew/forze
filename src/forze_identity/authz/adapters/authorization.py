@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from datetime import timedelta
 from typing import final
 from uuid import UUID
 
@@ -13,7 +12,7 @@ from forze.application.contracts.authz import (
     resolve_policy_scope,
 )
 from forze.application.contracts.document import DocumentQueryPort
-from forze_identity.authn.services import admitted_on_epoch
+from forze_identity.authn.services import RevocationStates, admitted_on_epoch
 
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 from ..services.grants import AuthzGrantResolver
@@ -28,10 +27,11 @@ from ._utils import find_policy_principal_by_id, validate_authz_query_ports
 class AuthzDecisionAdapter(AuthzDecisionPort):
     """Authorization decisions using catalog-backed effective grants.
 
-    With :attr:`admission_window`, a decision about the principal whose eligibility read authn
-    skipped after a fast-path admission, in the same task and outside a transaction, treats it
-    as present and active without reading it: every write that may deactivate or remove it
-    raises the epoch that admission was checked against.
+    With :attr:`revocation_states`, a decision about the principal whose eligibility read authn
+    skipped after a fast-path admission under those same states, in the same task and outside a
+    transaction, treats it as present and active without reading it: every write that may
+    deactivate or remove it raises the epoch that admission was checked against. It reads again
+    once that epoch's cached copy expires.
     """
 
     spec: AuthzSpec
@@ -39,9 +39,9 @@ class AuthzDecisionAdapter(AuthzDecisionPort):
     resolver: AuthzGrantResolver
     policy: AuthzPolicyService
 
-    admission_window: timedelta | None = None
-    """How long after that admission the read is skipped: the revocation states' ``ttl``.
-    ``None`` reads the principal on every decision."""
+    revocation_states: RevocationStates | None = None
+    """The authz kernel's: an admission checked under another object is not trusted. ``None``
+    reads the principal on every decision."""
 
     in_transaction: Callable[[], bool] | None = None
     """Whether a transaction is open: it may have raised the epoch itself, which the cache sees
@@ -99,8 +99,8 @@ class AuthzDecisionAdapter(AuthzDecisionPort):
 
     def _admitted_on_epoch(self, principal_id: UUID) -> bool:
         return (
-            self.admission_window is not None
+            self.revocation_states is not None
             and self.in_transaction is not None
             and not self.in_transaction()
-            and admitted_on_epoch(principal_id, within=self.admission_window)
+            and admitted_on_epoch(principal_id, states=self.revocation_states)
         )

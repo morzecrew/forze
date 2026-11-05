@@ -297,10 +297,13 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   subject. Tokens issued before the fast path and passwords read as before.
 - **Authorization skips its principal read too.** After such a skip, a decision about the same
   principal later in the request, in the same task and outside a transaction, treats it as
-  active without reading it, for up to `ttl` after the admission. Every other decision reads:
-  about another principal, in a task spawned after the verification, inside a transaction (it
-  may have raised the epoch itself), and in a request whose eligibility check read, a delegated
-  one included. A deactivation committed during the request reaches its decisions within `ttl`.
+  active without reading it, until the cached epoch the admission relied on expires (`ttl` at
+  most), so never longer than authn admits by that epoch. Every other decision reads: about
+  another principal, in a task spawned after the verification, inside a transaction (it may
+  have raised the epoch itself), in a request whose eligibility check read, a delegated one
+  included, and in an authz kernel whose `revocation_states` is not the very object the authn
+  kernel admitted under. A deactivation committed during the request reaches its decisions
+  within `ttl`.
 - **API keys.** A key's state written on a miss records the principal's epoch, read before the
   principal is found active; a later verification whose state carries the principal's current
   cached epoch skips the read, and reads neither the key's row nor the principal. The miss itself
