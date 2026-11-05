@@ -1,23 +1,39 @@
-"""The offline-mailbox OTel instrument — callbacks reflect the live store counters, and
-the replay drain records one replay-size observation per connect.
+"""The offline-mailbox OTel instrument — counts are kept per spec, outside any instance, so
+every mailbox built for a spec records, and the replay drain records one replay-size
+observation per connect.
 
 # covers: forze_kits.integrations.realtime.observability.instrument_realtime_mailbox
+
+The counts are process totals, so each test names its own specs: a spec another test
+shares would carry that test's counts.
 """
 
 from __future__ import annotations
 
+import gc
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import pytest
+from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.application.integrations.realtime import BacklogDrain, iter_backlog
+from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.application.execution.realtime.observability import (
+    _forze_meter,  # pyright: ignore[reportPrivateUsage]
+)
+from forze.application.integrations.realtime import (
+    BacklogDrain,
+    acknowledge_up_to,
+    iter_backlog,
+)
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
+    CursorDocumentSpec,
+    MailboxDocumentSpec,
     build_realtime_cursors,
     build_realtime_mailbox,
     instrument_realtime_mailbox,
@@ -29,117 +45,191 @@ from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
-
-class _StubMeter:
-    def __init__(self) -> None:
-        self.callbacks: dict[str, Any] = {}
-
-    def create_observable_counter(self, name: str, *, callbacks: Any, **_: Any) -> None:
-        self.callbacks[name] = callbacks[0]
-
-    def create_histogram(self, name: str, **_: Any) -> Any:
-        return None  # recorded only by a replay, which these counter tests never run
+_TENANT = TenantIdentity(tenant_id=UUID(int=1))
 
 
-def _scrape(meter: _StubMeter, name: str) -> float:
-    [observation] = meter.callbacks[name](None)
-    return observation.value
+def _specs() -> tuple[MailboxDocumentSpec, CursorDocumentSpec]:
+    channel = f"metrics-{uuid4().hex[:8]}"
+
+    return realtime_mailbox_spec(channel), realtime_cursor_spec(channel)
+
+
+def _runtime() -> ExecutionRuntime:
+    return ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+
+def _reader() -> tuple[InMemoryMetricReader, Any]:
+    reader = InMemoryMetricReader()
+
+    return reader, MeterProvider(metric_readers=[reader]).get_meter("test")
+
+
+def _points(reader: InMemoryMetricReader) -> dict[str, dict[str, Any]]:
+    """Every exported point, by metric name, then by its spec label."""
+
+    data = reader.get_metrics_data()
+    found: dict[str, dict[str, Any]] = {}
+
+    for resource in data.resource_metrics if data is not None else ():
+        for scope in resource.scope_metrics:
+            for metric in scope.metrics:
+                for point in metric.data.data_points:
+                    spec = point.attributes["forze.document"]
+                    found.setdefault(metric.name, {})[spec] = point
+
+    return found
+
+
+async def _store(ctx: ExecutionContext, spec: MailboxDocumentSpec, n: int) -> None:
+    """Store one entry through a fresh mailbox, as the writer's or gateway's step would."""
+
+    await build_realtime_mailbox(ctx, retention=UNSWEPT, spec=spec).store(
+        principal="u1",
+        event_id=str(UUID(int=n)),
+        hlc=HlcTimestamp(physical_ms=n, logical=0),
+        signal=RealtimeSignal.of(Audience.principal("u1"), "e", {"n": n}),
+    )
+
+
+async def _connect(
+    ctx: ExecutionContext, spec: MailboxDocumentSpec, since: HlcTimestamp | None
+) -> int:
+    """One connect's replay through the mailbox its factory builds, as every transport
+    drains it."""
+
+    mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT, spec=spec)
+    drained = iter_backlog(mailbox, principal="u1", since=since, outcome=BacklogDrain())
+
+    return len([entry async for entry in drained])
 
 
 # ----------------------- #
 
 
-async def test_instrument_reflects_store_and_cursor_counters() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+async def test_a_per_connect_factory_records_across_connects() -> None:
+    mailbox_spec, cursor_spec = _specs()
+    reader, meter = _reader()
+    instrument_realtime_mailbox(meter=meter)  # at assembly, before any mailbox exists
+    instrument_realtime_mailbox(meter=meter)  # a repeat adds nothing
+
+    runtime = _runtime()
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        # specs referenced for completeness — the mock serves any route plainly
-        _ = realtime_mailbox_spec(), realtime_cursor_spec()
 
-        mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
-        cursors = build_realtime_cursors(ctx)
-
-        meter = _StubMeter()
-        instrument_realtime_mailbox(mailbox, cursors, meter=meter)  # pyright: ignore[reportArgumentType]
-
-        assert _scrape(meter, "forze.realtime.mailbox.stored") == 0
-
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=UUID(int=1))):
-            signal = RealtimeSignal.of(Audience.principal("u1"), "e", {"n": 1})
-            await mailbox.store(
-                principal="u1",
-                event_id="00000000-0000-0000-0000-000000000001",
-                hlc=HlcTimestamp(physical_ms=1, logical=0),
-                signal=signal,
-            )
-            await mailbox.read_since(principal="u1", since=None)
-
-        assert _scrape(meter, "forze.realtime.mailbox.stored") == 1
-        assert _scrape(meter, "forze.realtime.mailbox.replayed") == 1
-        assert _scrape(meter, "forze.realtime.mailbox.trimmed") == 0
-        assert _scrape(meter, "forze.realtime.mailbox.acked") == 0
-
-
-# ....................... #
-
-
-def _replay_sizes(reader: InMemoryMetricReader) -> list[Any]:
-    data = reader.get_metrics_data()
-
-    if data is None:
-        return []
-
-    return [
-        point
-        for resource in data.resource_metrics
-        for scope in resource.scope_metrics
-        for metric in scope.metrics
-        if metric.name == "forze.realtime.mailbox.replay_size"
-        for point in metric.data.data_points
-    ]
-
-
-async def _connect(mailbox: Any, since: HlcTimestamp | None) -> int:
-    """One connect's replay, as every transport drains it."""
-
-    return len(
-        [
-            entry
-            async for entry in iter_backlog(
-                mailbox, principal="u1", since=since, outcome=BacklogDrain()
-            )
-        ]
-    )
-
-
-async def test_each_connect_records_one_replay_size() -> None:
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
-
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
-        reader = InMemoryMetricReader()
-        meter = MeterProvider(metric_readers=[reader]).get_meter("test")
-
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=UUID(int=1))):
+        with ctx.inv_ctx.bind_identity(tenant=_TENANT):
             for n in range(1, 4):
-                await mailbox.store(
+                await _store(ctx, mailbox_spec, n)
+
+            assert await _connect(ctx, mailbox_spec, None) == 3  # a device three behind
+            gc.collect()  # the connect's mailbox is gone; its counts are not
+            assert await _connect(ctx, mailbox_spec, HlcTimestamp(physical_ms=3, logical=0)) == 0
+
+            await acknowledge_up_to(
+                build_realtime_mailbox(ctx, retention=UNSWEPT, spec=mailbox_spec),
+                build_realtime_cursors(ctx, spec=cursor_spec),
+                principal="u1",
+                client_key="phone",
+                event_id=str(UUID(int=3)),
+            )
+
+    mailbox, cursors = str(mailbox_spec.name), str(cursor_spec.name)
+    points = _points(reader)
+
+    assert points["forze.realtime.mailbox.stored"][mailbox].value == 3
+    assert points["forze.realtime.mailbox.replayed"][mailbox].value == 3
+    assert points["forze.realtime.mailbox.trimmed"][mailbox].value == 3
+    assert points["forze.realtime.mailbox.overflowed"][mailbox].value == 0
+    assert points["forze.realtime.mailbox.acked"][cursors].value == 1
+
+    replay_size = points["forze.realtime.mailbox.replay_size"][mailbox]
+    assert (replay_size.count, replay_size.sum, replay_size.min, replay_size.max) == (2, 3, 0, 3)
+
+
+async def test_counts_before_the_call_are_exported_and_replays_are_not() -> None:
+    mailbox_spec, _ = _specs()
+    reader, meter = _reader()
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with ctx.inv_ctx.bind_identity(tenant=_TENANT):
+            await _store(ctx, mailbox_spec, 1)
+            await _connect(ctx, mailbox_spec, None)  # not instrumented yet
+
+            instrument_realtime_mailbox(meter=meter)
+            await _connect(ctx, mailbox_spec, None)
+
+    points = _points(reader)
+    mailbox = str(mailbox_spec.name)
+
+    # the counters are process totals; the histogram has no past to report
+    assert points["forze.realtime.mailbox.replayed"][mailbox].value == 2
+    assert points["forze.realtime.mailbox.replay_size"][mailbox].count == 1
+
+
+async def test_two_specs_give_two_series() -> None:
+    (orders, _), (chat, _) = _specs(), _specs()
+    reader, meter = _reader()
+    instrument_realtime_mailbox(meter=meter)
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with ctx.inv_ctx.bind_identity(tenant=_TENANT):
+            await _store(ctx, orders, 1)
+            await _store(ctx, chat, 1)
+            await _store(ctx, chat, 2)
+            await _connect(ctx, orders, None)
+            await _connect(ctx, chat, None)
+
+    points = _points(reader)
+    stored = points["forze.realtime.mailbox.stored"]
+    replay_size = points["forze.realtime.mailbox.replay_size"]
+
+    assert stored[str(orders.name)].value == 1
+    assert stored[str(chat.name)].value == 2
+    assert replay_size[str(orders.name)].sum == 1
+    assert replay_size[str(chat.name)].sum == 2
+
+
+async def test_nothing_is_registered_without_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    real = metrics.get_meter
+
+    def spy(name: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(name)
+        return real(name, *args, **kwargs)
+
+    _forze_meter.cache_clear()  # the default meter is fetched once per process
+    monkeypatch.setattr(metrics, "get_meter", spy)
+    mailbox_spec, cursor_spec = _specs()
+
+    try:
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with ctx.inv_ctx.bind_identity(tenant=_TENANT):
+                await _store(ctx, mailbox_spec, 1)
+                await _connect(ctx, mailbox_spec, None)
+                await acknowledge_up_to(
+                    build_realtime_mailbox(ctx, retention=UNSWEPT, spec=mailbox_spec),
+                    build_realtime_cursors(ctx, spec=cursor_spec),
                     principal="u1",
-                    event_id=f"00000000-0000-0000-0000-00000000000{n}",
-                    hlc=HlcTimestamp(physical_ms=n, logical=0),
-                    signal=RealtimeSignal.of(Audience.principal("u1"), "e", {"n": n}),
+                    client_key="phone",
+                    event_id=str(UUID(int=1)),
                 )
 
-            await _connect(mailbox, None)  # not instrumented yet: nothing recorded
-            assert mailbox.on_replay is None
-            assert _replay_sizes(reader) == []
+        assert asked == []
 
-            instrument_realtime_mailbox(mailbox, build_realtime_cursors(ctx), channel="c1", meter=meter)
+        instrument_realtime_mailbox()
+        assert asked == ["forze"]  # the global meter, only once asked to
 
-            assert await _connect(mailbox, None) == 3  # a device three entries behind
-            assert await _connect(mailbox, HlcTimestamp(physical_ms=3, logical=0)) == 0
-
-        [point] = _replay_sizes(reader)
-        assert dict(point.attributes) == {"forze.realtime.channel": "c1"}
-        assert (point.count, point.sum, point.min, point.max) == (2, 3, 0, 3)
+    finally:
+        _forze_meter.cache_clear()

@@ -126,6 +126,8 @@ async def test_unreachable_cursor_row_fails_bounded_instead_of_spinning() -> Non
     from forze_kits.integrations.realtime.mailbox import _MAX_ADVANCE_ATTEMPTS
 
     class _AlwaysConflictCommand:
+        spec = _SPEC
+
         def __init__(self) -> None:
             self.create_calls = 0
 

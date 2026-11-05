@@ -36,6 +36,7 @@ from forze_fastapi.realtime import (
     attach_realtime_sse_route,
     realtime_sse_tail_lifecycle_step,
 )
+from forze_kits.integrations.realtime import instrument_realtime_mailbox
 
 hub = RealtimeSseHub()
 attach_realtime_sse_route(
@@ -50,9 +51,11 @@ attach_realtime_sse_route(
     authorize_topics=grant_topics,   # required for ?topics=; fail-closed
 )
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
+instrument_realtime_mailbox()    # once: every mailbox in the process, per spec
 ```
 
-This factory builds a new mailbox on every connect, so it records no mailbox metrics: see
+The factory builds a new mailbox on every connect, and the mailbox metrics still count each
+one: they are kept per spec, not per instance. See
 [the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-mailbox).
 
 The SSE routes ship with described query parameters and a `text/event-stream` 200. Set
@@ -138,10 +141,6 @@ writer = RealtimeMailboxWriter(
 # realtime_relay_lifecycle_step; "0" so entries appended before the group existed are stored
 step = realtime_mailbox_writer_lifecycle_step(writer)
 ```
-
-The writer builds its mailbox inside its own step, where `instrument_realtime_mailbox` cannot
-reach it, so it records no mailbox metrics: see
-[the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-mailbox).
 
 Run it on every node with one consumer group, but never beside a Socket.IO gateway that
 shares its dedup inbox, mailbox or not: whichever marks a signal first owns it. Rows are

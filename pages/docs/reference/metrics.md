@@ -292,7 +292,10 @@ its next reconnect; ephemeral ones are gone.
 
 ## Realtime mailbox
 
-`instrument_realtime_mailbox(mailbox, cursors)`. Labelled `forze.realtime.channel`.
+`instrument_realtime_mailbox()` — reads a process-wide count per mailbox and cursor spec, so
+it covers every mailbox built in the process: a per-connect `mailbox_factory`, the Socket.IO
+gateway, `RealtimeMailboxWriter` and the retention sweep. Labelled `forze.document`, the
+spec's name: the mailbox spec's, or the cursor spec's for `acked`.
 
 | Metric | Instrument | Unit | Notes |
 |---|---|---|---|
@@ -311,10 +314,8 @@ size: no gauge counts mailbox rows, since that takes a store query a scrape must
 `replay_size` counts the unacked backlog, not the frames sent. A resume with a last-seen id
 (SSE `Last-Event-ID`, WebSocket `last_event_id`) skips the entries delivered before the
 tear, and they still count. A replay the client leaves, or the store fails, records nothing.
-The counters and the replay hook live on the mailbox passed to `instrument_realtime_mailbox`:
-instrument the instance your `mailbox_factory` returns. A factory that builds a new mailbox
-per connect records nothing, and neither does the mailbox the gateway or
-`RealtimeMailboxWriter` builds inside its own step.
+The counters are process totals, so the first scrape after the call includes what came before
+it; `replay_size` records only the replays that finish after it.
 
 ## Access-token signing
 

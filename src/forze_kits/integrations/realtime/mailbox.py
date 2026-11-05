@@ -18,7 +18,7 @@ packed (monotonic int, range-queryable). Encryption is whatever the app sets on 
 ``realtime_mailbox_spec(encryption=...)`` seals the stored signal bodies at rest.
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from typing import Any, Final, final
 from uuid import UUID, uuid5
@@ -41,6 +41,13 @@ from forze.base.primitives import HlcTimestamp
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.integrations._logger import logger
 
+from .observability import (
+    _CursorTotals,
+    _MailboxTotals,
+    cursor_totals,
+    mailbox_totals,
+    record_replay,
+)
 from .specs import DEFAULT_REALTIME_CHANNEL
 
 # ----------------------- #
@@ -96,11 +103,12 @@ def _cursor_id(tenant: TenantIdentity | None, principal: str, client_key: str) -
 @final
 @attrs.define(slots=True, frozen=True)
 class MailboxStats:
-    """An immutable snapshot of a channel's offline-delivery counters.
+    """An immutable snapshot of one mailbox or cursor store's offline-delivery counters.
 
     The implementations keep mutable counters internally and snapshot into this frozen
-    value object on read — the :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox`
-    pattern (mirrors the identity plane's ``SigningStats``)."""
+    value object on read (mirrors the identity plane's ``SigningStats``). These are the
+    instance's own counts; the exported metrics sum every instance built for a spec, see
+    :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox`."""
 
     stored: int = 0
     """Durable principal signals written to the mailbox."""
@@ -261,17 +269,22 @@ class DocumentRealtimeMailbox:
     replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE
     """Per-query page size for :meth:`replay_since` (keyset-paged, well below :attr:`cap`)."""
 
-    on_replay: Callable[[int], None] | None = attrs.field(default=None, init=False)
-    """Told how many entries each connect's finished replay yielded, by
-    :func:`~forze.application.integrations.realtime.iter_backlog`;
-    :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox` sets it."""
-
     # ....................... #
 
     _stored: int = attrs.field(default=0, init=False)
     _replayed: int = attrs.field(default=0, init=False)
     _trimmed: int = attrs.field(default=0, init=False)
     _overflowed: int = attrs.field(default=0, init=False)
+
+    _totals: _MailboxTotals = attrs.field(
+        default=attrs.Factory(
+            lambda self: mailbox_totals(str(self.command.spec.name)), takes_self=True
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """The spec's process-wide counts, which the exported metrics read; resolved once."""
 
     # ....................... #
 
@@ -282,6 +295,18 @@ class DocumentRealtimeMailbox:
             trimmed=self._trimmed,
             overflowed=self._overflowed,
         )
+
+    # ....................... #
+
+    def on_replay(self, count: int) -> None:
+        """Record one connect's finished replay size against this spec.
+
+        Called by :func:`~forze.application.integrations.realtime.iter_backlog`, not by
+        application code; a no-op until
+        :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox` runs.
+        """
+
+        record_replay(self._totals.spec, count)
 
     # ....................... #
 
@@ -313,6 +338,7 @@ class DocumentRealtimeMailbox:
             raise
 
         self._stored += 1  # count only a real insert, honouring the "written" contract
+        self._totals.stored += 1
 
     # ....................... #
 
@@ -361,6 +387,7 @@ class DocumentRealtimeMailbox:
         floor_hlc = int(floor_row["hlc"])
         floor_id = UUID(str(floor_row["id"]))
         self._overflowed += 1
+        self._totals.overflowed += 1
         logger.warning(
             "Realtime mailbox replay overflowed the retention cap; the oldest backlog was skipped",
             principal=principal,
@@ -387,6 +414,7 @@ class DocumentRealtimeMailbox:
         )
 
         self._replayed += len(page.hits)
+        self._totals.replayed += len(page.hits)
 
         return [
             MailboxEntry(
@@ -435,6 +463,7 @@ class DocumentRealtimeMailbox:
 
             for row in page.hits:
                 self._replayed += 1
+                self._totals.replayed += 1
                 yield MailboxEntry(
                     event_id=row.event_id,
                     hlc=HlcTimestamp.unpack(row.hlc),
@@ -483,6 +512,7 @@ class DocumentRealtimeMailbox:
 
             await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
+            self._totals.trimmed += len(stale.hits)
 
     # ....................... #
 
@@ -512,6 +542,7 @@ class DocumentRealtimeMailbox:
 
             await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
+            self._totals.trimmed += len(stale.hits)
             deleted += len(stale.hits)
 
 
@@ -546,6 +577,16 @@ class DocumentMailboxCursors:
     # ....................... #
 
     _acked: int = attrs.field(default=0, init=False)
+
+    _totals: _CursorTotals = attrs.field(
+        default=attrs.Factory(
+            lambda self: cursor_totals(str(self.command.spec.name)), takes_self=True
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """The spec's process-wide counts, which the exported metrics read; resolved once."""
 
     # ....................... #
 
@@ -593,6 +634,7 @@ class DocumentMailboxCursors:
                     raise
 
                 self._acked += 1
+                self._totals.acked += 1
                 return
 
             if target <= row.hlc:
@@ -608,6 +650,7 @@ class DocumentMailboxCursors:
                 raise
 
             self._acked += 1
+            self._totals.acked += 1
             return
 
         raise exc.internal(
