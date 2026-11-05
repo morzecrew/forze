@@ -175,6 +175,8 @@ class ConfigurableAuthzDecision:
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx, self.shared),
             policy=self.shared.policy,
+            revocation_states=self.shared.revocation_states,
+            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
 

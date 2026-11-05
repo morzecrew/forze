@@ -5,7 +5,8 @@ because every write that may deactivate a policy principal raises its epoch in t
 transaction, through the document's command port. A login reads eligibility under the
 principal's row lock, so a deactivation cannot commit between that read and the login's issue:
 it waits for the issue and then refuses its token by the epoch, or the login waits for it and is
-refused. The shared battery is the one the mock runs.
+refused. An authz decision about the admitted principal, later in the request, skips its policy
+principal read the same way. The shared battery is the one the mock runs.
 """
 
 from __future__ import annotations
@@ -81,6 +82,7 @@ from tests.integration.test_forze_authn.test_pg_revocation_states import (
     _Gate,
     _GatedEpochs,
 )
+from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import _authz_pg_setup
 from tests.support import eligibility_skip_conformance as battery
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
 from tests.support.eligibility_skip_conformance import (
@@ -99,6 +101,19 @@ STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
 """How long a statement must stay blocked to count as waiting on the other's lock."""
+
+_CATALOG = {
+    AuthzResourceName.PERMISSIONS: "perm",
+    AuthzResourceName.ROLES: "role",
+    AuthzResourceName.GROUPS: "grp",
+    AuthzResourceName.ROLE_PERMISSION_BINDINGS: "rp",
+    AuthzResourceName.PRINCIPAL_ROLE_BINDINGS: "pr",
+    AuthzResourceName.PRINCIPAL_PERMISSION_BINDINGS: "pp",
+    AuthzResourceName.GROUP_PRINCIPAL_BINDINGS: "gp",
+    AuthzResourceName.GROUP_ROLE_BINDINGS: "gr",
+    AuthzResourceName.GROUP_PERMISSION_BINDINGS: "gperm",
+}
+"""The authz catalog's resources, by their table's infix in ``_authz_pg_setup``."""
 
 # ----------------------- #
 
@@ -210,6 +225,9 @@ async def _stack(
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
     await create_authn_tables(pg_client, suffix=suffix)
+    # The authz catalog, for the decision route: its own suffix, its policy principals unused.
+    catalog = uuid4().hex[:12]
+    await _authz_pg_setup(pg_client, suffix=catalog)
     await pg_client.execute(
         sql.SQL(
             "CREATE TABLE {table} (principal_id uuid PRIMARY KEY, epoch bigint NOT NULL)"
@@ -249,6 +267,14 @@ async def _stack(
                         AuthnResourceName.API_KEY_ACCOUNTS: lambda ctx, spec: (
                             CountingPrincipalReads(key_query(ctx, spec), reads=key_reads)
                         ),
+                        **{
+                            name: ConfigurablePostgresReadOnlyDocument(
+                                config=PostgresReadOnlyDocumentConfig(
+                                    read=("public", f"authz_{table}_{catalog}")
+                                ),
+                            )
+                            for name, table in _CATALOG.items()
+                        },
                     },
                     TransactionManagerDepKey: {TX: postgres_txmanager},
                 }
@@ -279,6 +305,7 @@ async def _stack(
             AuthzDepsModule(
                 kernel=AuthzKernelConfig(revocation_states=config if authz else None),
                 principal_registry={ROUTE},
+                decision={ROUTE},
             )()
         )
         .merge(
@@ -353,6 +380,13 @@ async def _stack(
 @pytest.mark.parametrize("case", sorted(battery.SKIP_CASES))
 async def test_the_skip(pg_client: PostgresClient, redis_client: RedisClient, case: str) -> None:
     await battery.SKIP_CASES[case](await _stack(pg_client, redis_client))
+
+
+@pytest.mark.parametrize("case", sorted(battery.AUTHORIZATION_CASES))
+async def test_the_authorization_skip(
+    pg_client: PostgresClient, redis_client: RedisClient, case: str
+) -> None:
+    await battery.AUTHORIZATION_CASES[case](await _stack(pg_client, redis_client))
 
 
 @pytest.mark.parametrize("path", sorted(battery.DEACTIVATIONS))
@@ -569,6 +603,13 @@ async def test_an_actor_check_reads_even_for_the_subject_itself(
 ) -> None:
     stack = await _stack(pg_client, redis_client, actor_claim="act")
     await battery.an_actor_check_reads_even_for_the_subject_itself(stack)
+
+
+async def test_a_delegated_admission_reads_every_authorization(
+    pg_client: PostgresClient, redis_client: RedisClient
+) -> None:
+    stack = await _stack(pg_client, redis_client, actor_claim="act")
+    await battery.a_delegated_admission_reads_every_authorization(stack)
 
 
 async def test_an_inactive_principal_is_created_inactive_in_one_write(

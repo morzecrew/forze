@@ -105,7 +105,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             principal_id = _uuid_claim(claims["sub"])
             family_id = _uuid_claim(family_raw)
 
-            epoch = await self.revocation.check(
+            fresh = await self.revocation.check(
                 principal_id=principal_id,
                 session_id=session_id,
                 family_id=family_id,
@@ -119,8 +119,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
                     family_id=family_id,
                     epoch=pep,
                 ),
-                # On the principal's current epoch, which every deactivation raises.
-                fresh=pep == epoch,
+                fresh=fresh,
             )
             return
 

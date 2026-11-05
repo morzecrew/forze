@@ -35,7 +35,7 @@ from forze.application.contracts.document import DocumentCommandDepKey
 from forze.application.execution.deps.frozen import FrozenDeps
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
-from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
+from forze.base.primitives import FrozenTimeSource, bind_time_source, monotonic, utcnow
 from forze_identity.authn import AuthnKernelConfig, instrument_revocation_states
 from forze_identity.authn.adapters import credential_deactivation
 from forze_identity.authn.application.specs import api_key_account_spec
@@ -45,6 +45,7 @@ from forze_identity.authn.services import (
     ApiKeyConfig,
     ApiKeyRevocation,
     ApiKeyService,
+    FreshEpoch,
     Hs256Signer,
     RevocationStates,
     StateMacKeys,
@@ -906,17 +907,19 @@ async def test_a_key_carried_to_another_task_is_rechecked_there() -> None:
 async def test_a_key_verification_leaves_no_fresh_admission_behind() -> None:
     principal = uuid4()
 
-    async def request() -> bool:
+    async def request() -> FreshEpoch | None:
         session = AdmittedSession(
             principal_id=principal, session_id=uuid4(), family_id=None, epoch=1
         )
-        remember_admitted_session(session, fresh=True)
+        states = RevocationStates(route=STATES, ttl=TTL)
+        fresh = FreshEpoch(principal_id=principal, states=states, until=monotonic() + 60)
+        remember_admitted_session(session, fresh=fresh)
         remember_admitted_api_key(AdmittedApiKey(principal_id=principal, digest="d"))
 
         return admitted_just_now(principal)
 
     # The eligibility check after a key verification always reads.
-    assert await asyncio.create_task(request()) is False
+    assert await asyncio.create_task(request()) is None
 
 
 async def test_a_process_that_serves_no_api_keys_still_issues_sessions_and_provisions() -> None:

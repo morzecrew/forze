@@ -75,7 +75,9 @@ class AuthzKernelConfig:
     anything but ``True``, or the row removed) raises the principal's epoch in its transaction
     and writes it through after commit, through the document's command port, so a token issued
     before is refused. Authn skips its eligibility read only when this is the value its own
-    kernel carries. Such a write then refuses to run outside a transaction. Requires
+    kernel carries, and a decision about the principal that skip admitted, later in the same
+    task and outside a transaction, skips its policy principal read too. Such a write then
+    refuses to run outside a transaction. Requires
     :attr:`~forze_identity.authn.services.RevocationStates.key_mac`: the skip trusts a cached
     epoch, so the epoch must be signed."""
 
@@ -131,6 +133,11 @@ class AuthzSharedServices:
     grants_invalidation: GrantsInvalidation | None = None
     """Shared by every resolver built from this graph; ``None`` broadcasts nothing."""
 
+    revocation_states: RevocationStates | None = None
+    """Lets a decision skip its policy principal read after a fast-path admission of the same
+    principal under this object, while the epoch it was admitted on is cached; ``None`` reads it
+    on every decision."""
+
 
 # ....................... #
 
@@ -151,4 +158,5 @@ def build_authz_shared_services(
         provider_key_check=ProviderKeyCheck(providers=kernel.permission_providers),
         grants_cache=kernel.grants_cache,
         grants_invalidation=kernel.grants_invalidation,
+        revocation_states=kernel.revocation_states,
     )

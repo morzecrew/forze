@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal, TypeVar
 from uuid import UUID, uuid4
 
@@ -26,7 +26,7 @@ from forze.application.contracts.authn import (
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
-from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.authz import AuthzRequest, AuthzSpec, AuthzSubject
 from forze.application.contracts.deps import backend_of
 from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import (
@@ -37,6 +37,7 @@ from forze.application.contracts.tenancy import TenantResolverDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
+from forze.base.primitives import SystemTimeSource, bind_time_source, utcnow
 from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -56,7 +57,13 @@ from forze_identity.authn.services import (
     PolicyPrincipalEpochHook,
     revocation_states,
 )
-from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
+from forze_identity.authz import (
+    AuthzDepsModule,
+    AuthzKernelConfig,
+    ConfigurableAuthzDecision,
+    build_authz_shared_services,
+)
+from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import (
     CreatePolicyPrincipalCmd,
@@ -89,6 +96,14 @@ CONFIG = RevocationStates(
     ttl=timedelta(minutes=5),
     key_mac=StateMacKeys(active=b"m" * 32),
 )
+
+
+_CATALOG = tuple(
+    name
+    for name in AuthzResourceName
+    if name not in (AuthzResourceName.POLICY_PRINCIPALS, AuthzResourceName.DELEGATION_GRANTS)
+)
+"""The authz catalog's resources, for the decision route."""
 
 
 class _AnyTenant:
@@ -176,6 +191,7 @@ def _stack(
             AuthzDepsModule(
                 kernel=AuthzKernelConfig(revocation_states=authz),
                 principal_registry={ROUTE},
+                decision={ROUTE},
             )()
         )
         .merge(
@@ -186,6 +202,7 @@ def _stack(
                         policy_principal_spec.name: principals,
                         password_account_spec.name: document,
                         api_key_account_spec.name: keys,
+                        **dict.fromkeys(_CATALOG, document),
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -915,3 +932,155 @@ async def test_a_delegated_keys_actor_is_always_read(
         assert await battery.verify_key(stack, issued.key) == "admitted"
         # The subject's check skipped; the actor's read, even when it is the subject.
         assert stack.principal_reads == ["find"]
+
+
+# ....................... #
+# The authorization read. As the eligibility read, skipped on Postgres's footing only.
+
+
+async def test_the_mock_never_skips_the_authorization_read() -> None:
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+
+    reads = await battery.authorized_after(
+        stack,
+        battery.with_token(stack, issued),
+        lambda: battery.authorization_reads(stack, AuthzSubject(principal_id=principal)),
+    )
+
+    assert reads == 1
+
+
+@pytest.mark.parametrize("case", sorted(battery.AUTHORIZATION_CASES))
+async def test_the_authorization_skip(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _as_postgres(monkeypatch)
+    await battery.AUTHORIZATION_CASES[case](_stack())
+
+
+async def test_a_delegated_admission_reads_every_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    await battery.a_delegated_admission_reads_every_authorization(_stack(actor_claim="act"))
+
+
+@attrs.define(eq=False)
+class _Clock:
+    """Wall and monotonic time that move only when told to. The states store's clock, the
+    application's and the monotonic one all read it, so a cached state ages as it would."""
+
+    start: datetime = attrs.field(factory=utcnow)
+    elapsed: timedelta = timedelta(0)
+
+    def now(self) -> datetime:
+        return self.start + self.elapsed
+
+    def uuid(self) -> UUID:
+        return SystemTimeSource().uuid()
+
+    def monotonic(self) -> float:
+        return self.elapsed.total_seconds()
+
+
+@pytest.mark.parametrize("credential", ["token", "api_key"])
+async def test_a_decision_skips_no_longer_than_the_cached_epoch_it_was_admitted_on(
+    credential: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The principal's epoch is cached at t0 and expires at t0 + ttl: a deactivation whose
+    # write-through is lost leaves it there, and authn admits by it, until then. A credential
+    # admitted from it at t0 + 0.9 ttl may skip the decision's read only until then too.
+    _as_postgres(monkeypatch)
+    clock = _Clock()
+
+    with bind_time_source(clock):
+        stack = _stack()
+        principal = await stack.principal()
+        subject = AuthzSubject(principal_id=principal)
+
+        if credential == "token":
+            issued = await battery.login(stack, principal)
+            assert await battery.verify(stack, issued) == "admitted"
+            authenticate = battery.with_token(stack, issued)
+
+        else:
+            key = await battery.issue_key(stack, principal)
+            assert await battery.verify_key(stack, key) == "admitted"
+
+            async def authenticate() -> object:
+                return await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+        async def at(fraction: float) -> int:
+            clock.elapsed = CONFIG.ttl * fraction
+            return await battery.authorization_reads(stack, subject)
+
+        async def later() -> list[int]:
+            return [await at(0.95), await at(1.1)]
+
+        clock.elapsed = CONFIG.ttl * 0.9
+        reads = await battery.authorized_after(stack, authenticate, later)
+
+    assert reads == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("states", "reads"),
+    [
+        pytest.param(CONFIG, 0, id="the-admitting-states"),
+        pytest.param(attrs.evolve(CONFIG), 1, id="an-equal-copy"),
+        pytest.param(attrs.evolve(CONFIG, route="other-states"), 1, id="other-states"),
+        pytest.param(None, 1, id="none"),
+    ],
+)
+async def test_a_decision_skips_only_under_the_states_that_admitted(
+    states: RevocationStates | None, reads: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One task, two kernels: the token is admitted through the stack's, on CONFIG, and the
+    # decision runs through one built over *states*.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+    shared = build_authz_shared_services(AuthzKernelConfig(revocation_states=states))
+    decision = ConfigurableAuthzDecision(shared=shared)(stack.ctx, AuthzSpec(name=ROUTE))
+    request = AuthzRequest(subject=AuthzSubject(principal_id=principal), action=battery.ACTION)
+
+    async def decided() -> int:
+        before = len(stack.principal_reads)
+        await decision.authorize(request)
+        return len(stack.principal_reads) - before
+
+    assert await battery.authorized_after(stack, battery.with_token(stack, issued), decided) == (
+        reads
+    )
+
+
+async def test_a_decision_without_a_transaction_probe_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Built by hand without one: it cannot tell a transaction that raised the epoch, so it reads.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+    shared = build_authz_shared_services(AuthzKernelConfig(revocation_states=CONFIG))
+    built = ConfigurableAuthzDecision(shared=shared)(stack.ctx, AuthzSpec(name=ROUTE))
+    decision = attrs.evolve(built, in_transaction=None)
+    request = AuthzRequest(subject=AuthzSubject(principal_id=principal), action=battery.ACTION)
+
+    async def decided() -> int:
+        before = len(stack.principal_reads)
+        await decision.authorize(request)
+        return len(stack.principal_reads) - before
+
+    assert await battery.authorized_after(stack, battery.with_token(stack, issued), decided) == 1
+
+
+async def test_a_decision_about_a_principal_without_a_row_is_refused() -> None:
+    stack = _stack()
+    decision = stack.ctx.authz.decision(AuthzSpec(name=ROUTE))
+    request = AuthzRequest(subject=AuthzSubject(principal_id=uuid4()), action=battery.ACTION)
+
+    result = await decision.authorize(request)
+
+    assert (result.allowed, result.reason) == (False, "Policy principal not found")
