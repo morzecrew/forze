@@ -55,7 +55,9 @@ def instrument_realtime_hub(
 
     Both carry ``forze.realtime.channel``. The callbacks read two in-memory counts, so a
     scrape queries no store. Emits via the global OTel meter unless *meter* is supplied.
-    Call once at assembly time, with the hub handed to the routes.
+    Call once per meter at assembly time, with the hub handed to the routes: the SDK keeps
+    a name's first instrument and drops a later call's callbacks, so a second hub
+    instrumented on the same meter exports nothing.
 
     :param hub: The hub the SSE and WebSocket routes share.
     :param channel: The ``forze.realtime.channel`` label.
