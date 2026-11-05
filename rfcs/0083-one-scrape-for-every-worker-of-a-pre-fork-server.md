@@ -340,8 +340,8 @@ handler renders nothing (row 5). It runs this off the loop:
 3. If two fresh files carry the same `instance`, serve **neither**, and log an error naming both
    pids. Two processes sharing one id interleave exactly as the bug this RFC fixes. The usual
    cause is gunicorn `--preload` with `bootstrap_telemetry` at import time.
-4. Merge by family. Split each body at line-start `# HELP ` boundaries. Keep the first
-   `HELP`/`TYPE` pair per family name, and append every snapshot's sample lines under it. A
+4. Merge by family. Split each body where a line starts with `# HELP` and a space. Keep the
+   first `HELP`/`TYPE` pair per family name, and append every snapshot's sample lines under it. A
    later snapshot whose `TYPE` disagrees for the same name loses that family, with a warning.
    That can happen while a rolling restart runs two code versions. Label values cannot contain
    a raw newline in this format, so a line-start split cannot cut a sample.
@@ -377,7 +377,7 @@ workers served, which is the alert for a worker that stopped writing.
 
 | Concern | How the design handles it |
 |---|---|
-| Counter resets | A restart is a new `service_instance_id` and a new series. Nothing is summed, so `rate()` sees no phantom reset. A counter's final increments since its last snapshot are lost on a crash. That is at most `interval` worth, the same order as a scrape interval today. A graceful exit writes a final snapshot (row 6). |
+| Counter resets | A restart is a new `service_instance_id` and a new series. Nothing is summed, so `rate()` sees no phantom reset. A counter's increments since its last successful snapshot are lost on a crash. That is one `interval` worth while ticks succeed, the same order as a scrape interval today. After failed ticks it is everything since the last successful write, and a worker whose last write is older than `ttl` is not served at all (§5.6). A graceful exit writes a final snapshot (row 6). |
 | Per-instance labels | `service_instance_id` on every series, checked at write (§5.2). Prometheus's own `instance` stays the scrape target, identical for all workers. Row 9 decides the name. |
 | Temporality | Cumulative only. The reader forces it (§3), so a delta preference on the OTLP side cannot leak in. |
 | Histograms | Explicit-bucket histograms carry over per instance. Families are concatenated, never bucket-summed, so two code versions with different ladders stay valid. Exponential histograms are dropped by the exporter today (§3); the union inherits that. |
@@ -395,8 +395,10 @@ workers served, which is the alert for a worker that stopped writing.
 
 ### 5.6 Failure semantics
 
-- An unsafe directory, an unlabelled first render, or an exporter older than 0.66b0 in
-  `worker_metrics_reader()` raises `configuration` at boot.
+- An unsafe directory, a first render whose samples lack the label or name more than one
+  instance, or an exporter older than 0.66b0 in `worker_metrics_reader()` raises
+  `configuration` at boot. A first render with no family is the one exception: it passes and
+  writes no file (§5.2 step 2).
 - A failed tick (render error, `ENOSPC`, permission lost) is logged, and the worker keeps
   serving traffic. Its snapshot ages and drops out at `ttl`. `count()` on the age gauge shows
   the gap.
@@ -466,7 +468,7 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
   owned by another uid and a misnamed file are skipped. A duplicate instance id serves neither
   file. A conflicting `TYPE` drops the later family. A snapshot family named
   `forze_metrics_snapshot_age_seconds` is dropped, and the route's own age family is served once.
-- A label value containing `# HELP ` does not split a family.
+- A label value containing `# HELP` and a space does not split a family.
 - The age gauge has one sample per fresh snapshot, close to its monotonic age. A wall-clock
   step back or forward (injected clocks) withholds the old snapshots instead of extending their
   life, and the next writes are served. A file whose `mono` is ahead of the reader's monotonic
@@ -578,7 +580,7 @@ default.
 | 8 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q5): forze ships `worker_metrics_reader()`, which builds `PrometheusMetricReader(registry=CollectorRegistry(), resource_attribute_filter=<service.instance.id only>)`, and the writer checks every render. Snapshot mode requires `opentelemetry-exporter-prometheus` 0.66b0 or newer, checked at wiring. The check refuses the global-registry reader eis-backend uses today. Rewriting sample lines for older exporters was rejected. |
 | 9 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q6): the instance label is `service_instance_id`, the exporter's sanitized resource attribute. It needs no scrape configuration and cannot be overwritten silently. `instance` with `honor_labels: true` was rejected: the pull path already differs from Alloy's in names (§3), so it buys no dashboard compatibility by itself. |
 | 10 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q7): a `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` value with `writer_step(reader)`, and `attach_metrics_route(..., snapshots=...)`. One value configures both halves, so the writer and the route cannot disagree on directory or `ttl`, and the route stays one function. A separate route function and discovery from an environment variable were rejected. |
-| 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting at line-start `# HELP ` and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on every sample line (about 7 ms per MB), because a data point's own attribute can override the resource label. |
+| 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting where a line starts with `# HELP` and a space, and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on every sample line (about 7 ms per MB), because a data point's own attribute can override the resource label. |
 | 12 | `ASSUMED` | Directory and file protocol, per §5.2 and §5.3: the directory is created `0700`, or refused when it is a symlink, foreign-owned, or group- or world-writable, then held open; every later operation goes through its descriptor, never its path. Files are `0600`, written through an exclusive temp file and `os.replace`, named `<pid>-<token>.prom`, and read with `O_NOFOLLOW`, only when owned by the effective uid, under a size cap. A refusal at startup fails the boot, after the fleet step's precedent. |
 | 13 | `ASSUMED` | Two fresh snapshots claiming one instance id are both withheld, and an error names the pids. Serving either one would interleave two processes into one series. |
 | 14 | `ASSUMED` | The age is the monotonic age: the answering worker's `CLOCK_MONOTONIC` minus the header's `mono`. A snapshot is fresh only while that age and the wall-clock age (`time.time() - written_at`) both lie between 0 and `ttl`, so a wall-clock step cannot extend a dead worker's life and a file from before a reboot is not served. That is sound only because every worker of a group shares one host clock. A cross-host store (P3) must use the store's clock. |
