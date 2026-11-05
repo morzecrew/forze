@@ -175,6 +175,27 @@ class TestPasswordSession:
         assert error.value.code == "load_refresh_failed"
         assert "expired" in error.value.summary
 
+    async def test_a_zero_lifetime_renews_on_the_next_call(
+        self, password: str, clock: _Clock
+    ) -> None:
+        server = _AuthServer(lifetime=0, password=password)
+        session = password_login("ada", password_env="LOAD_PW").session()
+
+        async with _client(server.handler) as client:
+            await session.headers(client)
+            await session.headers(client)
+
+        assert server.refreshes == 1  # not read as the 900 s default
+
+    async def test_a_lifetime_that_is_not_a_number_is_refused(self, password: str) -> None:
+        body = {"access_token": "a", "refresh_token": "r", "access_expires_in": "soon"}
+
+        async with _client(lambda _request: httpx.Response(200, json=body)) as client:
+            with pytest.raises(CoreException) as error:
+                await password_login("ada", password_env="LOAD_PW").session().headers(client)
+
+        assert error.value.code == "load_login_failed"
+
     async def test_a_failed_login_is_refused_with_its_status(self, monkeypatch) -> None:
         monkeypatch.setenv("LOAD_PW", "wrong")
         server = _AuthServer(password=secrets.token_hex(8))

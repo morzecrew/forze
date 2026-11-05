@@ -268,8 +268,19 @@ class PasswordSession:
                 "carrier, not cookies",
             )
 
+        # `None` only falls back to 900 s: a lifetime of 0 means renew now, not "unknown".
+        expires_in = body.get("access_expires_in")
+
+        if expires_in is None:
+            expires_in = 900
+
+        if isinstance(expires_in, bool) or not isinstance(expires_in, int | float):
+            raise self._failed(
+                "Signing in", "a token response whose access_expires_in is not a number"
+            )
+
         now = monotonic()
-        lifetime = float(body.get("access_expires_in") or 900)
+        lifetime = max(float(expires_in), 0.0)
         self._access = access
         self._refresh = body.get("refresh_token")
         self._renew_at = now + lifetime * (1.0 - self.config.refresh_margin)
