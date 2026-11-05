@@ -417,10 +417,11 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   timeout itself is only the mean, because Poisson arrivals bunch: at 1 req/s, with 100 ms
   answers and a 1 s timeout, a cap of 1 refuses 9 % of sends to a healthy server (simulated;
   Erlang B gives 0.1 / 1.1). A send refused at the cap counts as a call and as `transport`, in
-  both the stop rule's numerator and its denominator, never dropped silently. There is one cap
-  per run, sized from the longest request timeout any scenario can have (below): a request can
-  stay in flight that long, and a cap sized from a shorter timeout would refuse healthy sends
-  to the slower operations. The cap bounds memory; it reserves none.
+  both the stop rule's numerator and its denominator, never dropped silently. Each step of an
+  `open_ramp` has its own cap, from that step's offered rate and the longest request timeout
+  any scenario can have (below): a request can stay in flight that long, and a cap sized from a
+  shorter timeout, or from a lower step's rate, would refuse healthy sends. The connection limit
+  is sized for the largest step's cap. The cap bounds memory; it reserves none.
 - **Client:**
   - one `httpx.AsyncClient` for requests, with `Limits(max_connections=<concurrency or cap>)`;
     httpx's default of 100 connections would queue inside the client above 100 workers and be
@@ -649,9 +650,10 @@ a summary, as `forze_dst.campaign.write_records` does:
 - **`compare BASE HEAD`** matches rows by `kind` plus `workers` or `rate` or `window`, and
   scenarios by name. It prints per-row deltas for goodput, p95 and p99. When the two meta lines
   differ in any field but `started_at`, it compares anyway and warns, naming each field:
-  `target`, `openapi_sha256`, `model`, the client's cores, Python and loop, the `forze_load`
-  version, and the principal weights and mixes. Another host, runtime or mix is another
-  measurement, not a regression.
+  `target`, `openapi_sha256`, `model`, the profile (step duration, warm-up, think time, steps or
+  rates), the client's cores, Python and loop, the `forze_load` version, and the principal
+  weights and mixes. Another host, runtime, profile or mix is another measurement, not a
+  regression, and the warnings print before any `--fail-on` threshold is evaluated.
 - **Report only by default.** `--fail-on p95:15%,goodput:10%` exits 1 when a threshold is
   crossed (row 28). Load runs vary far more than micro-benchmarks, so a default failure would be
   a flaky gate.
@@ -715,7 +717,8 @@ under `-m perf`, which `just test` excludes.
     worker, and its rows are labelled `closed`.
   - The in-flight cap is the Poisson quantile. It refuses past the bound and counts each
     refusal as a `transport` call. At 1 req/s, 100 ms answers and a 1 s timeout, it refuses
-    nothing. With scenarios at 1 s and 10 s timeouts, it is sized from the 10 s one.
+    nothing. With scenarios at 1 s and 10 s timeouts, it is sized from the 10 s one. In a ramp
+    of 10 and 1,000 req/s, the second step's cap is sized from 1,000, not 10.
   - Outcome classes for each status, and the 5 % `misconfigured` rule.
   - The httpx limit equals the worker count.
 - **Knee (unit):** synthetic goodput curves.
@@ -864,7 +867,7 @@ under `-m perf`, which `just test` excludes.
 | 2 | `LOCKED` | **A new `forze_load` package under a `load` extra** (`httpx` only), accepted by the maintainer on 2026-11-05 over a home inside `forze_dst` or `forze_cli`. `forze_dst` is simulation-only and protected; `forze_cli` would pull Typer into a library import. The package and extra names are public; renaming them later breaks every install line. |
 | 3 | `ASSUMED` | **Both entry points**, accepted by the maintainer on 2026-11-05. The Python API is the contract, because plans hold callables. `forze load run module:plan` and `forze load compare` are thin wrappers using `load_object`, as `forze dst` and `forze ops` do. |
 | 4 | `ASSUMED` | **Both load models**, accepted by the maintainer on 2026-11-05 over closed only or open only. Closed for the concurrency ramp the issue asks for, which finds capacity. Open for latency and for soak, where coordinated omission matters. Closed-model rows are labelled `latency: closed`. |
-| 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at the 1 − 10⁻⁶ quantile of a Poisson count with mean rate × request timeout, one cap per run from the longest timeout any scenario can have; rate × timeout itself refuses 9 % of sends to a healthy server at a mean of 1. A send refused at the cap counts as a call and as `transport`. |
+| 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at the 1 − 10⁻⁶ quantile of a Poisson count with mean rate × request timeout, one cap per `open_ramp` step from that step's offered rate and the longest timeout any scenario can have; rate × timeout itself refuses 9 % of sends to a healthy server at a mean of 1. A send refused at the cap counts as a call and as `transport`. |
 | 6 | `LOCKED` | **The catalog source is the OpenAPI document** (URL or file) **plus a new `x-forze-kind` vendor key**, accepted by the maintainer on 2026-11-05 over reading the registry in-process through `forze_cli`. It is what a client sees, works against any deployment, needs no app import, and the forze change is one line in `_route_openapi_extra`. `x-forze-kind` becomes part of every app's OpenAPI document; removing it later breaks clients that read it. |
 | 7 | `ASSUMED` | An operation reference that is missing from OpenAPI, or whose `x-forze-kind` contradicts the scenario's declared `writes`, stops the run before any load. An absent or unknown `x-forze-kind` counts as `command`. Generated scenarios are `query` routes whose input is empty, paginated or id/rev. Other inputs are listed as skipped. There is no schema faking. |
 | 8 | `LOCKED` | **Writes are off by default and fail closed.** Generated scenarios are never `command`s. A `Scenario.call` must state `writes` (no default). A write scenario is refused at validation unless `allow_writes=True`. The kit points at shared environments. Relaxing this later cannot undo data already written, and every plan written against the relaxed default would change meaning. |
