@@ -312,7 +312,7 @@ class TestBulkheadOccupancyMetrics:
         ]
 
         for event in started:
-            await event.wait()
+            await asyncio.wait_for(event.wait(), 5)
 
         assert list(executor.bulkhead_occupancy()) == [("p", "r", 2, 3.0)]
 
@@ -354,7 +354,7 @@ class TestBulkheadOccupancyMetrics:
             return "ok"
 
         task = asyncio.create_task(executor.run(holder, policy="p"))
-        await started.wait()
+        await asyncio.wait_for(started.wait(), 5)
 
         for name in (BULKHEAD_IN_USE_GAUGE, BULKHEAD_LIMIT_GAUGE, BULKHEAD_QUEUE_GAUGE):
             assert _points(reader, name) == []
