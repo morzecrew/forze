@@ -223,6 +223,24 @@ the count goes green at the exact moment it stops knowing anything.
 `emit_failed` climbing while `emitted` is flat (Socket.IO, or its Redis backplane, stopped
 taking frames).
 
+**Several channels in one process:** call once per channel. The gateway, backplane,
+connections and hub calls share one set of instruments per meter, so each channel exports
+its own series. A repeat call for the same object and channel adds nothing. Give every call
+the same `meter`, or none: a default call made before the SDK is configured and a later call
+passing the SDK's `forze` meter register under different meters, and the later one's
+channels are dropped.
+
+```python
+from forze.application.execution.realtime import (
+    RealtimeGatewayStats,
+    instrument_realtime_gateway,
+)
+
+orders, chat = RealtimeGatewayStats(), RealtimeGatewayStats()
+instrument_realtime_gateway(orders, channel="orders")
+instrument_realtime_gateway(chat, channel="chat")
+```
+
 ## Realtime backplane
 
 `instrument_realtime_backplane(health)`, fed by the heartbeat lifecycle step. Labelled

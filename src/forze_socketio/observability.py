@@ -25,7 +25,6 @@ require_socketio()
 # ....................... #
 
 import threading
-from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, final
 
@@ -64,10 +63,14 @@ from forze.application.execution.realtime.observability import (
 from forze.application.execution.realtime.observability import (
     GATEWAY_UNTENANTED_DROPPED_COUNTER as GATEWAY_UNTENANTED_DROPPED_COUNTER,
 )
+from forze.application.execution.realtime.observability import (
+    ChannelInstrument,
+    observe_channel,
+)
 from forze.base.primitives import utcnow
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation
+    from opentelemetry.metrics import Meter
 
     from forze.application.execution.background import SpreadOutcome
 
@@ -214,6 +217,24 @@ class RealtimeConnectionStats:
 
 # ----------------------- #
 
+_BACKPLANE_INSTRUMENTS: tuple[ChannelInstrument[BackplaneHealth], ...] = (
+    ChannelInstrument(
+        BACKPLANE_SECONDS_SINCE_OK_GAUGE,
+        "gauge",
+        lambda health: health.seconds_since_ok,
+        "Seconds since the Socket.IO backplane last accepted a probe (-1: never).",
+        unit="s",
+    ),
+    ChannelInstrument(
+        BACKPLANE_CONSECUTIVE_FAILURES_GAUGE,
+        "gauge",
+        lambda health: float(health.consecutive_failures),
+        "Failed backplane probes since the last success.",
+    ),
+)
+
+# ....................... #
+
 
 def instrument_realtime_backplane(
     health: BackplaneHealth,
@@ -227,36 +248,47 @@ def instrument_realtime_backplane(
     Alarm on ``forze.realtime.backplane.seconds_since_ok`` exceeding a few heartbeat
     intervals — that is cross-node emit silently down; ``-1`` means no probe has ever
     succeeded (wiring, not outage).
+
+    Call once per channel; each exports its own series, and a repeat call for the same
+    *health* and channel adds nothing.
     """
 
-    from opentelemetry import metrics
-
-    meter = meter or metrics.get_meter("forze")
-    attributes = {"forze.realtime.channel": channel}
-
-    def _gauge(name: str, pick: Callable[[], float], description: str, unit: str) -> None:
-        def callback(_options: "CallbackOptions") -> "Iterable[Observation]":
-            return [metrics.Observation(pick(), attributes)]
-
-        meter.create_observable_gauge(
-            name, callbacks=[callback], unit=unit, description=description
-        )
-
-    _gauge(
-        BACKPLANE_SECONDS_SINCE_OK_GAUGE,
-        lambda: health.seconds_since_ok,
-        "Seconds since the Socket.IO backplane last accepted a probe (-1: never).",
-        "s",
-    )
-    _gauge(
-        BACKPLANE_CONSECUTIVE_FAILURES_GAUGE,
-        lambda: float(health.consecutive_failures),
-        "Failed backplane probes since the last success.",
-        "1",
-    )
+    observe_channel(health, _BACKPLANE_INSTRUMENTS, channel=channel, meter=meter)
 
 
-# ----------------------- #
+# ....................... #
+
+_CONNECTION_INSTRUMENTS: tuple[ChannelInstrument[RealtimeConnectionStats], ...] = (
+    ChannelInstrument(
+        REALTIME_CONNECTIONS_COUNTER,
+        "up_down_counter",
+        lambda stats: [
+            (count, {"forze.realtime.namespace": namespace})
+            for namespace, count in stats.snapshot()[0].items()
+        ],
+        "Open realtime connections on this node.",
+    ),
+    ChannelInstrument(
+        REALTIME_CONNECT_REFUSED_COUNTER,
+        "counter",
+        lambda stats: [
+            (count, {"forze.realtime.namespace": namespace, "forze.realtime.reason": reason})
+            for (namespace, reason), count in stats.snapshot()[1].items()
+        ],
+        "Refused realtime connects, by reason.",
+    ),
+    ChannelInstrument(
+        REALTIME_DRAIN_CLOSED_COUNTER,
+        "counter",
+        lambda stats: [
+            (count, {"forze.realtime.outcome": outcome})
+            for outcome, count in stats.snapshot()[2].items()
+        ],
+        "Connections the drain closed, by outcome.",
+    ),
+)
+
+# ....................... #
 
 
 def instrument_realtime_connections(
@@ -276,58 +308,9 @@ def instrument_realtime_connections(
       ``forze.realtime.outcome`` (``closed``, ``failed``, ``timed_out``).
 
     Every series also carries ``forze.realtime.channel``. Emits via the global OTel meter
-    unless *meter* is supplied. Call once at assembly time, with the *stats* handed to
-    ``attach_realtime_connection`` and the drain step.
+    unless *meter* is supplied. Call once per channel at assembly time, with the *stats*
+    handed to ``attach_realtime_connection`` and the drain step. Each channel exports its
+    own series; a repeat call for the same *stats* and channel adds nothing.
     """
 
-    from opentelemetry import metrics
-
-    meter = meter or metrics.get_meter("forze")
-
-    def connections(_options: "CallbackOptions") -> "Iterable[Observation]":
-        return [
-            metrics.Observation(
-                count, {"forze.realtime.channel": channel, "forze.realtime.namespace": namespace}
-            )
-            for namespace, count in stats.snapshot()[0].items()
-        ]
-
-    def refused(_options: "CallbackOptions") -> "Iterable[Observation]":
-        return [
-            metrics.Observation(
-                count,
-                {
-                    "forze.realtime.channel": channel,
-                    "forze.realtime.namespace": namespace,
-                    "forze.realtime.reason": reason,
-                },
-            )
-            for (namespace, reason), count in stats.snapshot()[1].items()
-        ]
-
-    def drain_closed(_options: "CallbackOptions") -> "Iterable[Observation]":
-        return [
-            metrics.Observation(
-                count, {"forze.realtime.channel": channel, "forze.realtime.outcome": outcome}
-            )
-            for outcome, count in stats.snapshot()[2].items()
-        ]
-
-    meter.create_observable_up_down_counter(
-        REALTIME_CONNECTIONS_COUNTER,
-        callbacks=[connections],
-        unit="1",
-        description="Open realtime connections on this node.",
-    )
-    meter.create_observable_counter(
-        REALTIME_CONNECT_REFUSED_COUNTER,
-        callbacks=[refused],
-        unit="1",
-        description="Refused realtime connects, by reason.",
-    )
-    meter.create_observable_counter(
-        REALTIME_DRAIN_CLOSED_COUNTER,
-        callbacks=[drain_closed],
-        unit="1",
-        description="Connections the drain closed, by outcome.",
-    )
+    observe_channel(stats, _CONNECTION_INSTRUMENTS, channel=channel, meter=meter)
