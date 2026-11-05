@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import attrs
 import httpx
@@ -73,6 +73,8 @@ class _Route:
     body_json: bool
     body_fields: frozenset[str]
     body_requires: tuple[str, ...]
+    body_composed: bool
+    """The body schema is an ``allOf``, ``anyOf`` or ``oneOf``: what it requires is not read."""
 
     @property
     def kind(self) -> str:
@@ -90,6 +92,9 @@ class _Route:
 
         if self.body_required and not self.body_json:
             return "takes a body that is not JSON"
+
+        if self.has_body and self.body_composed:
+            return "its body schema is composed (allOf, anyOf or oneOf)"
 
         if self.body_requires:
             return f"its body requires {list(self.body_requires)}"
@@ -241,12 +246,14 @@ async def resolve(plan: LoadPlan, client: httpx.AsyncClient) -> Catalog:
 
     :raises CoreException: ``configuration`` with one of these codes:
 
-        - ``load_openapi_unavailable`` — the document cannot be fetched, read or parsed;
+        - ``load_openapi_unavailable`` — the document cannot be fetched, read or parsed, or
+          an operation in it is malformed;
         - ``load_op_missing`` / ``load_op_ambiguous`` — an operation is not in the document,
           or is in it more than once; a read sweep that generates nothing is missing too;
         - ``load_op_mismatch`` — an operation's kind contradicts the scenario's ``writes``,
           or a sample reads an operation that is not a ``query``;
-        - ``load_plan_invalid`` — a reference's path, query or body does not fit its route.
+        - ``load_plan_invalid`` — a reference's path, query or body does not fit its route,
+          or the base URL lacks the path of the document's first server.
     """
 
     pool = SamplePool()
@@ -267,6 +274,7 @@ async def resolve(plan: LoadPlan, client: httpx.AsyncClient) -> Catalog:
         )
 
     document = await _read_document(plan.openapi, client)
+    _check_server(document, plan.base_url)
     builder = _Builder(index=_index(document), pool=pool, taken={s.name for s in plan.scenarios})
 
     for scenario in plan.scenarios:
@@ -356,7 +364,8 @@ class _Builder:
         generated: list[str] = []
 
         for key, routes in self.index.items():
-            if not key.startswith(sweep.prefix) or not all(r.kind == QUERY for r in routes):
+            # A key listed twice with one query among them is skipped, with its reason, below.
+            if not key.startswith(sweep.prefix) or not any(r.kind == QUERY for r in routes):
                 continue
 
             reason = self._unreadable(key, routes)
@@ -475,11 +484,12 @@ def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
 
     index: dict[str, list[_Route]] = {}
 
-    for path, item in document["paths"].items():
-        if not isinstance(item, dict):
-            continue
-
+    for path, raw in document["paths"].items():
+        item = _deref(document, raw)
         shared = item.get("parameters", [])
+
+        if not isinstance(shared, list):
+            raise _unavailable(f"Path {path!r} has 'parameters' that are not a list")
 
         for method, operation in item.items():
             if method not in _METHODS or not isinstance(operation, dict):
@@ -503,11 +513,31 @@ def _route(
     operation: Mapping[str, Any],
     shared: Sequence[Any],
 ) -> _Route:
-    parameters = [_deref(document, p) for p in (*shared, *operation.get("parameters", []))]
-    query = [p for p in parameters if p.get("in") == "query"]
-    body = _deref(document, operation.get("requestBody") or {})
-    content = body.get("content") or {}
-    schema = _deref(document, (content.get("application/json") or {}).get("schema") or {})
+    own = operation.get("parameters", [])
+    raw_body = operation.get("requestBody")
+
+    if not isinstance(own, list):
+        raise _malformed(key, "'parameters' that are not a list")
+
+    parameters = [_deref(document, p) for p in (*shared, *own)]
+
+    if not all(isinstance(p.get("name"), str) and isinstance(p.get("in"), str) for p in parameters):
+        raise _malformed(key, "a parameter without a name or a location")
+
+    if raw_body is not None and not isinstance(raw_body, dict):
+        raise _malformed(key, "a 'requestBody' that is not an object")
+
+    query = [p for p in parameters if p["in"] == "query"]
+    body = _deref(document, raw_body)
+    content = body.get("content", {})
+
+    if not isinstance(content, dict):
+        raise _malformed(key, "a body 'content' that is not an object")
+
+    media = content.get("application/json")
+    schema = _deref(document, media.get("schema") if isinstance(media, dict) else None)
+    fields = schema.get("properties")
+    requires = schema.get("required")
 
     return _Route(
         operation=key,
@@ -515,14 +545,41 @@ def _route(
         path=path,
         declared=operation.get(KIND_EXTENSION),
         path_params=frozenset(_PLACEHOLDER.findall(path)),
-        query_params=frozenset(str(p.get("name")) for p in query),
-        required_query=frozenset(str(p.get("name")) for p in query if p.get("required")),
+        query_params=frozenset(p["name"] for p in query),
+        required_query=frozenset(p["name"] for p in query if p.get("required")),
         has_body=bool(body),
         body_required=bool(body.get("required")),
         body_json="application/json" in content,
-        body_fields=frozenset(schema.get("properties") or {}),
-        body_requires=tuple(schema.get("required") or ()),
+        body_fields=frozenset(fields) if isinstance(fields, dict) else frozenset(),
+        body_requires=tuple(r for r in requires if isinstance(r, str))
+        if isinstance(requires, list)
+        else (),
+        body_composed=any(k in schema for k in ("allOf", "anyOf", "oneOf")),
     )
+
+
+def _check_server(document: Mapping[str, Any], base_url: str) -> None:
+    """Refuse a document whose paths live under a server path the base URL lacks.
+
+    FastAPI behind a ``root_path`` lists it as the first server (``/api/v1``) and keeps the
+    paths without it. A base URL that misses it would send every request to a path that
+    404s, which reads as deleted data, not as a misconfiguration.
+    """
+
+    servers = document.get("servers")
+    first = servers[0] if isinstance(servers, list) and servers else None
+    url = first.get("url") if isinstance(first, dict) else None
+
+    if not isinstance(url, str) or not url.startswith("/"):
+        return  # none, or an absolute server: the base URL decides
+
+    prefix = url.rstrip("/")
+
+    if prefix and not urlsplit(base_url).path.rstrip("/").endswith(prefix):
+        raise _invalid(
+            f"The OpenAPI document serves its paths under {prefix!r}, and base_url does not "
+            "end with it; add it to base_url"
+        )
 
 
 def _deref(document: Mapping[str, Any], node: Any) -> dict[str, Any]:
@@ -658,6 +715,10 @@ def _invalid(summary: str) -> Exception:
 
 def _unavailable(summary: str) -> Exception:
     return exc.configuration(summary, code="load_openapi_unavailable")
+
+
+def _malformed(key: str, what: str) -> Exception:
+    return _unavailable(f"Operation {key!r} in the OpenAPI document has {what}")
 
 
 def _sample_failed(summary: str) -> Exception:

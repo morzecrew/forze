@@ -127,7 +127,7 @@ def _plan(
     **kw: Any,
 ) -> LoadPlan:
     return LoadPlan(
-        base_url="http://127.0.0.1:9",
+        base_url=kw.pop("base_url", "http://127.0.0.1:9"),
         principals=principals
         or [Principal(name="ada", mix=mix or {s.name: 1 for s in scenarios}, auth=_as("ada"))],
         scenarios=list(scenarios),
@@ -405,6 +405,99 @@ class TestSamples:
 
         text = out.read_text()
         assert not any(i in text for i in ids)
+
+
+class TestDocumentShapes:
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            {"operationId": "x", "x-forze-kind": "query", "parameters": None},
+            {"operationId": "x", "x-forze-kind": "query", "parameters": ["id"]},
+            {"operationId": "x", "x-forze-kind": "query", "requestBody": {"content": []}},
+            {"operationId": "x", "x-forze-kind": "query", "requestBody": "body"},
+        ],
+    )
+    async def test_a_malformed_operation_is_refused_not_a_crash(self, operation) -> None:
+        doc = {"paths": {"/x": {"get": operation}}}
+
+        assert await _refused(_App({}, doc), _plan(Scenario.op("x"))) == (
+            "load_openapi_unavailable"
+        )
+
+    async def test_path_level_parameters_and_a_path_item_ref_resolve(self) -> None:
+        doc = {
+            "paths": {
+                "/x/{id}": {"$ref": "#/components/pathItems/X"},
+            },
+            "components": {
+                "pathItems": {
+                    "X": {
+                        "parameters": [{"name": "id", "in": "path", "required": True}],
+                        "get": _op("x.get"),
+                    }
+                }
+            },
+        }
+        app = _App({"ada": ["p1"]}, doc)
+
+        result = await _run(app, _plan(Scenario.op("x.get", path={"id": "p1"})))
+
+        assert result.rows[0]["calls"] > 0
+        assert "/x/p1" in app.paths()
+
+    async def test_a_server_path_missing_from_the_base_url_is_refused(self) -> None:
+        doc = {**_DOC, "servers": [{"url": "/api/v1"}]}
+
+        assert await _refused(_App({}, doc), _plan(_GET)) == "load_plan_invalid"
+
+    async def test_a_server_path_in_the_base_url_resolves(self) -> None:
+        doc = {**_DOC, "servers": [{"url": "/api/v1"}, {"url": "https://other.example"}]}
+
+        seen: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+
+            if request.url.path == "/api/v1/openapi.json":
+                return httpx.Response(200, json=doc)
+
+            return httpx.Response(200, json={"hits": [{"id": "p1"}]})
+
+        result = await run(
+            _plan(_GET, base_url="http://127.0.0.1:9/api/v1"),
+            ClosedRamp(steps=[1], step_s=0.2),
+            transport=httpx.MockTransport(handler),
+        )
+
+        assert result.rows[0]["outcomes"]["ok"] > 0
+        assert "/api/v1/products/p1" in seen
+
+    async def test_an_operation_listed_under_two_kinds_is_skipped_not_dropped(self) -> None:
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/b": {"get": _op("a.dup")},
+                "/c": {"post": _op("a.dup", "command")},
+            }
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {"a.dup": "appears 2 times in the document"}
+
+    async def test_a_composed_body_is_skipped_not_guessed(self) -> None:
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/b": {"post": _op("a.union", body={"oneOf": [{"required": ["k"]}]})},
+            }
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {
+            "a.union": "its body schema is composed (allOf, anyOf or oneOf)"
+        }
 
 
 class TestReadSweep:

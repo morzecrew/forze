@@ -102,8 +102,10 @@ plan = LoadPlan(
 - **Where the document comes from.** `openapi` defaults to `/openapi.json` on the target,
   fetched without credentials and only when the plan names an operation. For a deployment
   that serves no docs, or guards them, save the document and pass
-  `openapi=Path("openapi.json")`, or the parsed document itself. The meta line records its
-  digest as `openapi_sha256`, so `compare` warns when two runs read different documents.
+  `openapi=Path("openapi.json")`, or the parsed document itself. When the document's first
+  server is a path, as FastAPI writes a `root_path` (`/api/v1`), `base_url` must end with
+  it. The meta line records the document's digest as `openapi_sha256`, so `compare` warns
+  when two runs read different documents.
 
 ### Sample ids from live data
 
