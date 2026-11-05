@@ -45,8 +45,15 @@ def _ensure_extra() -> None:  # pyright: ignore[reportUnusedFunction]
 
 
 def _numbers(spec: str) -> list[float]:
+    parts = spec.split(",")
+
+    # An empty item (`1,,4`, a trailing comma) is refused, not skipped: skipping it would run
+    # a different ramp from the one typed.
+    if any(not part.strip() for part in parts):
+        raise typer.BadParameter(f"expected comma-separated numbers with none empty, got {spec!r}")
+
     try:
-        return [float(part) for part in spec.split(",") if part.strip()]
+        return [float(part) for part in parts]
 
     except ValueError as error:
         raise typer.BadParameter(f"expected comma-separated numbers, got {spec!r}") from error

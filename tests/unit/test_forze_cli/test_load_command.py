@@ -143,6 +143,17 @@ class TestRun:
         assert result.exit_code == 2
         assert "whole worker counts" in result.output
 
+    @pytest.mark.parametrize("steps", ["1,,4", "1,2,", ",", ""])
+    def test_an_empty_step_is_a_usage_error(self, steps: str, tmp_path: Path) -> None:
+        out = tmp_path / "e.jsonl"
+
+        result = runner.invoke(
+            app, ["load", "run", f"{_PLANS}:plan", "--steps", steps, "--out", str(out)]
+        )
+
+        assert result.exit_code == 2, result.output
+        assert not out.exists()  # refused before anything ran
+
     @pytest.mark.parametrize("steps", ["nan", "inf", "10,nan"])
     def test_non_finite_steps_exit_2(self, steps: str) -> None:
         result = runner.invoke(
