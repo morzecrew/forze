@@ -5671,11 +5671,13 @@ names. `uv.lock`'s specifier line follows, with no change to what it resolves.
 
 **Where each item lives.** `MetricsSnapshots`, `worker_metrics_reader`, the writer, the union and
 the `SNAPSHOT_AGE_GAUGE` constant are in
-[`routes/_snapshots.py`](../src/forze_fastapi/routes/_snapshots.py), exported from
-`forze_fastapi.routes`. `attach_metrics_route(..., snapshots=)` is in
+[`routes/_snapshots.py`](../src/forze_fastapi/routes/_snapshots.py). `MetricsSnapshots` and
+`worker_metrics_reader` are exported from `forze_fastapi.routes`. The constant is not exported;
+it stays in the private module, where the catalog parity test finds it.
+`attach_metrics_route(..., snapshots=)` is in
 [`routes/health.py`](../src/forze_fastapi/routes/health.py). The reader check that route always
-ran moved into `_snapshots.py` as `prometheus_renderer`, unchanged, because the writer runs it
-too. The tests are `tests/unit/test_forze_fastapi/test_metrics_snapshots.py` (unit) and
+ran moved into `_snapshots.py` (`_prometheus_renderer`), unchanged, behind the `render_gate`
+that the writer and the route share. The tests are `tests/unit/test_forze_fastapi/test_metrics_snapshots.py` (unit) and
 `test_metrics_snapshot_workers.py` (real `uvicorn --workers` processes, after
 `test_serve_workers.py`).
 
