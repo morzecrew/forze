@@ -417,8 +417,12 @@ services:
       - ./config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4318:4318"   # OTLP http/protobuf, for processes on other hosts
-      - "8889:8889"   # the one endpoint Prometheus scrapes
 ```
+
+The receiver takes unauthenticated plaintext: publish `4318` only on a private network, or
+put TLS and an authenticator in front of it. Prometheus on the same Compose network scrapes
+`otel-collector:8889` without a published port; publish `8889` only for a Prometheus outside
+it, on the same terms.
 
 Point every process at it, with traces off, since the recipe carries metrics only:
 
@@ -427,6 +431,7 @@ bootstrap_telemetry(service_name="orders-api", traces=False)
 ```
 
 ```bash
+# On the Compose network; from another host, use the address 4318 is published on.
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 ```
 
