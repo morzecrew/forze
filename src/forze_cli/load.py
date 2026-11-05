@@ -160,7 +160,8 @@ def compare_command(
     from forze_load import compare_runs, parse_fail_on, read_run
 
     try:
-        thresholds = parse_fail_on(fail_on) if fail_on else None
+        # Only an absent option disables the gate: `--fail-on "$UNSET"` is refused, not ignored.
+        thresholds = parse_fail_on(fail_on) if fail_on is not None else None
         comparison = compare_runs(read_run(base), read_run(head), fail_on=thresholds)
 
     except CoreException as error:

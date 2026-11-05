@@ -241,6 +241,14 @@ class TestCompare:
         assert reported.exit_code == 0, reported.output
         assert "nothing was compared" in reported.output
 
+    def test_an_empty_threshold_is_refused_not_ignored(self, tmp_path: Path) -> None:
+        base = _write_run(tmp_path / "base.jsonl", 100)
+
+        result = runner.invoke(app, ["load", "compare", str(base), str(base), "--fail-on", ""])
+
+        assert result.exit_code == 2, result.output
+        assert "refused" in result.output
+
     def test_a_bad_threshold_exits_2(self, tmp_path: Path) -> None:
         base = _write_run(tmp_path / "base.jsonl", 100)
 
