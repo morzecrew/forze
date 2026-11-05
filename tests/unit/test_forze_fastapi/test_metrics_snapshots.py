@@ -25,7 +25,7 @@ from httpx import ASGITransport, AsyncClient
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
-from prometheus_client import Counter, generate_latest
+from prometheus_client import CollectorRegistry, Counter, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 from starlette.testclient import TestClient
 
@@ -37,7 +37,11 @@ from forze_fastapi.routes import _snapshots as snapshots_module
 from forze_fastapi.routes._snapshots import (  # pyright: ignore[reportPrivateUsage]
     RenderGate,
     _Directory,
+    _LogOnce,
+    _pid_alive,
     _Writer,
+    absorb_abandoned_failure,
+    render_gate,
 )
 
 # ----------------------- #
@@ -525,8 +529,12 @@ class TestWriterLifetime:
             await tick
 
         await writer.final()
-        # A skipped final leaves the tick's thread running; let it finish before counting.
+        # A skipped final leaves the tick's thread running; let it finish before counting,
+        # and let its write land too.
         await renders.settled()
+
+        if writer.inflight is not None:
+            await asyncio.wait_for(asyncio.shield(writer.inflight), 5)
 
         assert renders.peak == 1, "two renders ran at once"
         assert len(list(directory.glob("*.prom"))) == 1
@@ -1127,3 +1135,335 @@ def test_a_snapshot_naming_no_instance_is_not_served(tmp_path: Path) -> None:
     _write(tmp_path, "", body=_body("w-0"))
 
     assert _snapshots(tmp_path).union()[0] == 503
+
+
+# ----------------------- #
+
+
+def _logged(monkeypatch: pytest.MonkeyPatch) -> _Log:
+    from forze_fastapi.routes import _snapshots as module
+
+    log = _Log()
+    monkeypatch.setattr(module, "_logger", log)
+
+    return log
+
+
+class TestEdges:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_render_is_absorbed_without_raising(self) -> None:
+        render: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+        render.cancel()
+
+        absorb_abandoned_failure(render)  # .exception() on a cancelled future would raise
+
+    def test_a_gate_whose_registry_is_gone_refuses_to_render(self) -> None:
+        reader = PrometheusMetricReader(registry=CollectorRegistry())
+        gate = render_gate(reader)
+        del reader
+        gc.collect()
+
+        with pytest.raises(CoreException) as caught:
+            gate.render()
+
+        assert caught.value.kind is ExceptionKind.INTERNAL
+
+    def test_the_reader_without_the_exporter_installed_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "opentelemetry.exporter.prometheus", None)
+
+        with pytest.raises(CoreException) as caught:
+            worker_metrics_reader()
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_the_log_once_memory_is_bounded(self) -> None:
+        log = _LogOnce()
+
+        for n in range(1024):
+            assert log.first(str(n))
+
+        assert not log.first("0")
+        assert log.first("one more"), "a full memory starts over"
+        assert log.seen == {"one more"}
+
+    def test_a_pid_owned_by_someone_else_is_alive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def kill(_pid: int, _signal: int) -> None:
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "kill", kill)
+
+        assert _pid_alive(1234) is True
+
+    @pytest.mark.asyncio
+    async def test_the_sweep_removes_a_dead_pids_fifo(
+        self, tmp_path: Path, provider: tuple[MeterProvider, PrometheusMetricReader]
+    ) -> None:
+        _, reader = provider
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        fifo = directory / f"{_dead_pid()}-{uuid.uuid4().hex}.prom"
+        os.mkfifo(fifo)
+
+        async with build_runtime(lifecycle_steps=_snapshots(directory).writer_step(reader)).scope():
+            pass
+
+        assert not fifo.exists(), "it has no header, so it is not fresh, and its pid is gone"
+
+    def test_a_directory_descriptor_that_is_not_a_directory_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        plain_file = tmp_path / "plain"
+        plain_file.write_text("")
+        real_fstat = os.fstat
+        plain_fd = os.open(plain_file, os.O_RDONLY)
+        monkeypatch.setattr(os, "fstat", lambda _fd: real_fstat(plain_fd))
+
+        try:
+            with pytest.raises(CoreException) as caught:
+                _Directory(path=directory).open(create=False)
+
+        finally:
+            os.close(plain_fd)
+
+        assert "is not a directory" in caught.value.summary
+
+    def test_a_directory_owned_by_another_user_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        real = os.geteuid()
+        monkeypatch.setattr(os, "geteuid", lambda: real + 1)
+
+        with pytest.raises(CoreException) as caught:
+            _Directory(path=directory).open(create=False)
+
+        assert "owned by another user" in caught.value.summary
+
+    def test_an_unusable_directory_is_logged_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        snapshots = _snapshots(tmp_path / "missing")
+
+        assert [snapshots.union()[0] for _ in range(3)] == [503, 503, 503]
+        assert [level for level, _ in log.records] == ["error"]
+
+    def test_a_bad_file_is_logged_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        _write(tmp_path, "good", pid=100)
+        _write(tmp_path, "bad", pid=101, header="# not a snapshot")
+        snapshots = _snapshots(tmp_path)
+
+        assert [snapshots.union()[0] for _ in range(3)] == [200, 200, 200]
+        assert [level for level, _ in log.records] == ["warning"]
+
+    def test_an_unlistable_directory_answers_503_and_logs_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "w-0")
+        snapshots = _snapshots(tmp_path)
+        assert snapshots.union()[0] == 200  # the directory is now held open
+        log = _logged(monkeypatch)
+
+        def listdir(_fd: int) -> list[str]:
+            raise PermissionError(errno.EACCES, "Permission denied")
+
+        monkeypatch.setattr(os, "listdir", listdir)
+
+        assert [snapshots.union()[0] for _ in range(2)] == [503, 503]
+        assert [level for level, _ in log.records] == ["error"]
+
+    def test_a_snapshot_gone_since_the_listing_is_passed_over(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "w-0")
+        snapshots = _snapshots(tmp_path)
+        assert snapshots.union()[0] == 200
+        log = _logged(monkeypatch)
+        real_listdir = os.listdir
+        gone = f"999-{uuid.uuid4().hex}.prom"
+        monkeypatch.setattr(os, "listdir", lambda fd: [*real_listdir(fd), gone])
+
+        status, body = snapshots.union()
+
+        assert status == 200
+        assert _served(body) == {"w-0"}
+        assert log.records == [], "a swept or replaced file is no problem to report"
+
+    def test_a_snapshot_that_grew_after_its_size_check_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "good", pid=100)
+        _write(tmp_path, "grown", pid=101, body=_body("grown") + "#" * 600 + "\n")
+        snapshots = _snapshots(tmp_path, max_snapshot_bytes=700)
+        assert snapshots.union()[0] == 200  # the directory is now held open
+        real_fstat = os.fstat
+
+        def fstat(fd: int) -> os.stat_result:
+            info = real_fstat(fd)
+
+            if not stat.S_ISREG(info.st_mode):
+                return info
+
+            # Reports the size it had before the writer appended to it.
+            return os.stat_result((*info[:6], 0, *info[7:10]))
+
+        monkeypatch.setattr(os, "fstat", fstat)
+
+        status, body = snapshots.union()
+
+        assert status == 200
+        assert _served(body) == {"good"}
+
+    def test_a_fresh_snapshot_whose_body_is_not_utf8_is_skipped(self, tmp_path: Path) -> None:
+        _write(tmp_path, "good", pid=100)
+        stamp = f"written_at={time.time() - 0.5:.3f} mono={time.monotonic() - 0.5:.3f}"
+        tmp_path.joinpath(f"101-{uuid.uuid4().hex}.prom").write_bytes(
+            f"# forze-metrics-snapshot v1 {stamp} pid=101 instance=bad\n".encode() + b"\xff\xfe"
+        )
+
+        status, body = _snapshots(tmp_path).union()
+
+        assert status == 200
+        assert _served(body) == {"good"}
+
+    def test_a_shared_instance_is_logged_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        _write(tmp_path, "shared", pid=100)
+        _write(tmp_path, "shared", pid=101)
+        snapshots = _snapshots(tmp_path)
+
+        assert [snapshots.union()[0] for _ in range(3)] == [503, 503, 503]
+        assert [level for level, _ in log.records] == ["error"]
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_first_snapshot_fails_the_boot(
+        self, tmp_path: Path, provider: tuple[MeterProvider, PrometheusMetricReader]
+    ) -> None:
+        meter_provider, reader = provider
+        meter_provider.get_meter("forze").create_counter("forze.test.hits").add(1)
+        snapshots = _snapshots(tmp_path / "snaps", max_snapshot_bytes=64)
+
+        with pytest.raises(CoreException) as caught:
+            async with build_runtime(lifecycle_steps=snapshots.writer_step(reader)).scope():
+                pass
+
+        assert caught.value.code == "metrics_snapshot_too_large"
+
+    def test_a_failed_replace_leaves_no_temp_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        writer = _writer(directory, lambda: "")
+        writer.prepare()
+
+        def replace(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(os, "replace", replace)
+
+        with pytest.raises(OSError):
+            writer.write(_body("w-1"), strict=False)
+
+        assert list(directory.iterdir()) == []
+
+    def test_the_writer_leaves_out_malformed_and_empty_families(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        rendered = (
+            "# HELP forze_empty Nothing yet\n"
+            "# TYPE forze_empty gauge\n"
+            "# HELP forze_broken Broken\n"
+            "# TYPE forze_broken gauge\n"
+            'forze_broken{service_instance_id="w-1"} 1.0\n'
+            "# TYPE forze_stray gauge\n" + _body("w-1")
+        )
+        writer = _writer(directory, lambda: "")
+
+        writer.write(rendered, strict=False)
+        writer.write(rendered, strict=False)
+
+        (written,) = directory.glob("*.prom")
+        body = written.read_text().partition("\n")[2]
+        assert body == _body("w-1")
+        assert [level for level, _ in log.records] == ["warning"], "malformed: logged once"
+
+    @pytest.mark.asyncio
+    async def test_a_second_write_joins_the_one_in_progress(self, tmp_path: Path) -> None:
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        renders = _Renders([0.3], lambda: _body("w-1").encode())
+        writer = _Writer(snapshots=_snapshots(directory), gate=RenderGate(render=renders))
+
+        await asyncio.gather(
+            writer.render_and_write(strict=False), writer.render_and_write(strict=False)
+        )
+
+        assert len(renders.starts) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_tick_render_is_reported_and_the_final_render_still_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        calls: list[int] = []
+
+        def render() -> bytes:
+            calls.append(1)
+
+            if len(calls) == 1:
+                time.sleep(0.2)
+                raise RuntimeError("an observable callback failed")
+
+            return _body("w-1").encode()
+
+        writer = _Writer(snapshots=_snapshots(directory), gate=RenderGate(render=render))
+        tick = asyncio.ensure_future(writer.tick())
+        await asyncio.sleep(0.05)
+        tick.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await tick
+
+        await writer.final()
+
+        assert [level for level, _ in log.records] == ["exception"]
+        assert len(list(directory.glob("*.prom"))) == 1, "the final render wrote after it"
+
+    @pytest.mark.asyncio
+    async def test_a_final_render_that_overruns_is_left_to_finish(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log = _logged(monkeypatch)
+        directory = tmp_path / "snaps"
+        directory.mkdir(mode=0o700)
+        renders = _Renders([1.0], lambda: _body("w-1").encode())
+        writer = _Writer(
+            snapshots=MetricsSnapshots(directory=directory, interval=timedelta(seconds=0.3)),
+            gate=RenderGate(render=renders),
+        )
+
+        await writer.final()
+        await renders.settled()
+
+        if writer.inflight is not None:
+            await asyncio.wait_for(asyncio.shield(writer.inflight), 5)
+
+        assert [level for level, _ in log.records] == ["warning"]
+        assert "overran" in log.records[0][1]
+        assert len(list(directory.glob("*.prom"))) == 1, "the abandoned render still wrote"
