@@ -277,6 +277,40 @@ and **sustained evictions at full capacity with a sagging hit rate** is the
 scan-pollution signature — the signal to switch the eviction policy to the
 in-box W-TinyLFU store or raise `capacity`.
 
+## Process metrics
+
+A slow memory leak or CPU creep only shows in a soak if the server's own memory
+and CPU arrive in the same scrape as everything else. `instrument_process`
+exports them, standard library only:
+
+```python
+from forze.application.execution import instrument_process
+
+instrument_process()  # once per process — in every worker of a pre-fork server
+```
+
+| Metric | What it carries |
+|--------|-----------------|
+| `process.cpu.time` (counter) | CPU seconds labelled `cpu.mode` — `user` / `system`; `rate()` gives the cores used |
+| `process.memory.usage` (up-down counter) | resident memory in bytes, from `/proc/self/statm` — **Linux only** |
+
+The names are OpenTelemetry's process semantic conventions. Prometheus sees
+them as `process_cpu_time_seconds_total` and `process_memory_usage_bytes`, not
+prometheus_client's `process_cpu_seconds_total` /
+`process_resident_memory_bytes`. A default `PrometheusMetricReader()` renders
+the default registry, whose own process collector reports that pair beside
+these. Outside Linux the standard library offers only the *peak* resident
+size, so the memory instrument is skipped rather than reporting a peak as
+current. Each collection costs one syscall and a small `/proc` read.
+
+Every worker reports its own series, but one Prometheus scrape of a pre-fork
+server reaches one worker. To see them all, labelled `service_instance_id`,
+give each worker `worker_metrics_reader()` and serve
+[`MetricsSnapshots`](grafana-stack.md#several-workers-one-scrape).
+
+For more — open file descriptors, threads, disk and network I/O — use
+`opentelemetry-instrumentation-system-metrics`, which depends on `psutil`.
+
 ## Configure logging in one call
 
 `bootstrap_logging` wires the whole logging surface: the framework's own loggers

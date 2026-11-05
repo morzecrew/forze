@@ -7,10 +7,12 @@ extra. Emits via the global OpenTelemetry providers — configure the SDK + expo
 app.
 """
 
+import os
 from collections.abc import Callable, Iterable, Mapping
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
+from forze.application._logger import logger
 from forze.application.contracts.crypto import CryptoKeyringStats
 from forze.application.contracts.execution import (
     Middleware,
@@ -28,6 +30,7 @@ from forze.application.contracts.tenancy import TenantPoolStats
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
 from forze.base.exceptions import CoreException, exc, is_server_error_kind
 
+from ._process_clock import process_cpu_seconds
 from .context.invocation import InvocationSurface
 from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
@@ -74,6 +77,14 @@ CONNECTION_POOL_IN_USE_GAUGE = "forze.connection_pool.in_use"
 CONNECTION_POOL_IDLE_GAUGE = "forze.connection_pool.idle"
 CONNECTION_POOL_MAX_GAUGE = "forze.connection_pool.max"
 CONNECTION_POOL_WAITING_GAUGE = "forze.connection_pool.waiting"
+
+# OpenTelemetry process semantic-convention names, not ``forze.*``: stock dashboards match.
+PROCESS_CPU_TIME_COUNTER = "process.cpu.time"
+PROCESS_MEMORY_USAGE_COUNTER = "process.memory.usage"
+
+_PROC_STATM = "/proc/self/statm"
+_STATM_ERRORS = (OSError, ValueError, IndexError)
+"""Missing (not Linux), unreadable or malformed ``statm``."""
 
 _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_close": 0,
@@ -422,6 +433,92 @@ def instrument_connection_pools(
         unit="1",
         description="Callers queued for a connection from the client's pool.",
     )
+
+
+# ....................... #
+
+
+def instrument_process(*, meter: "Meter | None" = None) -> None:
+    """Export this process's CPU time and resident memory as OpenTelemetry metrics.
+
+    Names follow OpenTelemetry's process semantic conventions:
+
+    - ``process.cpu.time`` (observable counter, ``s``, labelled ``cpu.mode`` —
+      ``user`` / ``system``): cumulative CPU time from :func:`os.times`, so ``rate()``
+      gives the cores this process uses.
+    - ``process.memory.usage`` (observable up-down counter, ``By``): resident memory,
+      ``/proc/self/statm``'s resident pages times the page size. **Linux only**: elsewhere
+      the standard library has only the peak (``ru_maxrss``), so the instrument is not
+      registered rather than exporting a peak as the current value. A ``statm`` that is
+      missing or malformed at registration skips it too; one that fails later yields no
+      point and logs one warning.
+
+    Each collection costs one syscall and a small ``/proc`` read, no subprocess. The OTel
+    Prometheus exporter renders them as ``process_cpu_time_seconds_total`` and
+    ``process_memory_usage_bytes``.
+    For more (open files, threads, I/O), use ``opentelemetry-instrumentation-system-metrics``.
+
+    Emits via the global OTel meter unless *meter* is supplied. Call once per process,
+    alongside the other ``instrument_*`` calls; a repeat on the same meter adds nothing,
+    as the SDK keeps the first instruments and drops the new callbacks.
+    """
+
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
+
+    meter = meter or metrics.get_meter("forze")
+
+    def _observe_cpu(_options: "CallbackOptions") -> Iterable[Observation]:
+        user, system = process_cpu_seconds()
+
+        yield Observation(user, {"cpu.mode": "user"})
+        yield Observation(system, {"cpu.mode": "system"})
+
+    meter.create_observable_counter(
+        PROCESS_CPU_TIME_COUNTER,
+        callbacks=[_observe_cpu],
+        unit="s",
+        description="CPU time consumed by this process, per mode.",
+    )
+
+    try:
+        _resident_pages()
+        page_size = os.sysconf("SC_PAGE_SIZE")
+
+    except _STATM_ERRORS:
+        return
+
+    warned = False
+
+    def _observe_memory(_options: "CallbackOptions") -> Iterable[Observation]:
+        nonlocal warned
+
+        try:
+            resident = _resident_pages() * page_size
+
+        except _STATM_ERRORS as error:
+            if not warned:
+                warned = True
+                logger.warning("Cannot read %s for process.memory.usage: %s", _PROC_STATM, error)
+
+            return
+
+        yield Observation(resident)
+
+    meter.create_observable_up_down_counter(
+        PROCESS_MEMORY_USAGE_COUNTER,
+        callbacks=[_observe_memory],
+        unit="By",
+        description="Resident memory of this process.",
+    )
+
+
+# ....................... #
+
+
+def _resident_pages() -> int:
+    with open(_PROC_STATM, "rb") as statm:
+        return int(statm.read().split()[1])
 
 
 # ....................... #

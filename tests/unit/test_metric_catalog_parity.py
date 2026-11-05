@@ -40,6 +40,9 @@ _RECIPE: Final[Path] = _REPO / "pages" / "docs" / "running-in-prod" / "grafana-s
 _INSTRUMENT_SUFFIXES: Final[tuple[str, ...]] = ("_COUNTER", "_GAUGE", "_HISTOGRAM")
 """Every metric name in `src/` is a module-level constant ending in one of these."""
 
+_METRIC_PREFIXES: Final[tuple[str, ...]] = ("forze.", "process.")
+"""Forze's own names, plus the OpenTelemetry process semantic-convention names it reuses."""
+
 _HISTOGRAM_SERIES_SUFFIXES: Final[tuple[str, ...]] = ("_bucket", "_sum", "_count")
 """What Prometheus expands a histogram into, and what a p95 query actually selects."""
 
@@ -61,7 +64,7 @@ def _collect_metric_names() -> dict[str, str]:
 
             value = node.value.value
 
-            if not isinstance(value, str) or not value.startswith("forze."):
+            if not isinstance(value, str) or not value.startswith(_METRIC_PREFIXES):
                 continue
 
             for target in node.targets:
@@ -99,7 +102,7 @@ def _documented_metric_names() -> list[str]:
             continue
 
         first_cell = stripped.split("|")[1].strip()
-        match = re.fullmatch(r"`(forze\.[a-z0-9_.]+)`", first_cell)
+        match = re.fullmatch(r"`((?:forze|process)\.[a-z0-9_.]+)`", first_cell)
 
         if match:
             names.append(match.group(1))
@@ -200,6 +203,7 @@ class TestCollection:
         # Integration packages count too — they are walked, not imported.
         assert "forze.realtime.gateway.emitted" in METRICS
         assert "forze.authn.tokens.signed" in METRICS
+        assert "process.cpu.time" in METRICS
         assert len(METRICS) >= 40
 
 

@@ -11,8 +11,9 @@ seam's own definition:
 
 * entropy — ``os.urandom``, ``secrets.token_*``/``randbits``/…, ``random.<fn>``,
   stdlib ``uuid.uuid4``/``uuid1``;
-* clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*`` and
-  ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` / ``monotonic()`` instead);
+* clocks — ``time.monotonic``/``time``/``time_ns``/``process_time*``, ``os.times`` (the
+  same process-CPU clock) and ``datetime.now``/``datetime.utcnow`` (use ``utcnow()`` /
+  ``monotonic()`` instead);
 * stable bucketing — ``hash(x) % n`` / ``hash(x) & mask``: Python's builtin ``hash``
   is PYTHONHASHSEED-randomized, so it picks a different bucket every process and breaks
   cross-process replay. Use a stable hash (``zlib.crc32`` / ``derive_seed``).
@@ -65,13 +66,17 @@ _ALLOWLIST: frozenset[str] = frozenset(
         # primitives live in one small module: seeded RNGs for picks and arrivals, and the
         # process CPU time its self-report shows beside the loop thread's.
         "forze_load/_seams.py",
+        # ``instrument_process``'s CPU-time counter reads ``os.times`` here and nowhere else:
+        # metric output only, never program logic, the reason ``perf_counter`` is allowed.
+        "forze/application/execution/_process_clock.py",
     }
 )
 
 # Per-module banned attributes (entropy draws). ``random.*`` bans every call on the
 # module; ``secrets`` bans only the stochastic API (``compare_digest`` is allowed).
 _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
-    "os": frozenset({"urandom"}),
+    # ``times`` reads the process-CPU clock ``time.process_time`` is banned for.
+    "os": frozenset({"urandom", "times"}),
     "secrets": frozenset(
         {
             "token_bytes",
@@ -103,7 +108,7 @@ _BANNED_ATTRS: dict[str, frozenset[str] | None] = {
 # Names that, when imported via ``from <module> import <name>``, become banned
 # bare-name calls.
 _BANNED_FROM_IMPORT: dict[str, frozenset[str]] = {
-    "os": frozenset({"urandom"}),
+    "os": frozenset({"urandom", "times"}),
     "secrets": _BANNED_ATTRS["secrets"],  # type: ignore[dict-item]
     "random": frozenset(
         {
