@@ -5,6 +5,8 @@ the test pins the event attributes it reads as well as the counting.
 """
 
 import threading
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
 from pymongo import monitoring
@@ -13,6 +15,7 @@ from forze.application.contracts.pools import (
     ConnectionPoolStats,
     SupportsConnectionPoolStats,
 )
+from forze.base.primitives.time_source import bind_time_source
 from forze_mongo.kernel.client import MongoClient, MongoConfig
 from forze_mongo.kernel.client.client import _PoolEvents
 from forze_mongo.kernel.client.routed_client import RoutedMongoClient
@@ -48,12 +51,32 @@ def _stats(in_use: int, idle: int) -> ConnectionPoolStats:
     return ConnectionPoolStats(in_use=in_use, idle=idle, max_size=10)
 
 
+def _events() -> _PoolEvents:
+    return _PoolEvents(10, open_within=timedelta(seconds=5))
+
+
+class _Clock:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self) -> None:
+        self.reading = 1_000.0
+
+    def now(self) -> datetime:
+        return datetime.now()
+
+    def uuid(self) -> UUID:
+        return uuid4()
+
+    def monotonic(self) -> float:
+        return self.reading
+
+
 # ....................... #
 
 
 class TestPoolEvents:
     def test_a_connection_through_its_life(self) -> None:
-        events = _PoolEvents(10)
+        events = _events()
         assert events.stats == _stats(0, 0)
 
         events.connection_created(monitoring.ConnectionCreatedEvent(PRIMARY, 1))
@@ -72,17 +95,54 @@ class TestPoolEvents:
         assert events.stats == _stats(0, 0)
 
     def test_a_connection_that_fails_to_open_is_gone(self) -> None:
-        events = _PoolEvents(10)
+        events = _events()
 
         events.connection_created(monitoring.ConnectionCreatedEvent(PRIMARY, 1))
         _close(events, PRIMARY, 1)
 
         assert events.stats == _stats(0, 0)
 
+    def test_a_connection_left_opening_stops_counting_after_open_within(self) -> None:
+        """pymongo sends no close for an open cancelled while it waits for the pool lock."""
+
+        clock = _Clock()
+
+        with bind_time_source(clock):
+            events = _events()
+            events.connection_created(monitoring.ConnectionCreatedEvent(PRIMARY, 1))
+
+            clock.reading += 4.9
+            assert events.stats == _stats(1, 0)
+
+            clock.reading += 0.2  # past the bound, with no event since: the scrape drops it
+            assert events.stats == _stats(0, 0)
+
+            # A slow open that does finish is tracked exactly from then on.
+            events.connection_ready(monitoring.ConnectionReadyEvent(PRIMARY, 1, 0.0))
+            assert events.stats == _stats(0, 1)
+
+            _check_out(events, PRIMARY, 1)
+            assert events.stats == _stats(1, 0)
+
+    def test_events_that_move_no_connection_change_nothing(self) -> None:
+        events = _events()
+        _open(events, PRIMARY, 1)
+        _check_out(events, PRIMARY, 1)
+
+        events.pool_created(monitoring.PoolCreatedEvent(PRIMARY, {}))
+        events.pool_ready(monitoring.PoolReadyEvent(PRIMARY))
+        events.pool_cleared(monitoring.PoolClearedEvent(PRIMARY))
+        events.connection_check_out_started(monitoring.ConnectionCheckOutStartedEvent(PRIMARY))
+        events.connection_check_out_failed(
+            monitoring.ConnectionCheckOutFailedEvent(PRIMARY, "timeout", 0.0)
+        )
+
+        assert events.stats == _stats(1, 0)
+
     def test_reports_the_busiest_server_not_a_sum(self) -> None:
         """Idle secondaries would hide a saturated primary in a sum."""
 
-        events = _PoolEvents(10)
+        events = _events()
 
         for conn_id in range(3):
             _open(events, PRIMARY, conn_id)
@@ -98,7 +158,7 @@ class TestPoolEvents:
     def test_a_closed_pool_drops_its_connections(self) -> None:
         """A connection checked out and never returned goes with its server's pool."""
 
-        events = _PoolEvents(10)
+        events = _events()
         _open(events, PRIMARY, 1)
         _check_out(events, PRIMARY, 1)
         _open(events, SECONDARY, 1)
@@ -114,7 +174,7 @@ class TestPoolEvents:
         assert events.stats == _stats(0, 1)
 
     def test_events_from_several_threads_keep_the_counts(self) -> None:
-        events = _PoolEvents(10)
+        events = _events()
         start = threading.Barrier(4)
 
         def churn(worker: int) -> None:

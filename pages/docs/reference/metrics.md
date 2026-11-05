@@ -94,7 +94,10 @@ Where each number comes from:
 - **MongoDB:** pymongo's public `ConnectionPoolListener` events, which the client
   registers when it is built. pymongo keeps one pool per server, and the gauges report
   the pool with the most connections in use, so `max` is the per-server
-  `max_pool_size`. A sum would hide a saturated primary behind idle secondaries.
+  `max_pool_size`. A sum would hide a saturated primary behind idle secondaries. A
+  connection still opening counts as in use for at most `connect_timeout` plus a second:
+  pymongo sends no close event for one whose open is cancelled at the wrong moment, so it
+  would otherwise count until its pool closes.
 
 `waiting` is absent where it cannot be counted honestly. redis-py exposes no count of
 callers queued on a `BlockingConnectionPool`. pymongo publishes no event when a queued

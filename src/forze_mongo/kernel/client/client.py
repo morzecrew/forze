@@ -22,6 +22,7 @@ from datetime import timedelta
 from typing import (
     Any,
     Concatenate,
+    Literal,
     ParamSpec,
     TypeVar,
     final,
@@ -38,7 +39,7 @@ from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
 from forze.application.contracts.pools import ConnectionPoolStats
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, driver_deadline_budget
+from forze.base.primitives import JsonDict, driver_deadline_budget, monotonic
 
 from .._logger import logger
 from .errors import exc_interceptor
@@ -102,75 +103,129 @@ class _PendingMongoTx:
 # ----------------------- #
 
 
+_OPEN_MARGIN = timedelta(seconds=1)
+"""How long past the connect timeout a connection still opening keeps counting."""
+
+_ConnectionState = Literal["opening", "checked_out", "idle"]
+
+
+@final
+class _ServerPool:
+    """One server's pooled connections, by state."""
+
+    __slots__ = ("checked_out", "opening", "ready")
+
+    def __init__(self) -> None:
+        self.ready: dict[int, bool] = {}
+        """Ready connections by id: ``True`` while checked out, ``False`` while idle."""
+
+        self.checked_out = 0
+        """How many of :attr:`ready` are checked out."""
+
+        self.opening: dict[int, float] = {}
+        """Connections being opened, by id, to the monotonic instant they stop counting."""
+
+
+# ....................... #
+
+
 @final
 class _PoolEvents(monitoring.ConnectionPoolListener):
     """One client's pooled connections, counted from pymongo's public pool events.
 
-    pymongo has no public pool snapshot, so each connection's state is kept per server: in
-    use from ``connection_created`` (being opened) and ``connection_checked_out``, idle from
-    ``connection_ready`` and ``connection_checked_in``, gone at ``connection_closed`` or with
-    its server's ``pool_closed``. Events may arrive from another thread, so they update
-    under a lock and publish an immutable :attr:`stats` that a metrics callback reads
-    without one.
+    pymongo has no public pool snapshot, so each connection's state is kept per server:
+    opening from ``connection_created``, checked out from ``connection_checked_out``, idle
+    from ``connection_ready`` and ``connection_checked_in``, gone at ``connection_closed`` or
+    with its server's ``pool_closed``. Events may arrive from another thread, so they update
+    under a lock and publish an immutable snapshot that :attr:`stats` reads without one.
+
+    A connection still opening counts as in use only until *open_within* has passed since
+    its ``connection_created``. pymongo publishes no ``connection_closed`` for a connection
+    whose open is cancelled while it waits for the pool lock after the socket is up, so
+    without the bound it would count as in use until its pool closes. Ready, checked-out
+    and checked-in connections are tracked exactly.
     """
 
-    def __init__(self, max_size: int | None) -> None:
+    def __init__(self, max_size: int | None, open_within: timedelta) -> None:
         self.__lock = threading.Lock()
-        self.__servers: dict[object, dict[int, bool]] = {}
-        self.__in_use: dict[object, int] = {}
+        self.__servers: dict[object, _ServerPool] = {}
         self.__max_size = max_size
-        self.stats = ConnectionPoolStats(in_use=0, idle=0, max_size=max_size)
-        """The busiest server's pool, as of the last event."""
+        self.__open_within = open_within.total_seconds()
+        self.__published: tuple[tuple[int, int, tuple[float, ...]], ...] = ()
+        """Per server: checked out, idle, and the deadlines of the connections opening."""
 
     # ....................... #
 
-    def __set(self, address: object, conn_id: int, in_use: bool | None) -> None:
-        """Record connection *conn_id* as in use, idle, or gone (``None``)."""
+    @property
+    def stats(self) -> ConnectionPoolStats:
+        """The busiest server's pool, as of the last event and the clock now."""
+
+        now = monotonic()
+        busiest = (0, 0)
+
+        # The busiest server, not a sum: idle secondaries would hide a saturated primary.
+        for checked_out, idle, opening in self.__published:
+            in_use = checked_out + sum(until > now for until in opening)
+            busiest = max(busiest, (in_use, in_use + idle))
+
+        in_use, size = busiest
+
+        return ConnectionPoolStats(in_use=in_use, idle=size - in_use, max_size=self.__max_size)
+
+    # ....................... #
+
+    def __record(self, address: object, conn_id: int, state: _ConnectionState | None) -> None:
+        """Record connection *conn_id* as opening, checked out, idle, or gone (``None``)."""
 
         with self.__lock:
-            conns = self.__servers.setdefault(address, {})
-            was = conns.pop(conn_id, False)
+            now = monotonic()
+            server = self.__servers.setdefault(address, _ServerPool())
+            server.opening.pop(conn_id, None)
+            server.checked_out -= server.ready.pop(conn_id, False)
 
-            if in_use is not None:
-                conns[conn_id] = in_use
+            if state == "opening":
+                server.opening[conn_id] = now + self.__open_within
 
-            self.__in_use[address] = self.__in_use.get(address, 0) - was + bool(in_use)
-            self.__publish()
+            elif state is not None:
+                server.ready[conn_id] = state == "checked_out"
+                server.checked_out += state == "checked_out"
 
-    def __publish(self) -> None:
-        # The busiest server, not a sum: idle secondaries would hide a saturated primary.
-        in_use, size = max(
-            ((self.__in_use[address], len(conns)) for address, conns in self.__servers.items()),
-            default=(0, 0),
-        )
-        self.stats = ConnectionPoolStats(
-            in_use=in_use,
-            idle=size - in_use,
-            max_size=self.__max_size,
+            self.__publish(now)
+
+    def __publish(self, now: float) -> None:
+        for server in self.__servers.values():
+            server.opening = {conn: until for conn, until in server.opening.items() if until > now}
+
+        self.__published = tuple(
+            (
+                server.checked_out,
+                len(server.ready) - server.checked_out,
+                tuple(server.opening.values()),
+            )
+            for server in self.__servers.values()
         )
 
     # ....................... #
 
     def connection_created(self, event: monitoring.ConnectionCreatedEvent) -> None:
-        self.__set(event.address, event.connection_id, True)
+        self.__record(event.address, event.connection_id, "opening")
 
     def connection_ready(self, event: monitoring.ConnectionReadyEvent) -> None:
-        self.__set(event.address, event.connection_id, False)
+        self.__record(event.address, event.connection_id, "idle")
 
     def connection_checked_out(self, event: monitoring.ConnectionCheckedOutEvent) -> None:
-        self.__set(event.address, event.connection_id, True)
+        self.__record(event.address, event.connection_id, "checked_out")
 
     def connection_checked_in(self, event: monitoring.ConnectionCheckedInEvent) -> None:
-        self.__set(event.address, event.connection_id, False)
+        self.__record(event.address, event.connection_id, "idle")
 
     def connection_closed(self, event: monitoring.ConnectionClosedEvent) -> None:
-        self.__set(event.address, event.connection_id, None)
+        self.__record(event.address, event.connection_id, None)
 
     def pool_closed(self, event: monitoring.PoolClosedEvent) -> None:
         with self.__lock:
             self.__servers.pop(event.address, None)
-            self.__in_use.pop(event.address, None)
-            self.__publish()
+            self.__publish(monotonic())
 
     # Not needed for the counts: a cleared pool closes its connections one event at a time.
     def pool_created(self, event: monitoring.PoolCreatedEvent) -> None:
@@ -273,7 +328,10 @@ class MongoClient(MongoClientPort):
             self._push_deadline = config.push_invocation_deadline
             self.__connect_bound = config.server_selection_timeout + config.connect_timeout
             # pymongo reads a max_pool_size of 0 as no cap.
-            pool_events = _PoolEvents(config.max_pool_size or None)
+            pool_events = _PoolEvents(
+                config.max_pool_size or None,
+                open_within=config.connect_timeout + _OPEN_MARGIN,
+            )
             self.__client = AsyncMongoClient(
                 uri,
                 appname=config.appname,
@@ -319,7 +377,9 @@ class MongoClient(MongoClientPort):
 
         Counted from pymongo's public ``ConnectionPoolListener`` events, registered when
         the client is built, since pymongo exposes no pool snapshot. ``in_use`` is the
-        connections checked out or being opened. The client keeps one pool per server, and
+        connections checked out or being opened. A connection still opening counts for at
+        most ``connect_timeout`` plus a second: pymongo sends no close event for one whose
+        open is cancelled at the wrong moment. The client keeps one pool per server, and
         the snapshot is the pool with the most connections in use, so a saturated primary
         is not hidden behind idle secondaries; ``max_size`` is the per-server cap
         (``max_pool_size``), or ``None`` when it is ``0``, which pymongo reads as no cap.
