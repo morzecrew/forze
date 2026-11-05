@@ -114,7 +114,7 @@ class _PoolEvents(monitoring.ConnectionPoolListener):
     without one.
     """
 
-    def __init__(self, max_size: int) -> None:
+    def __init__(self, max_size: int | None) -> None:
         self.__lock = threading.Lock()
         self.__servers: dict[object, dict[int, bool]] = {}
         self.__in_use: dict[object, int] = {}
@@ -272,7 +272,8 @@ class MongoClient(MongoClientPort):
             self.__lazy_tx = config.lazy_transaction
             self._push_deadline = config.push_invocation_deadline
             self.__connect_bound = config.server_selection_timeout + config.connect_timeout
-            pool_events = _PoolEvents(config.max_pool_size)
+            # pymongo reads a max_pool_size of 0 as no cap.
+            pool_events = _PoolEvents(config.max_pool_size or None)
             self.__client = AsyncMongoClient(
                 uri,
                 appname=config.appname,
@@ -321,7 +322,7 @@ class MongoClient(MongoClientPort):
         connections checked out or being opened. The client keeps one pool per server, and
         the snapshot is the pool with the most connections in use, so a saturated primary
         is not hidden behind idle secondaries; ``max_size`` is the per-server cap
-        (``max_pool_size``).
+        (``max_pool_size``), or ``None`` when it is ``0``, which pymongo reads as no cap.
 
         ``waiting`` is ``None``: pymongo publishes no event when a caller queued for a
         connection is cancelled, so a count of callers in checkout would climb with every

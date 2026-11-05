@@ -27,8 +27,8 @@ class ConnectionPoolStats:
     idle: int
     """Connections in the pool not checked out."""
 
-    max_size: int
-    """The configured cap on open connections."""
+    max_size: int | None
+    """The configured cap on the pool's connections, or ``None`` when the pool has none."""
 
     waiting: int | None = None
     """Callers queued for a connection, or ``None`` when the driver does not expose it."""

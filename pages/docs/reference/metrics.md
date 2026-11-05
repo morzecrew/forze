@@ -81,7 +81,7 @@ implements `SupportsConnectionPoolStats`: `PostgresClient`, `RedisClient` and
 |---|---|---|---|---|
 | `forze.connection_pool.in_use` | observable gauge | 1 | `forze.client` | connections checked out, or being opened or reopened by the pool |
 | `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | connections in the pool not checked out |
-| `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`) |
+| `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`); absent for a pool with none, such as MongoDB with `max_pool_size=0` |
 | `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; Postgres only, absent for Redis and MongoDB |
 
 Where each number comes from:

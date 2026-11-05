@@ -374,7 +374,7 @@ def instrument_connection_pools(
 
     - ``forze.connection_pool.in_use``: connections checked out, or being opened;
     - ``forze.connection_pool.idle``: connections in the pool not checked out;
-    - ``forze.connection_pool.max``: the configured cap;
+    - ``forze.connection_pool.max``: the configured cap, absent for a pool without one;
     - ``forze.connection_pool.waiting``: callers queued for a connection, where the
       driver exposes it.
 
@@ -447,7 +447,7 @@ def instrument_connection_pools(
         CONNECTION_POOL_MAX_GAUGE,
         callbacks=[_observe(lambda s: s.max_size)],
         unit="1",
-        description="Configured cap on the client's open connections.",
+        description="Configured cap on the connections in the client's pool.",
     )
     meter.create_observable_gauge(
         CONNECTION_POOL_WAITING_GAUGE,

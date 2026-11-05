@@ -247,7 +247,7 @@ instrument_connection_pools({"postgres": pg, "redis": redis, "mongo": mongo})
 |--------|-----------------|
 | `forze.connection_pool.in_use` (gauge) | connections checked out, or being opened or reopened by the pool |
 | `forze.connection_pool.idle` (gauge) | connections in the pool not checked out |
-| `forze.connection_pool.max` (gauge) | the configured cap |
+| `forze.connection_pool.max` (gauge) | the configured cap, absent for a pool without one |
 | `forze.connection_pool.waiting` (gauge) | callers queued for a connection, Postgres only |
 
 One series per client, labelled `forze.client` with the name you chose. A

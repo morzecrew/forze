@@ -13,7 +13,7 @@ from forze.application.contracts.pools import (
     ConnectionPoolStats,
     SupportsConnectionPoolStats,
 )
-from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.client import MongoClient, MongoConfig
 from forze_mongo.kernel.client.client import _PoolEvents
 from forze_mongo.kernel.client.routed_client import RoutedMongoClient
 
@@ -144,6 +144,29 @@ class TestPoolEvents:
 class TestMongoClientConnectionPoolStats:
     def test_reports_nothing_before_initialize(self) -> None:
         assert MongoClient().connection_pool_stats() is None
+
+    @pytest.mark.parametrize(("max_pool_size", "max_size"), [(5, 5), (0, None)])
+    async def test_reports_the_per_server_cap_and_no_cap_for_zero(
+        self, max_pool_size: int, max_size: int | None
+    ) -> None:
+        """pymongo reads a ``max_pool_size`` of 0 as no cap; the client opens no socket yet."""
+
+        client = MongoClient()
+        await client.initialize(
+            "mongodb://127.0.0.1:1",
+            db_name="pool_stats",
+            config=MongoConfig(min_pool_size=0, max_pool_size=max_pool_size),
+        )
+
+        try:
+            assert client.connection_pool_stats() == ConnectionPoolStats(
+                in_use=0, idle=0, max_size=max_size
+            )
+
+        finally:
+            await client.close()
+
+        assert client.connection_pool_stats() is None
 
     def test_a_routed_client_does_not_report_one(self) -> None:
         """A routed client holds one client per tenant; a sum would hide a saturated one."""
