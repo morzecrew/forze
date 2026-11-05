@@ -68,6 +68,78 @@ plan = LoadPlan(
 - **`tenant`** is sent as `X-Tenant-Id`. A token's tenant claim wins over it, and the app
   reads the header only with `trust_tenant_header=True`.
 
+## Call operations by key
+
+A hand-typed path drifts from the API: a renamed route turns into a run of 404s. A scenario
+can name the operation instead, by the key forze gives the route as its `operationId`, and
+the run reads the method and path from the app's OpenAPI document when it starts:
+
+```python
+from forze_load import LoadPlan, Principal, Scenario, api_key, sample
+
+plan = LoadPlan(
+    base_url="http://localhost:8000",
+    principals=[
+        Principal(name="viewer", mix={"products.get": 3, "list": 1, "reads": 1},
+                  auth=api_key("VIEWER_API_KEY")),
+    ],
+    scenarios=[
+        Scenario.op("products.get", path={"id": sample("products.list")}),
+        Scenario.op("products.list", name="list", body={"size": 50}),
+        Scenario.reads("orders."),
+    ],
+)
+```
+
+- **The kind is checked.** forze marks every generated route with `x-forze-kind`, `query`
+  or `command`. `Scenario.op` declares `writes=False` unless you pass `writes=True`, and the
+  run stops before signing anyone in when the operation is missing from the document or its
+  kind disagrees with that declaration. A route with no `x-forze-kind`, or an unknown value,
+  counts as `command`: a hand-written route, or one served by a forze older than the key.
+- **The inputs are checked too.** Every placeholder in the path must be filled, query names
+  must be ones the route declares, and a route that requires a body must get one. Path values
+  are URL-encoded; `body` is sent as given.
+- **Where the document comes from.** `openapi` defaults to `/openapi.json` on the target,
+  fetched without credentials and only when the plan names an operation. For a deployment
+  that serves no docs, or guards them, save the document and pass
+  `openapi=Path("openapi.json")`, or the parsed document itself. The meta line records its
+  digest as `openapi_sha256`, so `compare` warns when two runs read different documents.
+
+### Sample ids from live data
+
+`sample("products.list", field="id", size=500)` calls the list operation once as each
+principal that uses it, after sign-in and before the first step, and keeps the values of
+`field` from the answer's `hits`. `size` is sent as the body's `size` (or the query's, for a
+route without a body) and is at most 10,000. Each call picks one value at random. Each
+principal samples for itself, because an id one principal can read may be forbidden to
+another.
+
+- A sample must read a `query` operation, and an empty one stops the run before load,
+  naming the principal and the operation.
+- An id that answers 404 later, deleted by a write scenario or by someone else, counts as
+  `not_found` and leaves the sample. A sample emptied that way retires its scenarios for that
+  principal, and the step row lists them under `sample_exhausted`. The principal's workers
+  carry on with the rest of its mix. When nothing is left, the run ends the step there and
+  stops: the summary's `stopped` says `sample_exhausted` and names the principal, and the
+  step cut short is never named the knee.
+- Sampled ids never reach the output.
+
+### Sweep the read routes
+
+`Scenario.reads("orders.")` generates one scenario per `query` operation whose key starts
+with the prefix and whose input the kit can fill without guessing:
+
+- no input, or a body that requires no field, such as a paginated list, sent as `{}`;
+- an `id`, in the path or the query, with an optional `rev`. Ids are sampled from the `list`
+  operation beside the route: `orders.list` for `orders.get`.
+
+Every other `query` route is recorded with its reason under `plan.skipped` in the meta line,
+and `forze load run` prints them. `command` routes are never generated. A mix weights the
+group by its name, `reads` by default, and the weight is split evenly between the generated
+scenarios; the rows name each by its operation key. An operation another scenario of the
+plan already names is left to that scenario, and a sweep that generates nothing stops the
+run.
+
 ## Run a ramp
 
 Point the CLI at the plan by import string:
@@ -126,6 +198,7 @@ window's real length. A step row carries:
 | `auth` | Time spent signing in or refreshing: `total_s` and `max_ms` |
 | `client` | `loop_cpu`, `loop_cpu_judged`, `process_cpu`, `loop_lag_p99_ms`, `behind_schedule`, `saturated` |
 | `scenarios` | Calls, 2xx and latency per scenario |
+| `sample_exhausted` | Scenarios retired during the step, as `principal` and `scenario`, because 404s emptied their sample; present only when one was |
 
 A transport failure (a refused connection, a timeout) is counted but has no latency.
 
@@ -165,7 +238,9 @@ Writes are off by default, and turning them on is not enough on its own. A run w
 scenario needs `allow_writes=True` **and** a target host that is a loopback address,
 `localhost`, listed in the plan's `write_hosts`, or listed in the comma-separated
 `FORZE_LOAD_WRITE_HOSTS` environment variable. Hosts are compared exactly, never by suffix:
-`localhost.example.com` is refused. The check runs before anything is sent.
+`localhost.example.com` is refused. The check runs before anything is sent. An operation
+reference is a writing scenario when it declares `writes=True`, which its route's
+`x-forze-kind` must confirm as `command`; a sweep never generates one.
 
 The run never cleans up what it wrote. Run write-enabled plans against a seeded, disposable
 stack, never against production.
@@ -188,5 +263,7 @@ stack, never against production.
 - **The file holds numbers only:** counts, latencies and outcome classes. No bodies, headers,
   tokens or ids, and the target is written as scheme, host and port only. The meta line
   records each principal's weight and mix.
-- **Not yet covered:** scenarios built from your OpenAPI operations, realtime subscribers, and
-  soak runs that watch server gauges for drift. They are later phases of RFC 0084.
+- **One timeout for every request.** Operation references use the plan's `timeout_s` too;
+  a route's `x-deadline-seconds` is not read.
+- **Not yet covered:** realtime subscribers, and soak runs that watch server gauges for
+  drift. They are later phases of RFC 0084.

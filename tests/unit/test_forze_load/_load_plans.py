@@ -49,6 +49,41 @@ login_plan = LoadPlan(
 )
 
 
+# Resolved from a document given inline, so no request is needed to read it. Nothing listens
+# on port 9, so the generated read fails in transport and the ramp stops after one step.
+_DOC = {
+    "paths": {
+        "/items/list": {
+            "post": {
+                "operationId": "items.list",
+                "x-forze-kind": "query",
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {}}}},
+            }
+        },
+        "/items/{id}": {"get": {"operationId": "items.get", "x-forze-kind": "command"}},
+        "/items/search": {
+            "get": {
+                "operationId": "items.search",
+                "x-forze-kind": "query",
+                "parameters": [{"name": "q", "in": "query", "required": True}],
+            }
+        },
+    }
+}
+sweep_plan = LoadPlan(
+    base_url="http://127.0.0.1:9",
+    principals=[Principal(name="viewer", mix={"reads": 1})],
+    scenarios=[Scenario.reads("items.")],
+    openapi=_DOC,
+)
+mismatch_plan = LoadPlan(
+    base_url="http://127.0.0.1:9",
+    principals=[Principal(name="viewer", mix={"items.get": 1})],
+    scenarios=[Scenario.op("items.get")],
+    openapi=_DOC,
+)
+
+
 def make_plan() -> LoadPlan:
     return plan
 

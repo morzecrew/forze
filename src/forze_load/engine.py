@@ -25,7 +25,17 @@ from ._seams import process_seconds, seeded_random
 from ._target import no_cookies, target_guard
 from ._version import __version__
 from .auth import Auth, AuthSession, HeadersFn
-from .plan import TENANT_HEADER, Call, LoadPlan, Principal, Scenario, safe_target, validate_plan
+from .catalog import Catalog, SampleExhausted, resolve
+from .plan import (
+    TENANT_HEADER,
+    Call,
+    LoadPlan,
+    Principal,
+    Sample,
+    Scenario,
+    safe_target,
+    validate_plan,
+)
 from .report import SCHEMA, RunWriter
 from .stats import StepRecorder, classify, error_share, find_knee
 
@@ -194,10 +204,13 @@ async def run(
     """Drive *plan* against its target with *profile*, and write JSON lines to *out*.
 
     The plan is validated first, so a refused write or a bad mix stops the run before
-    anything is sent. Principals are then signed in, at most :data:`LOGIN_CONCURRENCY` at
-    once, and the first failure stops the run before any load. Rows are written as each step
-    ends, so an interrupted run keeps the steps it finished. A ramp that stops on its stop
-    rule is a finished run: the summary says where and why.
+    anything is sent. Operation references are then resolved from the app's OpenAPI
+    document, which is the only request sent before sign-in. Principals are signed in, at
+    most :data:`LOGIN_CONCURRENCY` at once, and the first failure stops the run before any
+    load; ids are then sampled as each principal that uses them. Rows are written as each
+    step ends, so an interrupted run keeps the steps it finished. A ramp that stops on its
+    stop rule, or because a principal's samples all ran out, is a finished run: the summary
+    says where and why.
 
     :param plan: Target, principals and scenarios.
     :param profile: :class:`ClosedRamp` or :class:`OpenRamp`.
@@ -207,8 +220,10 @@ async def run(
         then reported but not judged (``loop_cpu_judged: false``).
     :returns: The meta record, the rows and the summary.
     :raises CoreException: ``configuration`` — the plan is refused (:func:`validate_plan`),
-        a credential is missing, a sign-in fails, a refresh fails after the token expired,
-        or a scenario passes :meth:`Call.request` a URL with a host.
+        an operation reference does not resolve (:func:`forze_load.catalog.resolve`), a
+        credential is missing, a sign-in fails, a sample fails or comes back empty, a
+        refresh fails after the token expired, or a scenario passes :meth:`Call.request` a
+        URL with a host.
     """
 
     validate_plan(plan)
@@ -243,17 +258,20 @@ async def run(
             event_hooks={"request": [target_guard(plan.base_url)]},
         ) as auth_client,
     ):
+        catalog = await resolve(plan, auth_client)
         state = _Run(
             plan=plan,
+            catalog=catalog,
             client=client,
             auth_client=auth_client,
             cpu_judged=transport is None,
         )
-        meta = _meta(plan, profile, model)
+        meta = _meta(plan, profile, model, catalog)
 
         with RunWriter(out) as writer:
             writer.write(meta)
             await state.sign_in()
+            await state.sample()
             probe = asyncio.create_task(state.probe.run())
 
             try:
@@ -267,7 +285,8 @@ async def run(
                 probe.cancel()
                 await asyncio.gather(probe, return_exceptions=True)
 
-            knee = find_knee(rows, model=model)
+            # A step a stop cut short measured a shorter window and a smaller mix: no knee.
+            knee = find_knee(rows[:-1] if state.halt is not None else rows, model=model)
             summary = {
                 "kind": "summary",
                 "steps": len(rows),
@@ -361,16 +380,24 @@ class _Session:
 @attrs.define
 class _Run:
     plan: LoadPlan
+    catalog: Catalog
     client: httpx.AsyncClient
     auth_client: httpx.AsyncClient
     cpu_judged: bool
     probe: _Probe = attrs.field(factory=_Probe)
     current: StepRecorder | None = None
     failure: BaseException | None = None
-    failed: asyncio.Event = attrs.field(factory=asyncio.Event)
+    halt: dict[str, Any] | None = None
+    """Why the run stops early without failing: a principal with nothing left to call."""
+
+    interrupted: asyncio.Event = attrs.field(factory=asyncio.Event)
+    exhausted: list[dict[str, str]] = attrs.field(factory=lambda: list[dict[str, str]]())
+    """Scenarios retired since the last row because 404s emptied their sample."""
+
     sessions: dict[str, _Session] = attrs.field(init=False)
     scenarios: dict[str, Scenario] = attrs.field(init=False)
-    mixes: dict[str, tuple[list[str], list[int]]] = attrs.field(init=False)
+    weights: dict[str, dict[str, float]] = attrs.field(init=False)
+    mixes: dict[str, tuple[list[str], list[float]]] = attrs.field(init=False)
     rng: random.Random = attrs.field(init=False)
     arrival_rng: random.Random = attrs.field(init=False)
 
@@ -380,11 +407,10 @@ class _Run:
         self.rng = seeded_random(self.plan.seed, "picks")
         self.arrival_rng = seeded_random(self.plan.seed, "arrivals")
         self.sessions = {p.name: _Session(p, self.auth_client) for p in self.plan.principals}
-        self.scenarios = {s.name: s for s in self.plan.scenarios}
-        self.mixes = {
-            p.name: (list(p.mix), list(itertools.accumulate(p.mix.values())))
-            for p in self.plan.principals
-        }
+        self.scenarios = {s.name: s for s in self.catalog.scenarios}
+        self.weights = {p.name: self.catalog.expand(p.mix) for p in self.plan.principals}
+        self.mixes = {name: _cumulative(weights) for name, weights in self.weights.items()}
+        self.catalog.pool.on_exhausted = self.retire
 
     # ....................... #
 
@@ -395,10 +421,44 @@ class _Run:
             batch = sessions[start : start + LOGIN_CONCURRENCY]
             await asyncio.gather(*(session.headers() for session in batch))
 
-    def pick(self, principal: Principal) -> str:
+    async def sample(self) -> None:
+        """Read every sample as each principal whose mix uses it, before the first step."""
+
+        for principal in self.plan.principals:
+            needed = {
+                sample
+                for name in self.weights[principal.name]
+                for sample in self.catalog.samples_of.get(name, ())
+            }
+
+            if not needed:
+                continue
+
+            headers = await self.sessions[principal.name].headers()
+
+            for sample in sorted(needed, key=_sample_order):
+                await self.catalog.collect(self.client, sample, principal.name, headers)
+
+    def pick(self, principal: Principal) -> str | None:
+        """A scenario from *principal*'s live mix, or ``None`` once nothing is left in it."""
+
         names, cumulative = self.mixes[principal.name]
 
-        return self.rng.choices(names, cum_weights=cumulative)[0]
+        return self.rng.choices(names, cum_weights=cumulative)[0] if names else None
+
+    def retire(self, principal: str, sample: Sample) -> None:
+        """404s emptied *principal*'s values for *sample*: drop the scenarios that use it."""
+
+        weights = self.weights[principal]
+
+        for name in [n for n in weights if sample in self.catalog.samples_of.get(n, ())]:
+            del weights[name]
+            self.exhausted.append({"principal": principal, "scenario": name})
+
+        self.mixes[principal] = _cumulative(weights)
+
+        if not weights:
+            self.stop({"reason": "sample_exhausted", "principal": principal})
 
     def measuring(self) -> StepRecorder | None:
         """The step a call sent now counts in, or ``None`` outside a measured window."""
@@ -410,7 +470,14 @@ class _Run:
     def fail(self, error: BaseException) -> None:
         if self.failure is None:
             self.failure = error
-            self.failed.set()
+            self.interrupted.set()
+
+    def stop(self, reason: dict[str, Any]) -> None:
+        """End the current step now and the run after it; the summary records *reason*."""
+
+        if self.halt is None:
+            self.halt = reason
+            self.interrupted.set()
 
     # ....................... #
 
@@ -424,6 +491,9 @@ class _Run:
         """
 
         name = self.pick(principal)
+
+        if name is None:  # its samples ran out: the run is stopping
+            return
 
         # Joined before the credential is awaited: a call still waiting on a refresh when its
         # step closes must hold the step's row open, not record into a row already written.
@@ -448,6 +518,9 @@ class _Run:
             except httpx.TransportError:  # timeouts included
                 outcome, latency = "transport", None
 
+            except SampleExhausted:  # its sample emptied while it waited: nothing was sent
+                return
+
             if step is not None:
                 step.record(name, outcome, latency)
 
@@ -465,7 +538,7 @@ class _Run:
             self.fail(error)
 
     async def worker(self, principal: Principal, think_s: float) -> None:
-        while self.failure is None:
+        while self.failure is None and self.halt is None:
             await self.guarded(principal, time.perf_counter(), self.measuring())
             # Always yield: a scenario that answers without suspending (a cached response, a
             # fake transport) would otherwise hold the loop and starve the step's timer.
@@ -501,8 +574,10 @@ class _Run:
             principal = next(assign)
 
             if len(inflight) >= cap:
-                if step is not None:
-                    step.record(self.pick(principal), "transport", None)
+                name = self.pick(principal)
+
+                if step is not None and name is not None:
+                    step.record(name, "transport", None)
 
                 continue
 
@@ -522,7 +597,7 @@ class _Run:
 
         Calls sent after the window closes count nowhere until the next step opens. The row
         waits (up to the request timeout) for the calls the step sent, and its rates use
-        the measured window's real length.
+        the measured window's real length. A :meth:`stop` ends the window early.
         """
 
         opened = time.perf_counter()
@@ -532,7 +607,7 @@ class _Run:
         self.probe.begin()
         await self._sleep_until(opened + profile.step_s)
         client = self.probe.report(step.scheduled, step.behind, cpu_judged=self.cpu_judged)
-        measured = time.perf_counter() - step.warm_until
+        measured = max(time.perf_counter() - step.warm_until, 0.0)
         self.current = None
         await step.drain(self.plan.timeout_s + _DRAIN_MARGIN_S)
 
@@ -541,8 +616,7 @@ class _Run:
 
         summary = step.summary(measured)
         scenarios = summary.pop("scenarios")
-
-        return {
+        row = {
             "kind": "step",
             **key,
             "latency": latency,
@@ -551,10 +625,15 @@ class _Run:
             "scenarios": scenarios,
         }
 
+        if self.exhausted:
+            row["sample_exhausted"], self.exhausted = self.exhausted, []
+
+        return row
+
     async def _sleep_until(self, deadline: float) -> None:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(
-                self.failed.wait(), timeout=max(deadline - time.perf_counter(), 0.0)
+                self.interrupted.wait(), timeout=max(deadline - time.perf_counter(), 0.0)
             )
 
         if self.failure is not None:
@@ -579,6 +658,10 @@ async def _ramp(
         row = await state.step(profile, key, latency)
         rows.append(row)
         writer.write(row)
+
+        if state.halt is not None:
+            return rows, {**_step_key(row), **state.halt}
+
         stopped = _stop_reason(row, profile.stop_error_rate)
 
         if stopped is not None:
@@ -663,8 +746,20 @@ def _assignments(principals: Sequence[Principal]) -> Iterator[Principal]:
         yield principals[chosen]
 
 
+def _cumulative(weights: Mapping[str, float]) -> tuple[list[str], list[float]]:
+    return list(weights), list(itertools.accumulate(weights.values()))
+
+
+def _sample_order(sample: Sample) -> tuple[str, str, int]:
+    return sample.operation, sample.field, sample.size
+
+
+def _step_key(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: row[k] for k in ("workers", "rate") if k in row}
+
+
 def _stop_reason(row: Mapping[str, Any], stop_error_rate: float) -> dict[str, Any] | None:
-    key = {k: row[k] for k in ("workers", "rate") if k in row}
+    key = _step_key(row)
 
     if row["misconfigured"]:
         return {**key, "reason": "misconfigured"}
@@ -675,18 +770,20 @@ def _stop_reason(row: Mapping[str, Any], stop_error_rate: float) -> dict[str, An
     return None
 
 
-def _meta(plan: LoadPlan, profile: Profile, model: str) -> dict[str, Any]:
+def _meta(plan: LoadPlan, profile: Profile, model: str, catalog: Catalog) -> dict[str, Any]:
     return {
         "kind": "meta",
         "schema": SCHEMA,
         "forze_load": __version__,
         "target": safe_target(plan.base_url),
+        "openapi_sha256": catalog.openapi_sha256,
         "model": model,
         "profile": attrs.asdict(profile),
         "plan": {
             "principals": {p.name: p.weight for p in plan.principals},
             "mixes": {p.name: dict(p.mix) for p in plan.principals},
-            "scenarios": {s.name: {"writes": s.writes} for s in plan.scenarios},
+            "scenarios": catalog.described,
+            "skipped": catalog.skipped,
             "allow_writes": plan.allow_writes,
             "timeout_s": plan.timeout_s,
             "seed": plan.seed,

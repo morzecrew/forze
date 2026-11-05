@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A minimal OpenTelemetry Collector recipe gives one Prometheus scrape across workers and hosts.** *The Grafana stack* page ships `assets/otel-collector/config.yaml`: every process pushes OTLP, each keeps its own `instance`, and with `honor_labels: true` on the scrape the shipped dashboards and alert rules apply.
 
-- **`forze_load` load-tests a running app (`load` extra).** It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that `forze load compare` diffs. Writes are refused unless allowed and the host is loopback or allowlisted.
+- **`forze_load` load-tests a running app (`load` extra).** It ramps it as several principals, names the knee, flags a saturated client and writes JSON lines for `forze load compare`. `Scenario.op`, `Scenario.reads` and `sample()` name operations and ids from OpenAPI. Writes need `allow_writes` and an allowlisted host.
 
 - **Generated routes declare in OpenAPI whether they read or write.** Every route the `attach_*_routes` helpers serve carries `x-forze-kind`, `query` or `command`, from the operation catalog: list routes are `POST`, so the verb never told.
 

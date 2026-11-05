@@ -172,6 +172,42 @@ async def test_the_guard_refuses_a_host_outside_the_allowlist(
     assert len(served.requests) == before  # refused before anything was sent
 
 
+async def test_the_read_sweep_resolves_against_the_app_s_own_openapi(served: _Served) -> None:
+    async with httpx.AsyncClient(base_url=served.base_url) as seeding:
+        for n in range(3):
+            created = await seeding.post(
+                "/products",
+                json={"name": f"seed-{n}", "price": 1},
+                headers={"X-API-Key": _RECIPE_KEY},
+            )
+            assert created.status_code == 201
+
+    result = await run(
+        _plan(served.base_url, Scenario.reads("products.")),
+        ClosedRamp(steps=[2], step_s=0.6, think_s=0.01),
+    )
+
+    row = result.rows[0]
+    assert {"products.get", "products.list"} <= set(result.meta["plan"]["scenarios"])
+    assert "products.create" not in result.meta["plan"]["scenarios"]  # a command, never generated
+    assert row["scenarios"]["products.get"]["ok"] > 0
+    assert row["outcomes"]["not_found"] == row["outcomes"]["client_error"] == 0
+    assert len(result.meta["openapi_sha256"]) == 64
+
+
+async def test_a_command_named_as_a_read_is_refused_by_its_kind(served: _Served) -> None:
+    before = len(served.requests)
+
+    with pytest.raises(CoreException) as error:
+        await run(
+            _plan(served.base_url, Scenario.op("products.create", body={"name": "x", "price": 1})),
+            ClosedRamp(steps=[1], step_s=0.5),
+        )
+
+    assert error.value.code == "load_op_mismatch"
+    assert served.requests[before:] == ["/openapi.json"]
+
+
 async def test_a_cpu_bound_client_is_flagged_and_never_named_the_knee(served: _Served) -> None:
     light = await run(
         _plan(served.base_url, Scenario("list", _list, writes=False)),
