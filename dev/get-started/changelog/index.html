@@ -10942,6 +10942,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that <code>forze load compare</code> diffs. Writes are refused unless allowed and the host is loopback or allowlisted.</p>
 </li>
+<li>
+<p><strong><code>instrument_connection_pools</code> exports Postgres connection pool gauges.</strong> Per client you name (<code>forze.client</code>), <code>forze.connection_pool.*</code> reports in use, idle, max and waiting from psycopg_pool's <code>get_stats()</code>. A routed client is refused; Redis, MongoDB and outbound HTTP follow.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

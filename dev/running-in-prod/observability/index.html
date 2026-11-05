@@ -2461,6 +2461,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#connection-pool-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection pool metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#document-l1-metrics" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6758,6 +6769,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#connection-pool-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection pool metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#document-l1-metrics" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7231,6 +7253,53 @@ creation rate while <code>size</code> sits at <code>capacity</code></strong> mea
 hot tenants' pools evicted by cold one-off traffic, each rebuild paying full
 connection establishment. The fix is usually a larger <code>max_cached_tenants</code>;
 the metric tells you when.</p>
+<h2 id="connection-pool-metrics">Connection pool metrics<a class="headerlink" href="#connection-pool-metrics" title="Permanent link">&para;</a></h2>
+<p>Pool state is the first thing to check when an API slows under load, and a
+connection that is never returned is the leak a soak test exists to catch.
+<code>instrument_connection_pools</code> exports the pool of every client you name:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_connection_pools</span>
+
+<span class="n">instrument_connection_pools</span><span class="p">({</span><span class="s2">"postgres"</span><span class="p">:</span> <span class="n">pg</span><span class="p">})</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it carries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.connection_pool.in_use</code> (gauge)</td>
+<td>connections checked out, or being opened or reopened by the pool</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.idle</code> (gauge)</td>
+<td>open connections not checked out</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.max</code> (gauge)</td>
+<td>the configured cap</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.waiting</code> (gauge)</td>
+<td>callers queued for a connection, where the driver exposes it</td>
+</tr>
+</tbody>
+</table>
+<p>One series per client, labelled <code>forze.client</code> with the name you chose. A
+client counts if it implements <code>SupportsConnectionPoolStats</code>
+(<code>forze.application.contracts.pools</code>) with an in-memory snapshot. The callback
+runs on every scrape, so it never does I/O. Today only <code>PostgresClient</code> does:
+it reads psycopg_pool's public <code>get_stats()</code>. Redis, MongoDB and outbound HTTP
+follow in later releases. A routed client is refused, because it keeps one
+pool per tenant and a sum would hide the saturated one. Its connections are
+not exported: the tenant pool gauges above report only its pool cache. Alert
+on <code>waiting</code> above zero across scrapes, or <code>in_use</code> pinned at <code>max</code>: callers
+are queueing and will start failing at the acquire timeout. A database that is
+down shows the same pattern, because the pool's reconnect attempts hold
+<code>in_use</code> at <code>max</code> while callers wait. Pair the alert with a connectivity
+signal, such as the health check.</p>
 <h2 id="document-l1-metrics">Document L1 metrics<a class="headerlink" href="#document-l1-metrics" title="Permanent link">&para;</a></h2>
 <p>The <a href="../../data-events/caching/#an-in-process-l1-for-hot-documents">in-process L1</a>
 exports its counters the same way:</p>

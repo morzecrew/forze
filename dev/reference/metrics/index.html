@@ -6477,6 +6477,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#connection-pools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection pools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#crypto-and-kms" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6708,6 +6719,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Tenant pools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-pools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection pools
       </span>
     </span>
   </a>
@@ -7111,6 +7133,62 @@ rejected while open, so its rate tracks shed load rather than flap count.</p>
 <p><strong>The alert that matters:</strong> a sustained <code>created</code> rate while <code>size == capacity</code> is LRU
 thrash — hot tenants' pools evicted by cold one-off traffic, each rebuild paying full
 connection establishment.</p>
+<h2 id="connection-pools">Connection pools<a class="headerlink" href="#connection-pools" title="Permanent link">&para;</a></h2>
+<p><code>instrument_connection_pools({"postgres": client, ...})</code> — one entry per client that
+implements <code>SupportsConnectionPoolStats</code>. Today that is <code>PostgresClient</code>; Redis, MongoDB
+and outbound HTTP follow.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Labels</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.connection_pool.in_use</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.client</code></td>
+<td>connections checked out, or being opened or reopened by the pool</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.idle</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.client</code></td>
+<td>open connections not checked out</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.max</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.client</code></td>
+<td>configured cap (<code>max_size</code>)</td>
+</tr>
+<tr>
+<td><code>forze.connection_pool.waiting</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.client</code></td>
+<td>callers queued for a connection; absent where the driver does not expose it</td>
+</tr>
+</tbody>
+</table>
+<p>A client with no open pool reports nothing. A routed client is refused: summing its
+per-tenant pools would hide the one that is saturated. Its connections are not exported;
+the tenant pool gauges above report only its pool cache (size and churn).</p>
+<p><strong>The alert that matters:</strong> <code>waiting</code> above zero across scrapes, or <code>in_use</code> pinned at
+<code>max</code>, means callers queue for connections and will start failing at the acquire timeout.
+<code>in_use</code> that climbs under steady load and never falls back is a leaked connection.
+A database that is down shows the same pattern: the pool's reconnect attempts hold <code>in_use</code>
+at <code>max</code> with <code>waiting</code> above zero while no caller saturates the pool, so pair the alert
+with a connectivity signal. On Postgres, a caller that timed out still counts in <code>waiting</code>
+until a connection is returned to the pool, so <code>waiting</code> stays up for as long as every
+connection is held or the database is unreachable.</p>
 <h2 id="crypto-and-kms">Crypto and <abbr title="Key Management Service">KMS</abbr><a class="headerlink" href="#crypto-and-kms" title="Permanent link">&para;</a></h2>
 <p><code>instrument_crypto({"default": keyring, ...})</code>.</p>
 <table>
