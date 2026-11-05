@@ -111,6 +111,10 @@ class ClosedRamp(_Ramp):
         super().__attrs_post_init__()
         _positive_steps(self.steps, "steps")
 
+        # Worker counts: a fractional step would run a rounded-up count and report the fraction.
+        if not all(isinstance(n, int) and not isinstance(n, bool) for n in self.steps):
+            raise exc.configuration("steps must be whole worker counts")
+
         if not (math.isfinite(self.think_s) and self.think_s >= 0):
             raise exc.configuration("think_s must be a finite number of seconds, at least 0")
 

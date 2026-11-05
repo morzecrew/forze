@@ -313,6 +313,8 @@ class TestBeforeLoad:
             lambda: ClosedRamp(steps=[1], step_s=1, think_s=-1),
             lambda: ClosedRamp(steps=[1], step_s=1, stop_error_rate=float("nan")),
             lambda: ClosedRamp(steps=[1], step_s=1, stop_error_rate=1.5),
+            lambda: ClosedRamp(steps=[1.5], step_s=1),
+            lambda: ClosedRamp(steps=[True], step_s=1),
         ],
     )
     def test_bad_profiles_are_refused(self, make: Callable[[], object]) -> None:
