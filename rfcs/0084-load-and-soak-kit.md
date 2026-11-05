@@ -420,8 +420,10 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   both the stop rule's numerator and its denominator, never dropped silently. Each step of an
   `open_ramp` has its own cap, from that step's offered rate and the longest request timeout
   any scenario can have (below): a request can stay in flight that long, and a cap sized from a
-  shorter timeout, or from a lower step's rate, would refuse healthy sends. The connection limit
-  is sized for the largest step's cap. The cap bounds memory; it reserves none.
+  shorter timeout, or from a lower step's rate, would refuse healthy sends. Each step's cap is
+  enforced by the kit's own in-flight counter; the connection limit is only the transport's
+  upper bound, sized for the largest step's cap. A send the counter refuses counts as a call
+  and as `transport`. The cap bounds memory; it reserves none.
 - **Client:**
   - one `httpx.AsyncClient` for requests, with `Limits(max_connections=<concurrency or cap>)`;
     httpx's default of 100 connections would queue inside the client above 100 workers and be
