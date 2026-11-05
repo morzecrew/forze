@@ -5,7 +5,8 @@ Every worker installs its own telemetry, so each mints its own ``service.instanc
 unless ``FORZE_TEST_INSTANCE_ID`` forces one id on all of them: what gunicorn's
 ``--preload`` does to an app that calls ``bootstrap_telemetry`` at import. Each worker
 reports its pid as a gauge, so the test can tell which instance is which process.
-``FORZE_TEST_PLAIN`` serves the single-process route instead of the union.
+``FORZE_TEST_PLAIN`` serves the single-process route instead of the union, and
+``FORZE_TEST_INTERVAL`` and ``FORZE_TEST_TTL`` (seconds) come from the test.
 """
 
 from __future__ import annotations
@@ -26,8 +27,9 @@ from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_
 
 # ----------------------- #
 
-INTERVAL = timedelta(milliseconds=200)
-TTL = timedelta(milliseconds=600)
+# Set by the test, which judges ages against the same ttl.
+INTERVAL = timedelta(seconds=float(os.environ["FORZE_TEST_INTERVAL"]))
+TTL = timedelta(seconds=float(os.environ["FORZE_TEST_TTL"]))
 
 
 def _pid(_options: CallbackOptions) -> Iterable[Observation]:
@@ -68,6 +70,10 @@ def create_app() -> FastAPI:
     async def hit() -> dict[str, int]:  # pyright: ignore[reportUnusedFunction]
         hits.add(1)
 
+        return {"pid": os.getpid()}
+
+    @router.get("/pid")
+    async def pid() -> dict[str, int]:  # pyright: ignore[reportUnusedFunction]
         return {"pid": os.getpid()}
 
     app = FastAPI(lifespan=lifespan)
