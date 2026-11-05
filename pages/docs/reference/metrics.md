@@ -107,14 +107,17 @@ A client with no open pool reports nothing. A routed client is refused: summing 
 per-tenant pools would hide the one that is saturated. Its connections are not exported;
 the tenant pool gauges above report only its pool cache (size and churn).
 
-**The alert that matters:** `waiting` above zero across scrapes, or `in_use` pinned at
-`max`, means callers queue for connections and will start failing at the acquire timeout.
-`in_use` that climbs under steady load and never falls back is a leaked connection.
-A database that is down shows the same pattern: the pool's reconnect attempts hold `in_use`
-at `max` with `waiting` above zero while no caller saturates the pool, so pair the alert
-with a connectivity signal. On Postgres, a caller that timed out still counts in `waiting`
-until a connection is returned to the pool, so `waiting` stays up for as long as every
-connection is held or the database is unreachable.
+**The alert that matters:** `in_use` pinned at `max` means the pool is exhausted. What
+callers do next depends on the pool. psycopg_pool, pymongo, and redis-py's
+`BlockingConnectionPool` (used when `RedisConfig.pool_timeout` is set) queue them until
+they time out. A plain redis-py `ConnectionPool` refuses the next checkout at once. Only
+Postgres exports `waiting`, so there `waiting` above zero across scrapes shows the queue
+itself. `in_use` that climbs under steady load and never falls back is a leaked
+connection. On Postgres, a database that is down shows the same pattern: the pool's
+reconnect attempts hold `in_use` at `max` with `waiting` above zero while no caller
+saturates the pool, so pair the alert with a connectivity signal. A Postgres caller that
+timed out still counts in `waiting` until a connection is returned to the pool, so
+`waiting` stays up for as long as every connection is held or the database is unreachable.
 
 ## Outbound HTTP
 

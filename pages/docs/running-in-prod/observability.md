@@ -260,11 +260,14 @@ comes from. A `MongoClient` reports its busiest server's pool, so on a replica
 set `max` is the per-server cap. A routed client is refused, because it keeps one
 pool per tenant and a sum would hide the saturated one. Its connections are
 not exported: the tenant pool gauges above report only its pool cache. Alert
-on `waiting` above zero across scrapes, or `in_use` pinned at `max`: callers
-are queueing and will start failing at the acquire timeout. A database that is
-down shows the same pattern, because the pool's reconnect attempts hold
-`in_use` at `max` while callers wait. Pair the alert with a connectivity
-signal, such as the health check.
+on `in_use` pinned at `max`: the pool is exhausted. What callers do next
+depends on the pool. Postgres, MongoDB, and a Redis client with
+`pool_timeout` set queue them until they time out; a Redis client without it
+refuses the next checkout at once. Only Postgres exports `waiting`, so there
+`waiting` above zero across scrapes shows the queue itself. On Postgres, a
+database that is down shows the same pattern, because the pool's reconnect
+attempts hold `in_use` at `max` while callers wait. Pair the alert with a
+connectivity signal, such as the health check.
 
 httpx exposes no pool numbers, so outbound HTTP gets a count of requests
 instead: `instrument_http_clients` from `forze_http` exports

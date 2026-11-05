@@ -386,12 +386,14 @@ def instrument_connection_pools(
     does not implement the protocol, so its connections are not exported.
     :func:`instrument_tenant_pools` reports only its pool cache (size and churn).
 
-    The alert that matters: ``waiting`` above zero across scrapes, or ``in_use`` pinned at
-    ``max``, means callers queue for connections and will start failing at the acquire
-    timeout. ``in_use`` that climbs under steady load and never falls back is a connection
-    that is never returned. A database that is down looks the same: the pool's reconnect
-    attempts hold ``in_use`` at ``max`` while callers wait, so pair the alert with a
-    connectivity signal.
+    The alert that matters: ``in_use`` pinned at ``max`` means the pool is exhausted. A pool
+    that queues callers (psycopg_pool, pymongo, redis-py's ``BlockingConnectionPool``) lets
+    them wait until they time out, while a plain redis-py ``ConnectionPool`` refuses the
+    next checkout at once. Where ``waiting`` is exported, above zero across scrapes shows the
+    queue itself. ``in_use`` that climbs under steady load and never falls back is a
+    connection that is never returned. On Postgres, a database that is down looks the same:
+    the pool's reconnect attempts hold ``in_use`` at ``max`` while callers wait, so pair the
+    alert with a connectivity signal.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at assembly
     time, alongside the other ``instrument_*`` calls.
