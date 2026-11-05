@@ -346,6 +346,9 @@ def instrument_connection_pools(
       driver exposes it.
 
     A client with no open pool (before ``initialize``, after ``close``) reports nothing.
+    Each gauge takes its own snapshot, so one collection's ``in_use`` and ``idle`` can come
+    from moments apart while the pool changes.
+
     One series per client, never per tenant: a routed client keeps a pool per tenant and
     does not implement the protocol, so its connections are not exported.
     :func:`instrument_tenant_pools` reports only its pool cache (size and churn).
