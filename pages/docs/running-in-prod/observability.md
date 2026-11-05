@@ -240,7 +240,7 @@ connection that is never returned is the leak a soak test exists to catch.
 ```python
 from forze.application.execution import instrument_connection_pools
 
-instrument_connection_pools({"postgres": pg})
+instrument_connection_pools({"postgres": pg, "redis": redis, "mongo": mongo})
 ```
 
 | Metric | What it carries |
@@ -248,14 +248,16 @@ instrument_connection_pools({"postgres": pg})
 | `forze.connection_pool.in_use` (gauge) | connections checked out, or being opened or reopened by the pool |
 | `forze.connection_pool.idle` (gauge) | open connections not checked out |
 | `forze.connection_pool.max` (gauge) | the configured cap |
-| `forze.connection_pool.waiting` (gauge) | callers queued for a connection, where the driver exposes it |
+| `forze.connection_pool.waiting` (gauge) | callers queued for a connection, Postgres only |
 
 One series per client, labelled `forze.client` with the name you chose. A
 client counts if it implements `SupportsConnectionPoolStats`
 (`forze.application.contracts.pools`) with an in-memory snapshot. The callback
-runs on every scrape, so it never does I/O. Today only `PostgresClient` does:
-it reads psycopg_pool's public `get_stats()`. Redis, MongoDB and outbound HTTP
-follow in later releases. A routed client is refused, because it keeps one
+runs on every scrape, so it never does I/O. `PostgresClient`, `RedisClient`
+and `MongoClient` do, each from public driver numbers only; the
+[metric catalog](../reference/metrics.md#connection-pools) says where each one
+comes from. A `MongoClient` reports its busiest server's pool, so on a replica
+set `max` is the per-server cap. A routed client is refused, because it keeps one
 pool per tenant and a sum would hide the saturated one. Its connections are
 not exported: the tenant pool gauges above report only its pool cache. Alert
 on `waiting` above zero across scrapes, or `in_use` pinned at `max`: callers

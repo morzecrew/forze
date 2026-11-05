@@ -369,8 +369,8 @@ def instrument_connection_pools(
     """Export each client's connection pool as OpenTelemetry observable gauges.
 
     *clients* maps a label you choose (e.g. ``"postgres"``) to a client implementing
-    :class:`~forze.application.contracts.pools.SupportsConnectionPoolStats`; today that is
-    ``PostgresClient``. Emits, per client (labelled ``forze.client``):
+    :class:`~forze.application.contracts.pools.SupportsConnectionPoolStats`: ``PostgresClient``,
+    ``RedisClient`` or ``MongoClient``. Emits, per client (labelled ``forze.client``):
 
     - ``forze.connection_pool.in_use``: connections checked out, or being opened;
     - ``forze.connection_pool.idle``: open connections not checked out;

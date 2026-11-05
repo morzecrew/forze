@@ -74,15 +74,31 @@ connection establishment.
 ## Connection pools
 
 `instrument_connection_pools({"postgres": client, ...})` — one entry per client that
-implements `SupportsConnectionPoolStats`. Today that is `PostgresClient`; Redis, MongoDB
-and outbound HTTP follow.
+implements `SupportsConnectionPoolStats`: `PostgresClient`, `RedisClient` and
+`MongoClient`.
 
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
 | `forze.connection_pool.in_use` | observable gauge | 1 | `forze.client` | connections checked out, or being opened or reopened by the pool |
 | `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | open connections not checked out |
 | `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`) |
-| `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; absent where the driver does not expose it |
+| `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; Postgres only, absent for Redis and MongoDB |
+
+Where each number comes from:
+
+- **Postgres:** psycopg_pool's public `get_stats()`.
+- **Redis:** redis-py's public `get_connection_count()`, split by its
+  `db.client.connection.state` label. redis-py keeps a connection it disconnected among
+  the idle ones, so `idle` can include closed connections. A pubsub subscription holds a
+  connection in use while it runs.
+- **MongoDB:** pymongo's public `ConnectionPoolListener` events, which the client
+  registers when it is built. pymongo keeps one pool per server, and the gauges report
+  the pool with the most connections in use, so `max` is the per-server
+  `max_pool_size`. A sum would hide a saturated primary behind idle secondaries.
+
+`waiting` is absent where it cannot be counted honestly. redis-py exposes no count of
+callers queued on a `BlockingConnectionPool`. pymongo publishes no event when a queued
+caller is cancelled, so a count would only climb.
 
 A client with no open pool reports nothing. A routed client is refused: summing its
 per-tenant pools would hide the one that is saturated. Its connections are not exported;
