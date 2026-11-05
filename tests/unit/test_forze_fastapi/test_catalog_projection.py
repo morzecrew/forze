@@ -28,6 +28,7 @@ from forze.application.hooks.idempotency import IdempotencyWrap
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_fastapi.middlewares import IDEMPOTENCY_KEY_HEADER
 from forze_fastapi.routes import attach_document_routes
+from forze_fastapi.routes._attach import FORZE_KIND_EXTENSION
 from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentKernelOp,
@@ -197,7 +198,13 @@ class TestEndToEndProjection:
         assert _without_create(flagged) == _without_create(plain)
 
     def test_plain_registry_has_no_catalog_derived_additions_anywhere(self) -> None:
-        raw = json.dumps(_openapi(with_hooks=False))
+        # Every governed route carries its kind; nothing else is derived without hooks.
+        doc = _openapi(with_hooks=False)
+
+        for operation in _operations(doc).values():
+            del operation[FORZE_KIND_EXTENSION]
+
+        raw = json.dumps(doc)
 
         assert IDEMPOTENCY_KEY_HEADER not in raw
         assert "x-required-permissions" not in raw
@@ -205,6 +212,22 @@ class TestEndToEndProjection:
         assert "x-requires-authn" not in raw
         assert "x-deadline-seconds" not in raw
         assert "Time budget" not in raw
+
+
+class TestKindProjection:
+    """Every governed route says whether it reads or writes, as ``x-forze-kind``: the verb
+    cannot tell, since list routes are ``POST`` (RFC 0084 §5.5)."""
+
+    def test_queries_and_commands_carry_their_kind(self) -> None:
+        ops = _operations(_openapi(with_hooks=True))
+        catalog = _registry(with_hooks=True).catalog()
+
+        assert ops[_GET_OP][FORZE_KIND_EXTENSION] == "query"
+        assert ops[_LIST_OP][FORZE_KIND_EXTENSION] == "query"
+        assert ops[_CREATE_OP][FORZE_KIND_EXTENSION] == "command"
+
+        for op, operation in ops.items():
+            assert operation[FORZE_KIND_EXTENSION] == catalog[op].kind.value
 
 
 class TestQueryDiscoveryProjection:
