@@ -23,9 +23,11 @@ from forze.application.contracts.resilience import (
     BulkheadStrategy,
     CircuitBreakerStrategy,
     GradientBulkheadStrategy,
+    HedgeStrategy,
     RateLimitStrategy,
     ResiliencePolicy,
     RetryStrategy,
+    TimeoutStrategy,
 )
 from forze.application.execution.observability import (
     BREAKER_STATE_GAUGE,
@@ -246,10 +248,6 @@ class TestResilienceMetrics:
         assert labels["forze.policy"] == "p"
 
     async def test_adaptive_hedge_delay_observed(self) -> None:
-        from forze.application.contracts.resilience import (
-            HedgeStrategy,
-            TimeoutStrategy,
-        )
         from forze.application.execution.observability import HEDGE_DELAY_GAUGE
 
         meter, reader = _meter()
@@ -363,3 +361,52 @@ class TestBulkheadOccupancyMetrics:
 
         release.set()
         assert await task == "ok"
+
+
+class TestScrapeDuringAdmission:
+    """The SDK's exporter thread runs gauge callbacks while the event loop admits calls.
+
+    Each admission marks its state most-recently-used, reordering the executor's LRU map, so
+    a callback resumed after one must not be iterating that map live.
+    """
+
+    async def _fn(self) -> str:
+        return "ok"
+
+    @pytest.mark.parametrize("accessor", ["bulkhead_queue_depths", "bulkhead_occupancy"])
+    async def test_bulkhead_scrape_survives_admission(self, accessor: str) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(BulkheadStrategy(max_concurrency=1),),
+        )
+        executor = _executor(policy)
+
+        for route in ("a", "b"):
+            assert await executor.run(self._fn, policy="p", route=route) == "ok"
+
+        scrape = getattr(executor, accessor)()
+        first = next(scrape)
+        assert await executor.run(self._fn, policy="p", route="a") == "ok"
+
+        assert [first[:2], *(row[:2] for row in scrape)] == [("p", "a"), ("p", "b")]
+
+    async def test_hedge_scrape_survives_admission(self) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(TimeoutStrategy(timeout=timedelta(seconds=10)),),
+            hedge=HedgeStrategy(
+                delay=timedelta(milliseconds=250),
+                max_attempts=2,
+                adaptive_delay_quantile=0.95,
+            ),
+        )
+        executor = _executor(policy)
+
+        for route in ("a", "b"):
+            assert await executor.run_hedged(self._fn, policy="p", route=route) == "ok"
+
+        scrape = executor.hedge_delays()
+        first = next(scrape)
+        assert await executor.run_hedged(self._fn, policy="p", route="a") == "ok"
+
+        assert [first[:2], *(row[:2] for row in scrape)] == [("p", "a"), ("p", "b")]
