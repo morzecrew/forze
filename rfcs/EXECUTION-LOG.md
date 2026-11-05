@@ -5906,7 +5906,7 @@ row 16 is amended by D-220 and D-226, row 30 by D-219.
 **Drift count: 4.** Fourteen entries, D-219 to D-232: four `drift` (D-221, D-222, D-223,
 D-226), eight `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's
 wording, §6 and §7, not from a decision row. A review of the first commit found one bug and
-fifteen risks; the PR's three review rounds found eighteen more, and two were refuted. The
+fifteen risks; the PR's four review rounds found twenty more, and two were refuted. The
 tables at the end record each and where it was fixed.
 
 **Where each item lives.** Credentials in
@@ -6181,3 +6181,13 @@ Greptile's review after the merge of `main`.
 | R-35 | Bug | The open-model search skipped the first rate, though a shortfall compares a step with its own offer | Fixed in `3db09c71e`: the search starts at the first rate; only the p99 test needs an earlier one |
 | R-36 | Bug | `compare --fail-on` against a run with no step (cut short before its first) matched nothing and exited 0 | Fixed in `080f2b557`: refused as `load_compare_empty`, exit 2; a report-only compare warns that nothing was compared |
 | R-37 | Test | Found while gating this round: the loop-CPU probe test busy-looped and failed when the scheduler took its time | Fixed in `de5fe7cb5`: driven by a fake clock |
+
+## Review findings — 2026-11-05 (PR #847, fourth round)
+
+CodeRabbit's re-review of `a844c8a1f`. Its body repeats the docstring-coverage check refuted at
+R-34.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-38 | Bug | `--fail-on ""` (an unset CI variable) compared with no gate and exited 0 | Fixed in `c660cf7b5`: only an absent option disables the gate; an empty one is refused, exit 2 |
+| R-39 | Bug | A gated latency with a value in the base run and null in the head (no call answered) was skipped | Fixed in `02f552cd8`: reported as a failure |
