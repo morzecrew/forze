@@ -336,7 +336,9 @@ class InProcessResilienceExecutor:
         Snapshot accessor for observable gauges: ``in_use`` is the number of
         calls holding a slot right now, ``limit`` the fixed cap or the current
         AIMD or Gradient2 limit. State appears lazily on first use of a
-        bulkhead-bearing policy.
+        bulkhead-bearing policy. :meth:`retune` drops it: calls admitted before the retune
+        finish on the retired state and are not counted here, so ``in_use`` reads low until
+        they drain.
         """
 
         for pool in (self._bulkheads, self._adaptive_bulkheads, self._gradient_bulkheads):
