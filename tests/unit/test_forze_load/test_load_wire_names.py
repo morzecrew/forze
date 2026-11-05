@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("fastapi")
-
 from forze.application.contracts.tenancy.tenant_hint import TENANT_ID_HEADER
 from forze.application.execution.operations import OperationKind
 from forze_fastapi.routes._attach import FORZE_KIND_EXTENSION

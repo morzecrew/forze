@@ -286,7 +286,7 @@ async def run(
                 await asyncio.gather(probe, return_exceptions=True)
 
             # A step a stop cut short measured a shorter window and a smaller mix: no knee.
-            knee = find_knee(rows[:-1] if state.halt is not None else rows, model=model)
+            knee = find_knee([row for row in rows if not row.get("cut_short")], model=model)
             summary = {
                 "kind": "summary",
                 "steps": len(rows),
@@ -597,7 +597,8 @@ class _Run:
 
         Calls sent after the window closes count nowhere until the next step opens. The row
         waits (up to the request timeout) for the calls the step sent, and its rates use
-        the measured window's real length. A :meth:`stop` ends the window early.
+        the measured window's real length. A :meth:`stop` ends the window early, and the
+        row then says ``cut_short``.
         """
 
         opened = time.perf_counter()
@@ -606,6 +607,7 @@ class _Run:
         await self._sleep_until(step.warm_until)
         self.probe.begin()
         await self._sleep_until(opened + profile.step_s)
+        cut_short = self.halt is not None  # stopped before the window's end
         client = self.probe.report(step.scheduled, step.behind, cpu_judged=self.cpu_judged)
         measured = max(time.perf_counter() - step.warm_until, 0.0)
         self.current = None
@@ -627,6 +629,9 @@ class _Run:
 
         if self.exhausted:
             row["sample_exhausted"], self.exhausted = self.exhausted, []
+
+        if cut_short:
+            row["cut_short"] = True
 
         return row
 

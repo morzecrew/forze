@@ -123,7 +123,7 @@ another.
   principal, and the step row lists them under `sample_exhausted`. The principal's workers
   carry on with the rest of its mix. When nothing is left, the run ends the step there and
   stops: the summary's `stopped` says `sample_exhausted` and names the principal, and the
-  step cut short is never named the knee.
+  step it cut short says `cut_short` and is never named the knee.
 - Sampled ids never reach the output.
 
 ### Sweep the read routes
@@ -201,6 +201,7 @@ window's real length. A step row carries:
 | `client` | `loop_cpu`, `loop_cpu_judged`, `process_cpu`, `loop_lag_p99_ms`, `behind_schedule`, `saturated` |
 | `scenarios` | Calls, 2xx and latency per scenario |
 | `sample_exhausted` | Scenarios retired during the step, as `principal` and `scenario`, because 404s emptied their sample; present only when one was |
+| `cut_short` | `true` when a stop ended the step before its window did; such a step is never the knee. Present only then |
 
 A transport failure (a refused connection, a timeout) is counted but has no latency.
 

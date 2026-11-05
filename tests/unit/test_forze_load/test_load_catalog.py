@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from collections import Counter
@@ -401,10 +402,79 @@ class TestSamples:
         app = _App({"ada": ids})
         out = tmp_path / "run.jsonl"
 
-        await _run(app, _plan(_GET), out=out)
+        result = await _run(app, _plan(_GET), out=out)
 
         text = out.read_text()
+        assert result.rows[0]["scenarios"]["products.get"]["ok"] > 0  # the ids were called
         assert not any(i in text for i in ids)
+
+    async def test_a_call_whose_sample_emptied_while_it_waited_sends_nothing(self) -> None:
+        # Worker A sends and its answer is slow; worker B picks the same scenario and waits on
+        # its credential. A's 404 empties the sample; B then finds nothing to call.
+        app = _App({"ada": ["p1"]})
+        app.gone = {"p1"}
+        handle = app.handler
+        credentials = 0
+
+        async def slow_answers(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/products/p1":
+                await asyncio.sleep(0.02)
+
+            return await handle(request)
+
+        async def every_other_waits(_client: httpx.AsyncClient) -> dict[str, str]:
+            nonlocal credentials
+            credentials += 1
+
+            if credentials % 2 == 0:  # sign-in 1, sample 2, worker A 3, worker B 4
+                await asyncio.sleep(0.1)
+
+            return {"X-Caller": "ada"}
+
+        plan = _plan(
+            _GET,
+            principals=[Principal(name="ada", mix={"products.get": 1}, auth=every_other_waits)],
+        )
+
+        result = await run(
+            plan,
+            ClosedRamp(steps=[2], step_s=1.0),
+            transport=httpx.MockTransport(slow_answers),
+        )
+
+        assert app.paths().count("/products/p1") == 1
+        assert result.rows[0]["calls"] == result.rows[0]["outcomes"]["not_found"] == 1
+        assert result.summary["stopped"]["reason"] == "sample_exhausted"
+
+    async def test_a_stop_mid_window_marks_the_step_cut_short(self) -> None:
+        app = _App({"ada": ["p1"]})
+        app.gone = {"p1"}
+
+        result = await _run(app, _plan(_GET))
+
+        assert result.rows[0]["cut_short"] is True
+        assert result.summary["note"] == "no step measured the server"
+
+    async def test_a_stop_after_the_window_keeps_the_whole_step(self) -> None:
+        # The 404 lands while the step drains, after its window closed: the step is whole.
+        app = _App({"ada": ["p1"]})
+        app.gone = {"p1"}
+        handle = app.handler
+
+        async def late(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/products/p1":
+                await asyncio.sleep(0.4)
+
+            return await handle(request)
+
+        result = await run(
+            _plan(_GET), ClosedRamp(steps=[1, 2], step_s=0.2), transport=httpx.MockTransport(late)
+        )
+
+        assert len(result.rows) == 1
+        assert "cut_short" not in result.rows[0]
+        assert result.summary["note"] == "one step, no comparison"
+        assert result.summary["stopped"]["reason"] == "sample_exhausted"
 
 
 class TestDocumentShapes:
