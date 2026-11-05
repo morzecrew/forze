@@ -29,7 +29,11 @@ def require_dst() -> None:
 
 
 def require_load() -> None:
-    """Exit with a clear message when the ``load`` extra (needed by ``forze load``) is missing."""
+    """Exit with a clear message when the ``load`` extra (needed by ``forze load``) is missing.
+
+    Exits 2, not 1: ``forze load`` exits 1 only when ``--fail-on`` is crossed, so a CI job
+    without the extra must not read as a performance regression.
+    """
 
     if find_spec("httpx") is None:
         typer.echo(
@@ -37,7 +41,7 @@ def require_load() -> None:
             "Install it with:  pip install 'forze[cli,load]'",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=2)
 
 
 # ....................... #
