@@ -2483,6 +2483,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#process-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-logging-in-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6791,6 +6802,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#process-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-logging-in-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7313,6 +7335,46 @@ counters. The hit rate validates that the L1 is earning its staleness budget,
 and <strong>sustained evictions at full capacity with a sagging hit rate</strong> is the
 scan-pollution signature — the signal to switch the eviction policy to the
 in-box W-TinyLFU store or raise <code>capacity</code>.</p>
+<h2 id="process-metrics">Process metrics<a class="headerlink" href="#process-metrics" title="Permanent link">&para;</a></h2>
+<p>A slow memory leak or CPU creep only shows in a soak if the server's own memory
+and CPU arrive in the same scrape as everything else. <code>instrument_process</code>
+exports them, standard library only:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_process</span>
+
+<span class="n">instrument_process</span><span class="p">()</span>  <span class="c1"># once per process — in every worker of a pre-fork server</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>What it carries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>process.cpu.time</code> (counter)</td>
+<td>CPU seconds labelled <code>cpu.mode</code> — <code>user</code> / <code>system</code>; <code>rate()</code> gives the cores used</td>
+</tr>
+<tr>
+<td><code>process.memory.usage</code> (up-down counter)</td>
+<td>resident memory in bytes, from <code>/proc/self/statm</code> — <strong>Linux only</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The names are OpenTelemetry's process semantic conventions. Prometheus sees
+them as <code>process_cpu_time_seconds_total</code> and <code>process_memory_usage_bytes</code>, not
+prometheus_client's <code>process_cpu_seconds_total</code> /
+<code>process_resident_memory_bytes</code>. A default <code>PrometheusMetricReader()</code> renders
+the default registry, whose own process collector reports that pair beside
+these. Outside Linux the standard library offers only the <em>peak</em> resident
+size, so the memory instrument is skipped rather than reporting a peak as
+current. Each collection costs one syscall and a small <code>/proc</code> read.</p>
+<p>Every worker reports its own series, but one Prometheus scrape of a pre-fork
+server reaches one worker. To see them all, labelled <code>service_instance_id</code>,
+give each worker <code>worker_metrics_reader()</code> and serve
+<a href="../grafana-stack/#several-workers-one-scrape"><code>MetricsSnapshots</code></a>.</p>
+<p>For more — open file descriptors, threads, disk and network I/O — use
+<code>opentelemetry-instrumentation-system-metrics</code>, which depends on <code>psutil</code>.</p>
 <h2 id="configure-logging-in-one-call">Configure logging in one call<a class="headerlink" href="#configure-logging-in-one-call" title="Permanent link">&para;</a></h2>
 <p><code>bootstrap_logging</code> wires the whole logging surface: the framework's own loggers
 (<code>forze.*</code>, <code>forze_kits.*</code>, and the <code>forze.integrations.*</code> adapters), any

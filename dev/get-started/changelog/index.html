@@ -10945,6 +10945,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>instrument_connection_pools</code> exports Postgres connection pool gauges.</strong> Per client you name (<code>forze.client</code>), <code>forze.connection_pool.*</code> reports in use, idle, max and waiting from psycopg_pool's <code>get_stats()</code>. A routed client is refused; Redis, MongoDB and outbound HTTP follow.</p>
 </li>
+<li>
+<p><strong><code>instrument_process</code> exports the process's CPU time and resident memory to OpenTelemetry.</strong> It registers <code>process.cpu.time</code> per <code>cpu.mode</code> and, on Linux only, <code>process.memory.usage</code> from <code>/proc/self/statm</code>, with no new dependency. One scrape sees every pre-fork worker's series only through <code>MetricsSnapshots</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

@@ -6510,6 +6510,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-execution" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6759,6 +6770,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Process
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-execution" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6986,7 +7008,7 @@ test, in both directions: a metric that exists but is not documented fails, and 
 documented metric that no longer exists.</p>
 <p>Conventions that hold throughout:</p>
 <ul>
-<li><strong>Unit <code>1</code></strong> means a plain count. <code>ms</code> is milliseconds, <code>s</code> seconds.</li>
+<li><strong>Unit <code>1</code></strong> means a plain count. <code>ms</code> is milliseconds, <code>s</code> seconds, <code>By</code> bytes.</li>
 <li><strong>Observable</strong> instruments are sampled by the SDK at collection time from a live object
   (pool, keyring, cache, mailbox). They are <em>cumulative per process</em>, so a restart resets
   them — <code>rate()</code> handles that correctly only if each process carries a distinct
@@ -7288,6 +7310,49 @@ read/write path is skipping <code>warm</code> / <code>ensure_unwrapped</code>.</
 </table>
 <p>Sustained evictions while <code>size == capacity</code> is the scan-pollution signature that
 justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a bigger capacity.</p>
+<h2 id="process">Process<a class="headerlink" href="#process" title="Permanent link">&para;</a></h2>
+<p><code>instrument_process()</code> — this process's own CPU and memory, from the standard library. The
+names are OpenTelemetry's
+<a href="https://opentelemetry.io/docs/specs/semconv/system/process-metrics/">process semantic conventions</a>,
+not <code>forze.*</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Labels</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>process.cpu.time</code></td>
+<td>observable counter</td>
+<td>s</td>
+<td><code>cpu.mode</code></td>
+<td><code>user</code> / <code>system</code>, from <code>os.times()</code>; <code>rate()</code> is the cores this process uses</td>
+</tr>
+<tr>
+<td><code>process.memory.usage</code></td>
+<td>observable up-down counter</td>
+<td>By</td>
+<td>—</td>
+<td>resident memory from <code>/proc/self/statm</code>. <strong>Linux only</strong>: absent elsewhere</td>
+</tr>
+</tbody>
+</table>
+<p>Outside Linux the standard library has only the <em>peak</em> resident size, and a peak exported
+as the current value would hide the leak it is meant to show, so the instrument is skipped.</p>
+<p>The OpenTelemetry Prometheus exporter renders these as <code>process_cpu_time_seconds_total</code> and
+<code>process_memory_usage_bytes</code>, not prometheus_client's <code>process_cpu_seconds_total</code> /
+<code>process_resident_memory_bytes</code>, so panels built on those need new queries. A default
+<code>PrometheusMetricReader()</code> renders the default registry, whose own process collector reports
+that pair beside these; <code>worker_metrics_reader()</code> renders a registry without it.</p>
+<p>Each process reports its own series. A pre-fork server scraped through one port answers from
+whichever worker takes the scrape, unless every worker writes a snapshot through
+<code>worker_metrics_reader()</code> and <code>MetricsSnapshots</code>, which label each series
+<code>service_instance_id</code>. See <a href="../../running-in-prod/grafana-stack/#several-workers-one-scrape">Several workers, one scrape</a>.</p>
 <h2 id="durable-execution">Durable execution<a class="headerlink" href="#durable-execution" title="Permanent link">&para;</a></h2>
 <p><code>DurableTelemetry.create()</code>, wired into the durable runner.</p>
 <table>
