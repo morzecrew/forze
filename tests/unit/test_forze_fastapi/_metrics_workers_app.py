@@ -72,6 +72,10 @@ def create_app() -> FastAPI:
 
         return {"pid": os.getpid()}
 
+    @router.get("/pid")
+    async def pid() -> dict[str, int]:  # pyright: ignore[reportUnusedFunction]
+        return {"pid": os.getpid()}
+
     app = FastAPI(lifespan=lifespan)
     app.include_router(router)
 

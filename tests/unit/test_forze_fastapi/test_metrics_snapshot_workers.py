@@ -85,18 +85,31 @@ def _hits(response: httpx.Response) -> dict[str, float]:
     }
 
 
-def _ours(port: int) -> bool:
-    """Whether this app answers on *port*: its metrics route says 200 or 503, nothing else."""
+def _group(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
 
-    response = _scrape(port)
-
-    return response is not None and response.status_code in (200, 503)
+    except ProcessLookupError:
+        return None
 
 
 def _started(process: subprocess.Popen[bytes], port: int) -> str | bool:
-    """``exited`` once uvicorn has exited, as it does when it cannot bind its port."""
+    """``exited`` once uvicorn has exited, as it does when it cannot bind its port.
 
-    return "exited" if process.poll() is not None else _ours(port)
+    Otherwise, whether *port* answers from a worker in this server's process group, so another
+    server that took the port is never mistaken for this one.
+    """
+
+    if process.poll() is not None:
+        return "exited"
+
+    try:
+        pid = httpx.get(f"http://127.0.0.1:{port}/pid", timeout=10.0).json()["pid"]
+
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return False
+
+    return _group(pid) == process.pid
 
 
 @contextmanager
