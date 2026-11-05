@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0083**. Before creating an RFC, glance at the table below
+The next free number is **0085**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -102,6 +102,8 @@ only in the code, which is the failure this log exists to prevent.
 | [0080](0080-shipped-schema-migrations-for-forze-owned-tables.md) | Shipped schema migrations for forze-owned tables | 📝 Draft | Forze writing the DDL for its own tables: one declaration per store table, and a `forze schema` CLI that prints the create or the forward delta against a live database for the app's migration tool |
 | [0081](0081-authentication-eligibility-without-an-authorization-plane.md) | Authentication eligibility without an authorization plane | 📝 Draft | Authn without the authz plane, still fail-closed: pluggable eligibility gates (the local preset reads its config), a boot refusal for a gate that cannot be built, and `allow_all` as a posture finding |
 | [0082](0082-tenant-scoped-roles-in-the-authorization-plane.md) | Tenant-scoped roles in the authorization plane | 📝 Draft | Tenant-held role bindings: a principal-role binding may name the one tenant it holds in, under one shared role catalog; bindings naming none stay global |
+| [0083](0083-one-scrape-for-every-worker-of-a-pre-fork-server.md) | One scrape for every worker of a pre-fork server | 📝 Draft | One Prometheus scrape for every worker of a pre-fork server without a collector: each worker writes a labelled snapshot to a shared directory and the metrics route serves their union |
+| [0084](0084-load-and-soak-kit.md) | Load and soak kit for apps built on forze | 📝 Draft | A load and soak kit that drives a live forze app over HTTP: several principals, a step ramp and its knee, realtime storms, gauge drift, and JSONL compared against a baseline |
 
 ## Status legend
 

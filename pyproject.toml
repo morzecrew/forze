@@ -77,8 +77,9 @@ dev = [
     # it install watchfiles themselves (deliberately not a package extra).
     "watchfiles>=1.0.0",
     # Exercises the pull metrics route. Deliberately not in the `observability` extra: the
-    # blessed path is OTLP push, and this drags prometheus_client along behind it.
-    "opentelemetry-exporter-prometheus>=0.60b0",
+    # blessed path is OTLP push, and this drags prometheus_client along behind it. 0.66b0 is
+    # the first release that copies resource attributes onto series (worker_metrics_reader).
+    "opentelemetry-exporter-prometheus>=0.66b0",
 ]
 docs = [
     "zensical>=0.0.43",

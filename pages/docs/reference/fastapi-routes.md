@@ -788,12 +788,23 @@ writes a route without a response model. Either way an infinite or NaN float is 
 - `attach_liveness_route(router, *, path="/livez")` — 200 unconditionally; reaching
   the handler is the check. Deliberately blind to drain, so a draining pod reads as
   alive-but-not-ready instead of dead. Excluded from the schema.
-- `attach_metrics_route(router, reader, *, path="/metrics")` — a Prometheus pull
-  endpoint over an already-registered `PrometheusMetricReader` (needs
+- `attach_metrics_route(router, reader, *, path="/metrics", snapshots=None)` — a
+  Prometheus pull endpoint over an already-registered `PrometheusMetricReader` (needs
   `opentelemetry-exporter-prometheus`; any other reader is refused). Renders off
   the event loop, since collection runs every observable callback in the process.
-  **Single-process deployments only** — see [The Grafana
-  stack](../running-in-prod/grafana-stack.md#pull-metrics-and-why-not).
+  Without `snapshots`, **single-process deployments only** — see [The Grafana
+  stack](../running-in-prod/grafana-stack.md#pull-metrics-and-why-not). With
+  `snapshots`, it serves every worker of a pre-fork group from their shared
+  directory, renders nothing itself, and answers `503` when nothing is fresh — see
+  [Several workers, one scrape](../running-in-prod/grafana-stack.md#several-workers-one-scrape).
+- `MetricsSnapshots(directory, *, interval=10s, ttl=3 × interval, max_snapshot_bytes=16 MiB)`
+  — the shared directory, checked once and then held open, and how fresh a snapshot must
+  be. `writer_step(reader)` is the lifecycle step each worker runs to write its own, from
+  the per-worker build that also calls `bootstrap_telemetry`; a `ttl` under two intervals,
+  or an unsafe directory at startup, is refused.
+- `worker_metrics_reader()` — a `PrometheusMetricReader` with its own registry and
+  `service.instance.id` on every series, the reader `MetricsSnapshots` needs (exporter
+  0.66b0 or newer).
 
 ## Document auth in OpenAPI
 
