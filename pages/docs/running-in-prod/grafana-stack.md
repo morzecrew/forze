@@ -269,8 +269,19 @@ As written, it is correct for a **single-process** deployment and wrong for any 
 Under a pre-fork server the scrape is answered by whichever worker accepted the connection,
 so consecutive scrapes sample different processes: cumulative counters interleave, `rate()`
 sees phantom resets, gauges flap between workers. Nothing inside one process can fix that —
-it is a property of one socket in front of N independent processes. The next section is the
-fix for workers that share a host.
+it is a property of one socket in front of N independent processes. Two setups give one
+scrape that covers every process, and both keep each process its own series:
+
+| | [Snapshots](#several-workers-one-scrape) | [A collector](#one-collector-one-scrape) |
+|---|---|---|
+| Reaches | the workers of one host | every process that can reach the collector, on any host |
+| Runs | inside your FastAPI app | as one more container |
+| Names and labels | the pull path's: `forze_operations_total`, `service_instance_id` | the push path's: `forze_operations`, `job`, `instance` |
+| Shipped dashboards and alerts | do not apply as they stand | apply |
+
+Pick snapshots for a pre-fork API on one host that should not grow a service. Pick the
+collector for replicas on several hosts, for processes that are not web servers, or to use
+the shipped dashboards without the rest of the Grafana stack.
 
 `prometheus_client` is deliberately not part of the `observability` extra; install
 `opentelemetry-exporter-prometheus` yourself if you want this route.
@@ -368,7 +379,8 @@ What to know before you rely on it:
   what keeps `rate()` honest, and it costs one fresh set of series per restart. Worker
   recycling, such as gunicorn's `--max-requests`, multiplies it. OTLP push pays the same.
 - **One host.** The directory joins the workers of one host. Several replicas are several
-  scrape targets, which Prometheus discovers; across hosts without that, push over OTLP.
+  scrape targets, which Prometheus discovers; across hosts without that, push to
+  [one collector](#one-collector-one-scrape).
 - **The response grows with the workers.** About 1 MB per worker for 200 operation label
   sets, measured. Raise `scrape_timeout`, or put `GZipMiddleware` in front of the route.
 - **The names differ from the push path's.** The pull path renders suffixed names
@@ -386,6 +398,72 @@ What to know before you rely on it:
   before the process exits. A callback that blocks on I/O therefore holds its worker until
   it returns or the supervisor kills it. A plain route's render behaves the same way. Give
   a callback that does I/O its own timeout.
+
+### One collector, one scrape
+
+Every process pushes OTLP to one OpenTelemetry Collector, and Prometheus scrapes the
+collector. That reaches processes on any host, and ones that are not web servers, such as
+an outbox relay. It is the push path above with only its metrics kept: one container, and
+no Alloy, Loki, Tempo or Grafana.
+
+Download [config.yaml](assets/otel-collector/config.yaml), the collector's whole pipeline,
+and add the collector next to your app:
+
+```yaml
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.130.0
+    volumes:
+      - ./config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP http/protobuf, for processes on other hosts
+      - "8889:8889"   # the one endpoint Prometheus scrapes
+```
+
+Point every process at it, with traces off, since the recipe carries metrics only:
+
+```python
+bootstrap_telemetry(service_name="orders-api", traces=False)
+```
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+Under a pre-fork server, call `bootstrap_telemetry` in each worker, never at import before
+the fork, exactly as for snapshots. Workers that share one `service.instance.id` interleave
+into one series. Then scrape the collector, and keep the labels it sets:
+
+```yaml
+scrape_configs:
+  - job_name: otel-collector
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+```
+
+What to know before you rely on it:
+
+- **The names and labels are the push path's.** The config turns name suffixes off, as
+  `config.alloy` does, so the [metric names](#metric-names-in-prometheus) above hold. Each
+  series carries `job` from `service.name` and `instance` from `service.instance.id`.
+  `honor_labels: true` is what keeps them. Without it, Prometheus renames them
+  `exported_job` and `exported_instance`, and every `by (job)` in the shipped dashboards
+  and alert rules lumps all services under the collector's job. With it, those assets apply
+  as they stand.
+- **Each process is its own series.** Nothing is summed in the collector, and a restart
+  comes back under a new `instance`. Sum on the query side:
+  `sum without (instance) (rate(forze_operations[5m]))`.
+- **`up` describes the collector.** A process that stops pushing keeps its last values
+  until `metric_expiration` (5 minutes in the config) passes, then drops out.
+  `count by (job) (target_info)` counts the processes the collector serves; alert when it
+  falls below the count you run.
+- **Freshness is the export interval.** Each process pushes every
+  `metric_export_interval` (15 s by default), and Prometheus reads the latest push on its
+  next scrape.
+- **Traces need a pipeline of their own.** Without one, the collector answers `404` on
+  `/v1/traces`. To keep traces, add a traces pipeline to an exporter you run, or use the
+  full stack above.
 
 ## Probes
 

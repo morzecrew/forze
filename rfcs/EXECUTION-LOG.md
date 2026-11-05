@@ -6235,3 +6235,87 @@ row.
 | 0084 | 39 | Accepted | `ASSUMED` | A call counts in the step that sent it; rates use the measured window; percentiles cover answered calls | D-229 |
 | 0084 | 40 | Accepted | `ASSUMED` | The run's clients store no cookies and refuse any request off the plan's origin | D-231 |
 | 0084 | 41 | Accepted, **amends row 35** | `ASSUMED` | Both open-model knee tests are confirmed only when the next rate repeats them | D-232 |
+
+---
+
+# Unit 22 · RFC 0083 P2 — the minimal collector recipe
+
+Branch `docs/otlp-collector-recipe`, cut from `main` at `6409668d2`. RFC 0083 P2 per §12 and
+§7: the minimal collector recipe, `otelcol-contrib` with an `otlp` receiver and a `prometheus`
+exporter, as a config asset and a compose service, covered by the observability-assets
+integration test. No P3: the Redis/Valkey store stays demand-gated (row 4). Rows 1 to 22 hold
+as written. Row 4 assigns the recipe to P2, row 1 holds inside it (each process stays its own
+series, labelled `instance`), and row 3 holds (no change under `src/`, no dependency, no
+extra). The other rows govern the snapshot mode and do not apply.
+
+**Drift count: 0.** Three entries, D-250 to D-252: two `spec-gap`, one `discovery`.
+
+**Where each item lives.** The config is
+[`pages/docs/running-in-prod/assets/otel-collector/config.yaml`](../pages/docs/running-in-prod/assets/otel-collector/config.yaml),
+pinned in the docs to `otel/opentelemetry-collector-contrib:0.130.0`, the image
+`tests/integration/test_forze/test_telemetry_otlp.py` already pins. The compose service and
+the Prometheus scrape job are snippets in
+[`grafana-stack.md`](../pages/docs/running-in-prod/grafana-stack.md), section "One collector,
+one scrape", which a table in "Pull metrics, and why not" sets beside the snapshot mode, with
+when to pick which. The snapshot section's "One host" note and `observability.md` link to it.
+[`test_observability_assets.py`](../tests/integration/test_forze/test_observability_assets.py)
+covers the config in both tiers, as it covers `config.alloy`: Tier 1 runs the collector's
+`validate`, which rejects an unknown key, and Tier 2 runs the shipped file itself, not a copy,
+between two `bootstrap_telemetry` workers and a real Prometheus that scrapes it with the
+documented job. Three sabotages each failed it: an unknown exporter key (Tier 1),
+`add_metric_suffixes: true` (Tier 2), and `honor_labels: false` in the scrape job (Tier 2).
+`CHANGELOG.md` gets one `Added` entry, per §7.
+
+## D-250 — Freshness is the app's export interval, and a silent process lingers until `metric_expiration`
+
+- **Touches:** §5.1's table ("Freshness: Collector's export interval"; "Clock: Collector's").
+  No row.
+- **RFC said:** the recipe's freshness is the collector's export interval.
+- **Found:** the `prometheus` exporter is a pull endpoint. The collector exports nothing on an
+  interval; it serves the latest data point it holds when Prometheus scrapes. Freshness is each
+  process's push interval, `bootstrap_telemetry(metric_export_interval=...)` (15 s by
+  default), plus the scrape interval. A process that stops pushing keeps its last values
+  until the exporter's `metric_expiration` passes (5 minutes by default), and `up` describes
+  the collector, so no scrape status shows the gap.
+- **Class:** `spec-gap`. The exporter's documentation says so; the table did not look.
+- **Consequence:** the config sets `metric_expiration: 5m` explicitly, so the reader sees the
+  knob. The docs state freshness as the export interval, and give
+  `count by (job) (target_info)` as the alert for a missing process, the recipe's counterpart
+  of `count(forze_metrics_snapshot_age_seconds)`. Tier 2 asserts one `target_info` series per
+  worker.
+- **Proposed row (RFC 0083):** none.
+
+## D-251 — The recipe gives the push path's names and labels, with `honor_labels: true`
+
+- **Touches:** §7's P2 bullet and §3 ("the pull path's names differ from the Alloy path's").
+  No row covers which names the recipe gives.
+- **RFC said:** a minimal collector, OTLP in, Prometheus out. Nothing on names or labels.
+- **Found:** the exporter's default adds suffixes (`forze_operations_total`,
+  `forze_operation_duration_milliseconds_bucket`) and puts `job` and `instance` on every series,
+  from `service.name` and `service.instance.id`. A Prometheus scrape job without
+  `honor_labels: true` renames those two to `exported_job` and `exported_instance`. Every
+  `by (job)` in the shipped dashboards and alert rules then groups all services under the
+  collector's job. With suffixes off and `honor_labels: true`, the names and labels are
+  exactly the Alloy path's, so those assets apply as they stand.
+- **Class:** `spec-gap`.
+- **Consequence:** the config sets `add_metric_suffixes: false`, and the documented scrape job
+  sets `honor_labels: true`, each with its reason in a comment. The pinned 0.130.0 knows only
+  `add_metric_suffixes`, and rejects `translation_strategy` as an unknown key; 0.164.0 accepts
+  both. A later pin must keep the same output, which Tier 2 checks.
+- **Proposed row (RFC 0083):** `ASSUMED`. The collector recipe turns metric name suffixes off,
+  and its documented scrape job sets `honor_labels: true`, so its names and `job`/`instance`
+  labels are the Alloy path's, and the shipped dashboards and alert rules apply to it.
+
+## D-252 — The recipe carries metrics only, so the app turns traces off
+
+- **Touches:** §7's P2 bullet ("an `otlp` receiver and a `prometheus` exporter"). No row.
+- **RFC said:** OTLP in, Prometheus out.
+- **Found:** the OTLP receiver serves only the signals that have a pipeline. Measured on
+  0.130.0, `POST /v1/traces` answers `404` when the config has no traces pipeline, and
+  `bootstrap_telemetry` installs a tracer provider by default, so every trace export fails.
+- **Class:** `discovery`. It shows only once a real collector answers.
+- **Consequence:** the docs call `bootstrap_telemetry(..., traces=False)` and say to add a
+  traces pipeline, or use the full stack, to keep traces. The config's comment says the same.
+  No traces pipeline to a `nop` exporter: that would swallow spans the reader may think are
+  kept.
+- **Proposed row (RFC 0083):** none.

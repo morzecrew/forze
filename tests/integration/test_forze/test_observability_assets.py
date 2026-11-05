@@ -3,7 +3,8 @@
 Two things a unit test cannot do.
 
 **Tier 1 — do the files load?** `alerts.yml` and `prometheus.yml` are read by Prometheus,
-`config.alloy` by Alloy. A syntax error in any of them is invisible to Python and fatal at
+`config.alloy` by Alloy, the collector recipe's `config.yaml` by the OpenTelemetry
+Collector. A syntax error in any of them is invisible to Python and fatal at
 `docker compose up`, and the unit parity gate cannot see it: it checks that expressions
 name real *metrics*, not that they are valid PromQL.
 
@@ -15,8 +16,10 @@ setting produces it. If the assumption were wrong, every shipped asset would be
 consistently, silently wrong — and the parity gate would stay green, because it only ever
 compared the assets to themselves.
 
-So the last test here puts a real Alloy between `bootstrap_telemetry` and a real
-Prometheus and asks Prometheus what the series is called.
+So the Tier 2 tests put a real Alloy between `bootstrap_telemetry` and a real
+Prometheus and ask Prometheus what the series is called. The collector recipe makes the
+same promise with a different config, so the last test runs the shipped `config.yaml`
+itself between two workers and a Prometheus that scrapes it.
 
 The full five-container compose stack stays a manual gate. What it would
 add beyond this is mostly proof that Grafana's own provisioning works.
@@ -48,15 +51,16 @@ from forze.base.telemetry import bootstrap_telemetry
 
 PROMETHEUS_IMAGE = "prom/prometheus:v3.6.0"
 ALLOY_IMAGE = "grafana/alloy:v1.10.0"
+COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.130.0"
 
-_ASSETS = (
-    Path(__file__).resolve().parents[3]
-    / "pages"
-    / "docs"
-    / "running-in-prod"
-    / "assets"
-    / "grafana"
+_RUNNING_IN_PROD_ASSETS = (
+    Path(__file__).resolve().parents[3] / "pages" / "docs" / "running-in-prod" / "assets"
 )
+_ASSETS = _RUNNING_IN_PROD_ASSETS / "grafana"
+_COLLECTOR_CONFIG = _RUNNING_IN_PROD_ASSETS / "otel-collector" / "config.yaml"
+
+# Where the collector image reads its config by default, which is where the recipe mounts it.
+COLLECTOR_CONFIG_MOUNT = "/etc/otelcol-contrib/config.yaml"
 
 # Where the shipped compose file mounts each asset. Checking them at these paths is what
 # makes the check faithful: `prometheus.yml` refers to `alerts.yml` by container path, so
@@ -153,6 +157,20 @@ class TestAssetsLoadInTheirOwnTools:
             entrypoint=None,
             args=["fmt", "/w/config.alloy"],
             mounts={str(_ASSETS / "config.alloy"): "/w/config.alloy"},
+        )
+
+        assert status == 0, output
+
+    # ....................... #
+
+    def test_the_collector_config_validates(self, docker_available: None) -> None:
+        """`validate` builds every component, so an unknown key fails here, not at boot."""
+
+        status, output = _run_tool(
+            COLLECTOR_IMAGE,
+            entrypoint=None,
+            args=["validate", f"--config={COLLECTOR_CONFIG_MOUNT}"],
+            mounts={str(_COLLECTOR_CONFIG): COLLECTOR_CONFIG_MOUNT},
         )
 
         assert status == 0, output
@@ -304,21 +322,40 @@ def _series_names(prometheus_url: str, *, match: str, timeout: float = 60.0) -> 
     return seen
 
 
-def _query_one(prometheus_url: str, query: str, *, timeout: float = 60.0) -> dict[str, Any]:
-    """Labels of the first series matching *query*, waited for. Empty when none arrives."""
+def _query_series(
+    prometheus_url: str,
+    query: str,
+    *,
+    at_least: int = 1,
+    timeout: float = 60.0,
+) -> list[dict[str, Any]]:
+    """Labels of every series matching *query*, waited for until *at_least* arrive.
+
+    Whatever had arrived when the wait runs out, so the assertion can show it.
+    """
 
     deadline = time.monotonic() + timeout
+    series: list[dict[str, Any]] = []
 
     while time.monotonic() < deadline:
         response = httpx.get(f"{prometheus_url}/api/v1/query", params={"query": query})
         result = response.json().get("data", {}).get("result", ())
+        series = [dict(item["metric"]) for item in result]
 
-        if result:
-            return dict(result[0]["metric"])
+        if len(series) >= at_least:
+            return series
 
         time.sleep(1)
 
-    return {}
+    return series
+
+
+def _query_one(prometheus_url: str, query: str, *, timeout: float = 60.0) -> dict[str, Any]:
+    """Labels of the first series matching *query*, waited for. Empty when none arrives."""
+
+    series = _query_series(prometheus_url, query, timeout=timeout)
+
+    return series[0] if series else {}
 
 
 class TestTheNameMappingTheAssetsAssume:
@@ -406,3 +443,135 @@ class TestTheNameMappingTheAssetsAssume:
         # every per-process counter rate depend on them.
         assert labels["job"] == "forze-label-mapping"
         assert labels["instance"]
+
+
+# ----------------------- #
+
+
+PROMETHEUS_SCRAPES_COLLECTOR = """
+global:
+  scrape_interval: 1s
+
+scrape_configs:
+  # The scrape job the recipe documents. `honor_labels` is what keeps the collector's
+  # `job` and `instance`, and with them the shipped assets' `by (job)`.
+  - job_name: otel-collector
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-collector:8889"]
+"""
+
+
+@pytest.fixture(scope="module")
+def collector_to_prometheus(
+    docker_available: None,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[tuple[str, str]]:
+    """The shipped collector config, scraped by Prometheus the way the recipe says to."""
+
+    config = tmp_path_factory.mktemp("prometheus") / "prometheus.yml"
+    config.write_text(PROMETHEUS_SCRAPES_COLLECTOR, encoding="utf-8")
+
+    network = Network()
+    network.create()
+
+    collector = (
+        DockerContainer(image=COLLECTOR_IMAGE)
+        .with_exposed_ports(4318, 8889)
+        .with_network(network)
+        .with_network_aliases("otel-collector")
+        .with_volume_mapping(str(_COLLECTOR_CONFIG), COLLECTOR_CONFIG_MOUNT, "ro")
+    )
+
+    prometheus = (
+        DockerContainer(image=PROMETHEUS_IMAGE)
+        .with_exposed_ports(9090)
+        .with_network(network)
+        .with_volume_mapping(str(config), PROMETHEUS_CONFIG_MOUNT, "ro")
+        .with_command(
+            f"--config.file={PROMETHEUS_CONFIG_MOUNT} --storage.tsdb.retention.time=1h"
+        )
+    )
+
+    try:
+        with collector:
+            host = collector.get_container_host_ip()
+            # The exporter's endpoint answers 200 once the pipeline runs, even with nothing in it.
+            _wait_ready(f"http://{host}:{collector.get_exposed_port(8889)}/metrics", "Collector")
+
+            with prometheus:
+                prometheus_url = (
+                    f"http://{prometheus.get_container_host_ip()}:"
+                    f"{prometheus.get_exposed_port(9090)}"
+                )
+                _wait_ready(f"{prometheus_url}/-/ready", "Prometheus")
+
+                yield f"http://{host}:{collector.get_exposed_port(4318)}", prometheus_url
+
+    finally:
+        network.remove()
+
+
+# ....................... #
+
+
+class TestTheCollectorRecipe:
+    """Tier 2 for the collector recipe: the shipped config, not a copy of it."""
+
+    async def test_every_worker_arrives_under_the_names_the_dashboards_query(
+        self,
+        collector_to_prometheus: tuple[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        collector_url, prometheus_url = collector_to_prometheus
+
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector_url)
+
+        # Two workers of one service, as a pre-fork server runs them: each its own SDK and
+        # its own service.instance.id, pushing to the same collector.
+        for worker in ("worker-1", "worker-2"):
+            _reset_otel_globals()
+
+            try:
+                handle = bootstrap_telemetry(
+                    service_name="forze-collector-recipe",
+                    service_instance_id=worker,
+                    traces=False,
+                    metric_export_interval=600.0,
+                )
+
+                meter = metrics.get_meter("forze")
+                meter.create_counter("forze.operations", unit="1").add(
+                    1, {"forze.operation": "orders.place", "forze.outcome": "success"}
+                )
+                meter.create_histogram("forze.operation.duration", unit="ms").record(12.0)
+
+                await handle.shutdown(timeout=30.0)
+
+            finally:
+                _reset_otel_globals()
+
+        series = _query_series(
+            prometheus_url,
+            'forze_operations{job="forze-collector-recipe"}',
+            at_least=2,
+        )
+
+        # One series per worker, never one summed series: the per-instance promise.
+        assert sorted(labels["instance"] for labels in series) == ["worker-1", "worker-2"]
+        assert {labels["forze_outcome"] for labels in series} == {"success"}
+
+        # What the recipe's "processes served" count reads, since `up` describes the collector.
+        targets = _query_series(
+            prometheus_url, 'target_info{job="forze-collector-recipe"}', at_least=2
+        )
+
+        assert sorted(labels["instance"] for labels in targets) == ["worker-1", "worker-2"]
+
+        names =_series_names(prometheus_url, match='{job="forze-collector-recipe"}')
+
+        # The push path's spelling, so the shipped dashboards and alert rules apply.
+        assert "forze_operations" in names
+        assert "forze_operation_duration_bucket" in names
+        assert "forze_operations_total" not in names
+        assert not {name for name in names if "milliseconds" in name}, sorted(names)
