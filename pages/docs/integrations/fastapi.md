@@ -757,6 +757,25 @@ accept acks, but a durable signal that lands while a client is disconnected is l
 deployment with no durable signals at all can drop the mailbox: see [live-only SSE
 streams](#live-only-sse-streams).
 
+### Behind a reverse proxy
+
+An edge between the browser and the app can break a stream without failing it. One that
+buffers the response holds frames back until its buffer fills. One that compresses it keeps
+a compressor open for as long as each stream lives, which costs edge memory per connection
+and gains little on small frames.
+
+So every SSE response, the stream (catch-up or live) and a draining replica's `retry:`
+alike, carries two headers:
+
+- **`X-Accel-Buffering: no`** turns nginx's response buffering off for that response.
+- **`Cache-Control: no-store, no-transform`** forbids storing it and tells intermediaries
+  not to change it ([RFC 9111 §5.2.2.6](https://www.rfc-editor.org/rfc/rfc9111#section-5.2.2.6)).
+  Caddy's `encode`, whose default matcher covers `text/*`, skips such a response.
+
+nginx compresses only its `gzip_types`, which leave `text/event-stream` out by default: keep
+it out. Behind a proxy that honours neither header, exclude the stream route from buffering
+and compression in the proxy's own configuration.
+
 ## Realtime over raw WebSocket
 
 `attach_realtime_ws_route` is the duplex sibling for clients that cannot run

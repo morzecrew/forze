@@ -146,6 +146,8 @@ def _assert_told_to_retry(response: httpx.Response) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-store, no-transform"
+    assert response.headers["x-accel-buffering"] == "no"
     assert response.headers[ERROR_CODE_HEADER] == "realtime_draining"
     [field] = response.text.split("\n\n")[:-1]
     name, _, value = field.partition(": ")
