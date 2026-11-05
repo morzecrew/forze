@@ -309,9 +309,12 @@ size, so the memory instrument is skipped rather than reporting a peak as
 current. Each collection costs one syscall and a small `/proc` read.
 
 Every worker reports its own series, but one Prometheus scrape of a pre-fork
-server reaches one worker. To see them all, labelled `service_instance_id`,
-give each worker `worker_metrics_reader()` and serve
-[`MetricsSnapshots`](grafana-stack.md#several-workers-one-scrape).
+server reaches one worker. To see them all, give each worker
+`worker_metrics_reader()` and serve
+[`MetricsSnapshots`](grafana-stack.md#several-workers-one-scrape), which labels
+each worker `service_instance_id`, or push every worker to
+[one collector](grafana-stack.md#one-collector-one-scrape), which labels it
+`instance`.
 
 For more — open file descriptors, threads, disk and network I/O — use
 `opentelemetry-instrumentation-system-metrics`, which depends on `psutil`.

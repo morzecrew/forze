@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **One Prometheus scrape can cover every worker of a pre-fork server.** Pass `snapshots=MetricsSnapshots(...)` to `attach_metrics_route` and run its `writer_step` in each worker: the route serves every worker's series, labelled `service_instance_id`, with an age gauge. Needs `worker_metrics_reader()` (exporter 0.66b0+).
 
+- **A minimal OpenTelemetry Collector recipe gives one Prometheus scrape across workers and hosts.** *The Grafana stack* page ships `assets/otel-collector/config.yaml`: every process pushes OTLP, each keeps its own `instance`, and with `honor_labels: true` on the scrape the shipped dashboards and alert rules apply.
+
 - **`forze_load` load-tests a running app (`load` extra).** It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that `forze load compare` diffs. Writes are refused unless allowed and the host is loopback or allowlisted.
 
 - **`instrument_connection_pools` exports Postgres connection pool gauges.** Per client you name (`forze.client`), `forze.connection_pool.*` reports in use, idle, max and waiting from psycopg_pool's `get_stats()`. A routed client is refused; Redis, MongoDB and outbound HTTP follow.
