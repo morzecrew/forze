@@ -203,7 +203,7 @@ class TestExecutorIntegration:
 
         assert await executor.run(slow, policy="p") == "ok"
 
-        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        ((_, _, _, limit),) = executor.bulkhead_occupancy()
         assert limit == 4.0
 
     async def test_cancellation_releases_slot_without_feeding_digest(self) -> None:
@@ -246,7 +246,7 @@ class TestExecutorIntegration:
             await executor.run(cancelled, policy="p")
 
         assert fed == []  # cancellation never fed the digest
-        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        ((_, _, _, limit),) = executor.bulkhead_occupancy()
         assert limit == 2.0  # slot released, limit untouched
 
     async def test_fast_failure_leaves_limit_untouched(self) -> None:
@@ -259,7 +259,7 @@ class TestExecutorIntegration:
         with pytest.raises(CoreException):
             await executor.run(boom, policy="p")
 
-        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        ((_, _, _, limit),) = executor.bulkhead_occupancy()
         assert limit == 8.0
 
     def _boom_digest_executor(self, clock: _Clock) -> InProcessResilienceExecutor:
@@ -723,5 +723,5 @@ class TestQuantileSignal:
 
         assert await executor.run(slow, policy="p") == "ok"
 
-        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        ((_, _, _, limit),) = executor.bulkhead_occupancy()
         assert limit == 8.0  # per-sample mode would have halved it

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 import pytest
@@ -17,15 +18,21 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from forze.application.contracts.resilience import (
+    AdaptiveBulkheadStrategy,
     BackoffStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
+    GradientBulkheadStrategy,
+    HedgeStrategy,
     RateLimitStrategy,
     ResiliencePolicy,
     RetryStrategy,
+    TimeoutStrategy,
 )
 from forze.application.execution.observability import (
     BREAKER_STATE_GAUGE,
+    BULKHEAD_IN_USE_GAUGE,
+    BULKHEAD_LIMIT_GAUGE,
     BULKHEAD_QUEUE_GAUGE,
     RESILIENCE_EVENTS_COUNTER,
     instrument_resilience,
@@ -219,9 +226,6 @@ class TestResilienceMetrics:
 
 
     async def test_adaptive_bulkhead_limit_observed(self) -> None:
-        from forze.application.contracts.resilience import AdaptiveBulkheadStrategy
-        from forze.application.execution.observability import BULKHEAD_LIMIT_GAUGE
-
         meter, reader = _meter()
         policy = ResiliencePolicy(
             name="p",
@@ -244,10 +248,6 @@ class TestResilienceMetrics:
         assert labels["forze.policy"] == "p"
 
     async def test_adaptive_hedge_delay_observed(self) -> None:
-        from forze.application.contracts.resilience import (
-            HedgeStrategy,
-            TimeoutStrategy,
-        )
         from forze.application.execution.observability import HEDGE_DELAY_GAUGE
 
         meter, reader = _meter()
@@ -271,3 +271,142 @@ class TestResilienceMetrics:
         assert point.value == pytest.approx(0.25)  # unwarmed: fixed fallback
         assert labels["forze.policy"] == "p"
         assert labels["forze.route"] == "r"
+
+
+# ----------------------- #
+
+_BULKHEAD_STRATEGIES = [
+    pytest.param(BulkheadStrategy(max_concurrency=3), id="fixed"),
+    pytest.param(
+        AdaptiveBulkheadStrategy(
+            latency_threshold=timedelta(seconds=10),
+            max_concurrency=3,
+        ),
+        id="aimd",
+    ),
+    pytest.param(GradientBulkheadStrategy(max_concurrency=3), id="gradient2"),
+]
+
+
+class TestBulkheadOccupancyMetrics:
+    @pytest.mark.parametrize("strategy", _BULKHEAD_STRATEGIES)
+    async def test_in_use_and_limit_observed_while_slots_held(
+        self,
+        strategy: Any,
+    ) -> None:
+        meter, reader = _meter()
+        policy = ResiliencePolicy(name="p", strategies=(strategy,))
+        executor = instrument_resilience(_executor(policy), meter=meter)
+
+        started = [asyncio.Event(), asyncio.Event()]
+        release = asyncio.Event()
+
+        async def holder(i: int) -> str:
+            started[i].set()
+            await release.wait()
+            return "ok"
+
+        tasks = [
+            asyncio.create_task(executor.run(partial(holder, i), policy="p", route="r"))
+            for i in range(2)
+        ]
+
+        for event in started:
+            await asyncio.wait_for(event.wait(), 5)
+
+        assert list(executor.bulkhead_occupancy()) == [("p", "r", 2, 3.0)]
+
+        ((labels, point),) = _points(reader, BULKHEAD_IN_USE_GAUGE)
+        assert point.value == 2  # two calls hold a slot
+        assert labels == {"forze.policy": "p", "forze.route": "r"}
+
+        ((labels, point),) = _points(reader, BULKHEAD_LIMIT_GAUGE)
+        assert point.value == 3.0  # a fixed cap reports like a dynamic limit
+        assert labels == {"forze.policy": "p", "forze.route": "r"}
+
+        release.set()
+        assert await asyncio.gather(*tasks) == ["ok", "ok"]
+
+        ((_, point),) = _points(reader, BULKHEAD_IN_USE_GAUGE)
+        assert point.value == 0
+
+    async def test_uninstrumented_bulkhead_registers_nothing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from opentelemetry import metrics
+
+        meter, reader = _meter()
+        # Any registration on the global meter would land in this reader.
+        monkeypatch.setattr(metrics, "get_meter", lambda *_a, **_k: meter)
+
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(BulkheadStrategy(max_concurrency=1),),
+        )
+        executor = _executor(policy)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def holder() -> str:
+            started.set()
+            await release.wait()
+            return "ok"
+
+        task = asyncio.create_task(executor.run(holder, policy="p"))
+        await asyncio.wait_for(started.wait(), 5)
+
+        for name in (BULKHEAD_IN_USE_GAUGE, BULKHEAD_LIMIT_GAUGE, BULKHEAD_QUEUE_GAUGE):
+            assert _points(reader, name) == []
+
+        release.set()
+        assert await task == "ok"
+
+
+class TestScrapeDuringAdmission:
+    """The SDK's exporter thread runs gauge callbacks while the event loop admits calls.
+
+    Each admission marks its state most-recently-used, reordering the executor's LRU map, so
+    a callback resumed after one must not be iterating that map live.
+    """
+
+    async def _fn(self) -> str:
+        return "ok"
+
+    @pytest.mark.parametrize("accessor", ["bulkhead_queue_depths", "bulkhead_occupancy"])
+    async def test_bulkhead_scrape_survives_admission(self, accessor: str) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(BulkheadStrategy(max_concurrency=1),),
+        )
+        executor = _executor(policy)
+
+        for route in ("a", "b"):
+            assert await executor.run(self._fn, policy="p", route=route) == "ok"
+
+        scrape = getattr(executor, accessor)()
+        first = next(scrape)
+        assert await executor.run(self._fn, policy="p", route="a") == "ok"
+
+        assert [first[:2], *(row[:2] for row in scrape)] == [("p", "a"), ("p", "b")]
+
+    async def test_hedge_scrape_survives_admission(self) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(TimeoutStrategy(timeout=timedelta(seconds=10)),),
+            hedge=HedgeStrategy(
+                delay=timedelta(milliseconds=250),
+                max_attempts=2,
+                adaptive_delay_quantile=0.95,
+            ),
+        )
+        executor = _executor(policy)
+
+        for route in ("a", "b"):
+            assert await executor.run_hedged(self._fn, policy="p", route=route) == "ok"
+
+        scrape = executor.hedge_delays()
+        first = next(scrape)
+        assert await executor.run_hedged(self._fn, policy="p", route="a") == "ok"
+
+        assert [first[:2], *(row[:2] for row in scrape)] == [("p", "a"), ("p", "b")]

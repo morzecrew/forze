@@ -177,6 +177,6 @@ class TestExecutorWiring:
 
         assert await executor.run(ok, policy="p") == "ok"
 
-        ((policy, _, limit),) = executor.adaptive_bulkhead_limits()
+        ((policy, _, _, limit),) = executor.bulkhead_occupancy()
         assert policy == "p"
         assert limit == 8.0  # starts at max_concurrency

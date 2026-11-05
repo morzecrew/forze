@@ -17,15 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`instrument_process` exports the process's CPU time and resident memory to OpenTelemetry.** It registers `process.cpu.time` per `cpu.mode` and, on Linux only, `process.memory.usage` from `/proc/self/statm`, with no new dependency. One scrape sees every pre-fork worker's series only through `MetricsSnapshots`.
 
+- **`instrument_resilience` reports how many calls hold each bulkhead's slots.** New gauge `forze.resilience.bulkhead.in_use` covers fixed, AIMD and Gradient2 bulkheads. `forze.resilience.bulkhead.limit` now also carries a fixed bulkhead's cap (**behaviour change**), so `in_use / limit` is occupancy for every kind.
+
 ### Changed
 
 - ...
+
+### Removed
+
+- **`InProcessResilienceExecutor.adaptive_bulkhead_limits()` is removed** (**Breaking**). Use `bulkhead_occupancy()`: it yields `(policy, route, in_use, limit)` for fixed, AIMD and Gradient2 bulkheads.
 
 ### Fixed
 
 - **Edge proxies no longer compress realtime SSE streams.** Every `text/event-stream` response `attach_realtime_sse_route` serves, the draining `retry:` included, sends `Cache-Control: no-store, no-transform`, so an edge such as Caddy's `encode` keeps no compressor open per stream.
 
 - **`hold()` no longer warns `UnsupportedFieldAttributeWarning` for a `SerializedBy` key field declared with `frozen=True` or an alias.** The key is validated with the field's constraints and `Annotated` validators only, as before.
+
+- **Resilience gauges no longer fail a scrape that lands while a call is admitted.** The bulkhead queue-depth and hedge-delay callbacks of `instrument_resilience` could raise `RuntimeError: OrderedDict mutated during iteration` in the exporter thread and lose that sample.
 
 ## [0.22.0] - 2026-11-04
 

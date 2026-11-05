@@ -61,6 +61,7 @@ RESILIENCE_EVENTS_COUNTER = "forze.resilience.events"
 BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
 BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
 BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
+BULKHEAD_IN_USE_GAUGE = "forze.resilience.bulkhead.in_use"
 HEDGE_DELAY_GAUGE = "forze.resilience.hedge.delay"
 
 CRYPTO_DATA_KEYS_GENERATED_COUNTER = "forze.crypto.data_keys.generated"
@@ -168,9 +169,13 @@ def instrument_resilience(
     - ``forze.resilience.bulkhead.queue_depth`` (observable gauge): calls
       queued behind each bulkhead's semaphore, sampled at collection time.
       State appears lazily once a bulkhead-bearing policy is first used.
-    - ``forze.resilience.bulkhead.limit`` (observable gauge): the current AIMD
-      concurrency limit per adaptive bulkhead (``bulkhead_backoff`` events in
-      the counter mark each multiplicative decrease).
+    - ``forze.resilience.bulkhead.limit`` (observable gauge): the concurrency
+      limit per bulkhead — a fixed bulkhead's cap, or the current AIMD or
+      Gradient2 limit (``bulkhead_backoff`` events in the counter mark each
+      AIMD multiplicative decrease).
+    - ``forze.resilience.bulkhead.in_use`` (observable gauge): calls holding a
+      slot in each bulkhead right now, so ``in_use / limit`` is the occupancy
+      of every bulkhead kind.
     - ``forze.resilience.hedge.delay`` (observable gauge): the effective
       adaptive hedge delay in seconds — the windowed P² quantile estimate,
       clamped by the strategy's floor/cap. Appears once an adaptive-delay
@@ -226,7 +231,7 @@ def instrument_resilience(
     )
 
     def _observe_limits(_options: "CallbackOptions") -> Iterable[Observation]:
-        for policy, route, limit in executor.adaptive_bulkhead_limits():
+        for policy, route, _in_use, limit in executor.bulkhead_occupancy():
             labels = {"forze.policy": policy}
 
             if route is not None:
@@ -238,7 +243,23 @@ def instrument_resilience(
         BULKHEAD_LIMIT_GAUGE,
         callbacks=[_observe_limits],
         unit="1",
-        description="Current AIMD concurrency limit per adaptive bulkhead.",
+        description="Concurrency limit per bulkhead (fixed cap, or current AIMD/Gradient2 limit).",
+    )
+
+    def _observe_in_use(_options: "CallbackOptions") -> Iterable[Observation]:
+        for policy, route, in_use, _limit in executor.bulkhead_occupancy():
+            labels = {"forze.policy": policy}
+
+            if route is not None:
+                labels["forze.route"] = route
+
+            yield Observation(in_use, labels)
+
+    meter.create_observable_gauge(
+        BULKHEAD_IN_USE_GAUGE,
+        callbacks=[_observe_in_use],
+        unit="1",
+        description="Calls holding a slot in each bulkhead right now.",
     )
 
     def _observe_hedge_delays(_options: "CallbackOptions") -> Iterable[Observation]:

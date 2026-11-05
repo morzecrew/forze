@@ -319,45 +319,37 @@ class InProcessResilienceExecutor:
         first use of a bulkhead-bearing policy.
         """
 
-        for (policy, route), state in self._bulkheads.items():
-            yield (
-                str(policy),
-                str(route) if route is not None else None,
-                state.waiting,
-            )
-
-        for (policy, route), adaptive in self._adaptive_bulkheads.items():
-            yield (
-                str(policy),
-                str(route) if route is not None else None,
-                adaptive.waiting,
-            )
-
-        for (policy, route), gradient in self._gradient_bulkheads.items():
-            yield (
-                str(policy),
-                str(route) if route is not None else None,
-                gradient.waiting,
-            )
+        for pool in (self._bulkheads, self._adaptive_bulkheads, self._gradient_bulkheads):
+            # Copy first: the exporter thread reads while the loop admits and reorders the LRU.
+            for (policy, route), state in tuple(pool.items()):
+                yield (
+                    str(policy),
+                    str(route) if route is not None else None,
+                    state.waiting,
+                )
 
     # ....................... #
 
-    def adaptive_bulkhead_limits(self) -> Iterator[tuple[str, str | None, float]]:
-        """Yield ``(policy, route, limit)`` for every dynamic bulkhead with live state.
+    def bulkhead_occupancy(self) -> Iterator[tuple[str, str | None, int, float]]:
+        """Yield ``(policy, route, in_use, limit)`` for every bulkhead with live state.
 
-        Snapshot accessor for observable gauges: the current AIMD or Gradient2
-        concurrency limit. State appears lazily on first use of the policy.
+        Snapshot accessor for observable gauges: ``in_use`` is the number of
+        calls holding a slot right now, ``limit`` the fixed cap or the current
+        AIMD or Gradient2 limit. State appears lazily on first use of a
+        bulkhead-bearing policy. :meth:`retune` drops it: calls admitted before the retune
+        finish on the retired state and are not counted here, so ``in_use`` reads low until
+        they drain.
         """
 
-        for (policy, route), state in (
-            *self._adaptive_bulkheads.items(),
-            *self._gradient_bulkheads.items(),
-        ):
-            yield (
-                str(policy),
-                str(route) if route is not None else None,
-                state.limit,
-            )
+        for pool in (self._bulkheads, self._adaptive_bulkheads, self._gradient_bulkheads):
+            # Copy first: the exporter thread reads while the loop admits and reorders the LRU.
+            for (policy, route), state in tuple(pool.items()):
+                yield (
+                    str(policy),
+                    str(route) if route is not None else None,
+                    state.in_use,
+                    state.limit,
+                )
 
     # ....................... #
 
@@ -370,7 +362,8 @@ class InProcessResilienceExecutor:
         lazily on first ``run_hedged`` of an adaptive-delay policy.
         """
 
-        for (policy, route), state in self._hedge_delays.items():
+        # Copy first: the exporter thread reads while the loop hedges and reorders the LRU.
+        for (policy, route), state in tuple(self._hedge_delays.items()):
             yield (
                 str(policy),
                 str(route) if route is not None else None,

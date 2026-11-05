@@ -48,7 +48,8 @@ with tracing off still reports these.
 | `forze.resilience.events` | counter | 1 | `forze.event`, `forze.policy`, `forze.route` | retries, timeouts, rate-limit/bulkhead rejections, budget exhaustion, breaker transitions |
 | `forze.resilience.breaker.state` | gauge | 1 | `forze.policy`, `forze.route` | `0` closed, `1` half-open, `2` open. A breaker that never tripped reports nothing — closed by absence |
 | `forze.resilience.bulkhead.queue_depth` | observable gauge | 1 | `forze.policy`, `forze.route` | calls queued behind the semaphore |
-| `forze.resilience.bulkhead.limit` | observable gauge | 1 | `forze.policy`, `forze.route` | current AIMD concurrency limit |
+| `forze.resilience.bulkhead.in_use` | observable gauge | 1 | `forze.policy`, `forze.route` | calls holding a slot right now, for every bulkhead kind |
+| `forze.resilience.bulkhead.limit` | observable gauge | 1 | `forze.policy`, `forze.route` | concurrency limit: a fixed bulkhead's cap, or the current AIMD / Gradient2 limit. `in_use / limit` is occupancy |
 | `forze.resilience.hedge.delay` | observable gauge | s | `forze.policy`, `forze.route` | effective adaptive hedge delay (windowed P² estimate) |
 
 `breaker_open` in the events counter covers both the open *transition* and every admission

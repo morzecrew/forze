@@ -198,12 +198,17 @@ instrument_resilience(ctx.resilience())  # once, when the scope is up
 | `forze.resilience.events` (counter) | every event — retry attempts, timeouts, rate-limit and bulkhead rejections, breaker transitions — labelled by event, policy, and route |
 | `forze.resilience.breaker.state` (gauge) | breaker phase per policy/route: 0 closed, 1 half-open, 2 open |
 | `forze.resilience.bulkhead.queue_depth` (gauge) | calls queued behind each bulkhead, sampled at collection |
-| `forze.resilience.bulkhead.limit` (gauge) | the current adaptive-bulkhead concurrency limit |
+| `forze.resilience.bulkhead.in_use` (gauge) | calls holding a slot in each bulkhead right now, sampled at collection |
+| `forze.resilience.bulkhead.limit` (gauge) | each bulkhead's concurrency limit: the fixed cap, or the current AIMD or Gradient2 limit |
 | `forze.resilience.hedge.delay` (gauge) | the effective adaptive hedge delay (P² quantile estimate), in seconds |
 
 Two reading notes: `breaker_open` counts the open transition *and* every
 admission shed while open, so its rate tracks shed load; and a breaker that
 never tripped reports no state at all — closed by absence.
+
+For bulkheads, `in_use / limit` is occupancy for every bulkhead kind. It shows a
+bulkhead filling up before the queue grows, and a slot that is taken and never
+released shows as `in_use` that stays up when traffic stops.
 
 ## Tenant pool metrics
 
