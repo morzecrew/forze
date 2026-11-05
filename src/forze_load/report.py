@@ -28,6 +28,7 @@ SCHEMA = 1
 
 _LOWER_IS_WORSE = frozenset({"goodput"})
 _METRICS: tuple[str, ...] = ("goodput", "p50", "p95", "p99")
+_PERCENTILES: tuple[str, ...] = ("p50", "p95", "p99")
 _META_IGNORED = frozenset({"kind", "schema", "started_at"})
 _META_LABELS: dict[str, str] = {
     "forze_load": "forze_load version",
@@ -127,11 +128,13 @@ def read_run(path: str | Path) -> RunFile:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    # Python's JSON reader accepts NaN and Infinity; either would make a threshold never fail.
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _is_step(row: Mapping[str, Any]) -> bool:
-    """A step row ``compare`` can read: a numeric key and goodput, latencies numbers or null."""
+    """A step row ``compare`` can read: a finite key and goodput, and the compared percentiles
+    present, each a finite number or null (a percentile with no answered call)."""
 
     key = row.get("workers", row.get("rate"))
     ms = row.get("ms")
@@ -140,6 +143,7 @@ def _is_step(row: Mapping[str, Any]) -> bool:
         _is_number(key)
         and _is_number(row.get("goodput_rps"))
         and isinstance(ms, dict)
+        and all(name in ms for name in _PERCENTILES)
         and all(value is None or _is_number(value) for value in ms.values())
     )
 

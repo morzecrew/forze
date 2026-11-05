@@ -14,6 +14,8 @@ from forze_load.report import SCHEMA, RunFile
 
 pytestmark = pytest.mark.unit
 
+_MS = {"p50": 1.0, "p95": 2.0, "p99": None}
+
 # ----------------------- #
 
 
@@ -87,6 +89,27 @@ class TestReadRun:
             [
                 {"kind": "meta", "schema": SCHEMA},
                 {"kind": "step", "rate": "fast", "goodput_rps": 1, "ms": {}},
+            ],
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {"kind": "step", "workers": 1, "goodput_rps": float("nan"), "ms": _MS},
+            ],
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {
+                    "kind": "step",
+                    "workers": 1,
+                    "goodput_rps": 1,
+                    "ms": {**_MS, "p95": float("inf")},
+                },
+            ],
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {"kind": "step", "workers": 1, "goodput_rps": 1, "ms": {}},
+            ],
+            [
+                {"kind": "meta", "schema": SCHEMA},
+                {"kind": "step", "workers": 1, "goodput_rps": 1, "ms": {"p50": 1, "p95": 2}},
             ],
         ],
     )
