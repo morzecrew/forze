@@ -92,7 +92,9 @@ the tenant pool gauges above report only its pool cache (size and churn).
 `in_use` that climbs under steady load and never falls back is a leaked connection.
 A database that is down shows the same pattern: the pool's reconnect attempts hold `in_use`
 at `max` with `waiting` above zero while no caller saturates the pool, so pair the alert
-with a connectivity signal.
+with a connectivity signal. On Postgres, a caller that timed out still counts in `waiting`
+until a connection is returned to the pool, so `waiting` stays up for as long as every
+connection is held or the database is unreachable.
 
 ## Crypto and KMS
 

@@ -555,7 +555,13 @@ class PostgresClient(PostgresClientPort):
 
         Read from psycopg_pool's public ``get_stats()``, which copies in-memory counters and
         takes no lock. ``in_use`` is ``pool_size - pool_available``: connections checked out,
-        or being opened or reopened by the pool, as the protocol defines it.
+        or being opened or reopened by the pool, as the protocol defines it. The two are read
+        one after the other while the event loop may grow the pool, so ``in_use`` is clamped
+        at zero.
+
+        ``waiting`` is psycopg_pool's ``requests_waiting``. A caller that timed out stays in
+        it until a connection is returned to the pool, so it stays above zero while every
+        connection is held or the database is unreachable, after those callers have left.
 
         :returns: The snapshot, or ``None`` before :meth:`initialize` and after :meth:`close`.
         """
@@ -569,7 +575,7 @@ class PostgresClient(PostgresClientPort):
         idle = stats["pool_available"]
 
         return ConnectionPoolStats(
-            in_use=stats["pool_size"] - idle,
+            in_use=max(stats["pool_size"] - idle, 0),
             idle=idle,
             max_size=stats["pool_max"],
             waiting=stats["requests_waiting"],

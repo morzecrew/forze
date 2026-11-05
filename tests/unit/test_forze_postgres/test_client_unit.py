@@ -1021,13 +1021,28 @@ class TestConnectionPoolStats:
             waiting=2,
         )
 
+    def test_in_use_never_goes_below_zero(self) -> None:
+        """A sample that straddles the pool's growth can count more available than open."""
+
+        client, _conn, pool = _client_with_stub_pool()
+        pool.get_stats = lambda: {  # type: ignore[method-assign]
+            "pool_max": 10,
+            "pool_size": 3,
+            "pool_available": 4,
+            "requests_waiting": 0,
+        }
+
+        stats = client.connection_pool_stats()
+
+        assert stats is not None and stats.in_use == 0
+
     def test_reports_nothing_without_an_open_pool(self) -> None:
         assert PostgresClient().connection_pool_stats() is None
 
     def test_a_routed_client_does_not_report_one(self) -> None:
         """A routed client holds one pool per tenant; summing them would hide a saturated one.
 
-        Its per-tenant view is `instrument_tenant_pools`, so it stays out of the protocol and
+        No per-tenant connection gauge exists yet, so it stays out of the protocol and
         `instrument_connection_pools` refuses it at wiring instead of on every scrape.
         """
 

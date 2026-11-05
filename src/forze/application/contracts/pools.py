@@ -46,7 +46,9 @@ class SupportsConnectionPoolStats(Protocol):
 
         ``in_use`` counts connections checked out, or being opened or reopened by the pool:
         every connection the pool owns that is not idle. Every backend reports that meaning,
-        so ``in_use + idle`` is the pool's size.
+        so ``in_use + idle`` is the pool's size. A backend may read the fields without a lock,
+        so a sample taken while the pool grows or shrinks can be off by the connections that
+        changed; the next collection reads them again.
 
         Called on every metrics collection, so it reads in-memory state only: no I/O and no
         waiting on a lock.
