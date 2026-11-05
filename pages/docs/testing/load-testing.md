@@ -151,8 +151,9 @@ forze load compare base.jsonl head.jsonl --fail-on p95:15%,goodput:10%
 Steps are matched by worker count or rate, and goodput, p50, p95 and p99 are printed side by
 side. Without `--fail-on` the command only reports: load runs vary far more than
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
-exits 1 when a named metric is worse by more than its share, and 2 when a file cannot be
-read as a run or no step appears in both runs: a gate that compared nothing does not pass.
+exits 1 when a named metric is worse by more than its share, or has a value in the base run
+and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
+appears in both runs: a gate that compared nothing does not pass.
 When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the `forze_load` version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:

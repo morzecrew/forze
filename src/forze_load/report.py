@@ -232,7 +232,14 @@ def compare_runs(
             cells.append(f"{metric} {_fmt(old)} -> {_fmt(new)}{_fmt_change(change)}")
             limit = (fail_on or {}).get(metric)
 
-            if limit is not None and change is not None and change > limit:
+            if limit is None:
+                continue
+
+            # A latency the head run lost (no call answered) is not "unchanged": it fails.
+            if old is not None and new is None:
+                failures.append(f"{label}: {metric} has no value in head (base {_fmt(old)})")
+
+            elif change is not None and change > limit:
                 failures.append(f"{label}: {metric} worse by {change:.1%} (limit {limit:.0%})")
 
         lines.append(f"{label}: " + ", ".join(cells))

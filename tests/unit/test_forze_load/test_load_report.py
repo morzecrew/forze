@@ -249,6 +249,14 @@ class TestCompare:
         assert comparison.lines == []
         assert "no step matched between the runs: nothing was compared" in comparison.warnings
 
+    def test_a_gated_latency_that_vanished_in_head_fails(self) -> None:
+        head = _row(1, 0, 5)
+        head["ms"] = {"p50": None, "p95": None, "p99": None}  # no call got an answer
+
+        comparison = compare_runs(_run(_row(1, 10, 5)), _run(head), fail_on={"p95": 0.15})
+
+        assert comparison.failures == ["workers=1: p95 has no value in head (base 5)"]
+
     def test_missing_latency_compares_as_unknown(self) -> None:
         row = _row(1, 0, 5)
         row["ms"] = {"p50": None, "p95": None, "p99": None}
