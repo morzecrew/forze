@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Literal, final
 
 import attrs
 
+from forze.application._logger import logger as _logger
+
 if TYPE_CHECKING:
     from opentelemetry.metrics import CallbackOptions, Meter, Observation
 
@@ -154,7 +156,9 @@ def observe_channel[S](
     The first call on a meter registers each instrument once; every later call appends
     *source* to what its callbacks walk, so each channel exports its own series. A repeat
     call for the same source and channel adds nothing. Sources are held strongly, so a
-    cumulative count never drops while its meter lives.
+    cumulative count never drops while its meter lives. Give every call the same *meter*, or
+    ``None``: a proxy fetched before the SDK is set and the SDK's own ``forze`` meter keep
+    separate entries, and the SDK drops the later one's callbacks.
 
     :param source: The in-memory counts the instruments read.
     :param instruments: What to export from *source*.
@@ -221,13 +225,25 @@ def _channel_callback[S](
         observations: list[Observation] = []
 
         for known, labels in entries:
-            reading = instrument.read(known)
+            # One failing source must not silence the other channels sharing this callback.
+            try:
+                reading = instrument.read(known)
+
+            except Exception:
+                _logger.warning(
+                    "Realtime metric %s failed to read a source; other channels still export",
+                    instrument.name,
+                    exc_info=True,
+                    _dedup_key=f"realtime.metric_read_failed.{instrument.name}",
+                )
+                continue
 
             if isinstance(reading, int | float):
                 reading = [(reading, {})]
 
+            # The registered channel label wins over anything a reading supplies.
             observations.extend(
-                metrics.Observation(value, {**labels, **extra}) for value, extra in reading
+                metrics.Observation(value, {**extra, **labels}) for value, extra in reading
             )
 
         return observations

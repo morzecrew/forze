@@ -24,7 +24,9 @@ from forze.application.execution.realtime import (
 from forze.application.execution.realtime.observability import (
     GATEWAY_EMITTED_COUNTER,
     GATEWAY_POISONED_COUNTER,
+    ChannelInstrument,
     _forze_meter,  # pyright: ignore[reportPrivateUsage]
+    observe_channel,
 )
 
 # ----------------------- #
@@ -126,3 +128,28 @@ def test_nothing_is_registered_without_the_call(monkeypatch: pytest.MonkeyPatch)
 
     instrument_realtime_gateway(stats)
     assert asked == ["forze"]  # the global meter, only once asked to
+
+
+def test_a_failing_source_leaves_the_other_channels_exporting() -> None:
+    reader, meter = _reader()
+
+    def read(source: dict[str, int]) -> int:
+        return source["count"]
+
+    instrument = ChannelInstrument("test.reads", "counter", read, "Reads.")
+    observe_channel({"count": 3}, [instrument], channel="orders", meter=meter)
+    observe_channel({}, [instrument], channel="broken", meter=meter)
+
+    assert _series(reader)["test.reads"] == {"orders": 3}
+
+
+def test_a_reading_cannot_relabel_its_channel() -> None:
+    reader, meter = _reader()
+
+    def read(source: int) -> list[tuple[int, dict[str, str]]]:
+        return [(source, {"forze.realtime.channel": "alerts"})]
+
+    instrument = ChannelInstrument("test.relabel", "counter", read, "Relabel.")
+    observe_channel(5, [instrument], channel="orders", meter=meter)
+
+    assert _series(reader)["test.relabel"] == {"orders": 5}
