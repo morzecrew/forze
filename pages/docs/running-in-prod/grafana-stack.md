@@ -381,6 +381,11 @@ What to know before you rely on it:
   from every pull scrape, this mode's included. Keep the default millisecond ladder.
 - **No process collectors.** `process_*` and `python_gc_*` carry no instance label, so the
   reader's own registry leaves them out.
+- **A blocked observable callback delays exit.** The final render on shutdown gets one
+  `interval`, then is abandoned, but its thread runs on, and Python waits for that thread
+  before the process exits. A callback that blocks on I/O therefore holds its worker until
+  it returns or the supervisor kills it. A plain route's render behaves the same way. Give
+  a callback that does I/O its own timeout.
 
 ## Probes
 

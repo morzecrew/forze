@@ -1058,7 +1058,14 @@ class _Writer:
     # ....................... #
 
     async def final(self) -> None:
-        """Write once more at shutdown, within one *interval*, or leave the last snapshot."""
+        """Write once more at shutdown, within one *interval*, or leave the last snapshot.
+
+        The budget bounds this hook, not the render. A render that never returns, such as an
+        observable callback blocked on I/O, is abandoned here and keeps its executor thread,
+        and the interpreter joins that thread before the process exits. Such a callback
+        therefore delays the worker's exit until it returns or the process is killed, as it
+        would a plain route's render.
+        """
 
         budget = self.snapshots.interval.total_seconds()
         clock = asyncio.get_running_loop()
