@@ -7575,6 +7575,21 @@ the count goes green at the exact moment it stops knowing anything.</p>
 <p><strong>The two to alarm on:</strong> <code>poisoned</code> (every increment is a dropped durable delivery) and
 <code>emit_failed</code> climbing while <code>emitted</code> is flat (Socket.IO, or its Redis backplane, stopped
 taking frames).</p>
+<p><strong>Several channels in one process:</strong> call once per channel. The gateway, backplane,
+connections and hub calls share one set of instruments per meter, so each channel exports
+its own series. A repeat call for the same object and channel adds nothing. Give every call
+the same <code>meter</code>, or none: a default call made before the SDK is configured and a later call
+passing the SDK's <code>forze</code> meter register under different meters, and the later one's
+channels are dropped.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RealtimeGatewayStats</span><span class="p">,</span>
+    <span class="n">instrument_realtime_gateway</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">orders</span><span class="p">,</span> <span class="n">chat</span> <span class="o">=</span> <span class="n">RealtimeGatewayStats</span><span class="p">(),</span> <span class="n">RealtimeGatewayStats</span><span class="p">()</span>
+<span class="n">instrument_realtime_gateway</span><span class="p">(</span><span class="n">orders</span><span class="p">,</span> <span class="n">channel</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">)</span>
+<span class="n">instrument_realtime_gateway</span><span class="p">(</span><span class="n">chat</span><span class="p">,</span> <span class="n">channel</span><span class="o">=</span><span class="s2">"chat"</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="realtime-backplane">Realtime backplane<a class="headerlink" href="#realtime-backplane" title="Permanent link">&para;</a></h2>
 <p><code>instrument_realtime_backplane(health)</code>, fed by the heartbeat lifecycle step. Labelled
 <code>forze.realtime.channel</code>.</p>

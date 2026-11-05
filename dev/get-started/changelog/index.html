@@ -11002,6 +11002,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>hold()</code> no longer warns <code>UnsupportedFieldAttributeWarning</code> for a <code>SerializedBy</code> key field declared with <code>frozen=True</code> or an alias.</strong> The key is validated with the field's constraints and <code>Annotated</code> validators only, as before.</p>
 </li>
 <li>
+<p><strong>A second realtime channel on one meter now exports its own series</strong> from <code>instrument_realtime_gateway</code>, <code>instrument_realtime_backplane</code>, <code>instrument_realtime_connections</code> and <code>instrument_realtime_hub</code>, instead of being dropped silently. A repeat call for the same object and channel adds nothing.</p>
+</li>
+<li>
 <p><strong>Resilience gauges no longer fail a scrape that lands while a call is admitted.</strong> The bulkhead queue-depth and hedge-delay callbacks of <code>instrument_resilience</code> could raise <code>RuntimeError: OrderedDict mutated during iteration</code> in the exporter thread and lose that sample.</p>
 </li>
 </ul>
