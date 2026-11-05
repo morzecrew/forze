@@ -240,6 +240,17 @@ def compare_runs(
     missing = sorted(set(base_rows) ^ set(head_rows))
     warnings.extend(f"{_label(key)}: only in one run" for key in missing)
 
+    if not lines:
+        # A gate that compared nothing must not pass: a run cut short before its first step
+        # writes only its meta line.
+        if fail_on:
+            raise exc.configuration(
+                "--fail-on needs at least one step present in both runs, and none matched",
+                code="load_compare_empty",
+            )
+
+        warnings.append("no step matched between the runs: nothing was compared")
+
     return Comparison(lines=lines, warnings=warnings, failures=failures)
 
 

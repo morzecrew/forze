@@ -226,6 +226,21 @@ class TestCompare:
         assert result.exit_code == 2
         assert "refused" in result.output
 
+    def test_a_gated_compare_against_a_run_with_no_step_exits_2(self, tmp_path: Path) -> None:
+        base = _write_run(tmp_path / "base.jsonl", 100)
+        head = tmp_path / "head.jsonl"
+        head.write_text(json.dumps({"kind": "meta", "schema": SCHEMA, "target": "http://a"}) + "\n")
+
+        gated = runner.invoke(
+            app, ["load", "compare", str(base), str(head), "--fail-on", "goodput:10%"]
+        )
+        reported = runner.invoke(app, ["load", "compare", str(base), str(head)])
+
+        assert gated.exit_code == 2, gated.output
+        assert "refused" in gated.output
+        assert reported.exit_code == 0, reported.output
+        assert "nothing was compared" in reported.output
+
     def test_a_bad_threshold_exits_2(self, tmp_path: Path) -> None:
         base = _write_run(tmp_path / "base.jsonl", 100)
 

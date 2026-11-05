@@ -237,6 +237,18 @@ class TestCompare:
         assert len(comparison.lines) == 3
         assert comparison.failures == ["workers=2 (2nd): goodput worse by 52.4% (limit 10%)"]
 
+    def test_a_gated_compare_with_no_matched_step_is_refused(self) -> None:
+        with pytest.raises(CoreException) as error:
+            compare_runs(_run(_row(1, 10, 5)), _run(), fail_on={"goodput": 0.1})
+
+        assert error.value.code == "load_compare_empty"
+
+    def test_a_report_only_compare_with_no_matched_step_warns(self) -> None:
+        comparison = compare_runs(_run(_row(1, 10, 5)), _run())
+
+        assert comparison.lines == []
+        assert "no step matched between the runs: nothing was compared" in comparison.warnings
+
     def test_missing_latency_compares_as_unknown(self) -> None:
         row = _row(1, 0, 5)
         row["ms"] = {"p50": None, "p95": None, "p99": None}
