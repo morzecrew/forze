@@ -246,7 +246,7 @@ instrument_connection_pools({"postgres": pg, "redis": redis, "mongo": mongo})
 | Metric | What it carries |
 |--------|-----------------|
 | `forze.connection_pool.in_use` (gauge) | connections checked out, or being opened or reopened by the pool |
-| `forze.connection_pool.idle` (gauge) | open connections not checked out |
+| `forze.connection_pool.idle` (gauge) | connections in the pool not checked out |
 | `forze.connection_pool.max` (gauge) | the configured cap |
 | `forze.connection_pool.waiting` (gauge) | callers queued for a connection, Postgres only |
 
@@ -268,9 +268,10 @@ signal, such as the health check.
 
 httpx exposes no pool numbers, so outbound HTTP gets a count of requests
 instead: `instrument_http_clients` from `forze_http` exports
-`forze.http.client.in_flight` per `HttpClient`, the requests sent whose
-response is not closed yet. A count that never falls back is a streamed
-response nobody closes.
+`forze.http.client.in_flight` per `HttpClient`: requests sent and not
+finished, until `request` has read the response or until a `stream` or
+`send` block exits. A count that never falls back is a block that never
+exits, holding its connection.
 
 ```python
 from forze_http import instrument_http_clients

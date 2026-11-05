@@ -316,12 +316,14 @@ class HttpClient(HttpClientPort):
     # ....................... #
 
     def in_flight_requests(self) -> int | None:
-        """Requests sent through this client whose response is not closed yet.
+        """Requests sent through this client that have not finished.
 
         Counted at this client's own methods, since httpx exposes no pool numbers. A request
-        queued for one of httpx's pooled connections counts, and so does a streamed response
-        the caller has not closed: one that never closes holds its connection, and this
-        count, up for good.
+        counts from the moment it is sent, queued for one of httpx's pooled connections or
+        not, until :meth:`request` has read its response, or until the :meth:`stream` or
+        :meth:`send` block exits. Leaving the block closes the response, but closing the
+        response inside the block does not end the count. A block that never exits holds its
+        connection, and this count, up for good.
 
         :returns: The count, or ``None`` before :meth:`initialize` and after :meth:`close`.
         """

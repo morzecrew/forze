@@ -1,7 +1,8 @@
 """Outbound requests in flight: counted at `HttpClient`, exported by `instrument_http_clients`.
 
 httpx exposes no pool numbers, so the count is taken at the client's own methods: from the
-moment a request is sent until its response is closed.
+moment a request is sent until `request` has read the response, or until the `stream` or
+`send` block exits.
 """
 
 import asyncio
@@ -95,19 +96,24 @@ class TestInFlightRequests:
         assert client.in_flight_requests() == 0
         await client.close()
 
-    async def test_a_stream_counts_until_the_caller_leaves_it(self) -> None:
+    async def test_a_stream_counts_until_the_caller_leaves_the_block(self) -> None:
+        """Reading and closing the response inside the block does not end the count."""
+
         client = await _client()
 
-        async with client.stream("GET", "/x"):
+        async with client.stream("GET", "/x") as response:
+            await response.aread()
+            await response.aclose()
             assert client.in_flight_requests() == 1
 
         assert client.in_flight_requests() == 0
         await client.close()
 
-    async def test_a_sent_request_counts_until_its_response_is_closed(self) -> None:
+    async def test_a_sent_request_counts_until_the_caller_leaves_the_block(self) -> None:
         client = await _client()
 
-        async with client.send(httpx.Request("GET", "https://api.example.com/x")):
+        async with client.send(httpx.Request("GET", "https://api.example.com/x")) as response:
+            await response.aread()
             assert client.in_flight_requests() == 1
 
         assert client.in_flight_requests() == 0

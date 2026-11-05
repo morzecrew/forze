@@ -2,8 +2,8 @@
 
 httpx exposes no public pool numbers, so outbound HTTP has no connection pool gauges. What
 :class:`~forze_http.kernel.client.HttpClient` can count honestly is the requests it has
-sent whose response is not closed yet. That is requests, not connections: a request still
-queued for a pooled connection counts too. So it gets its own instrument rather than the
+sent and not finished. That is requests, not connections: a request still queued for a
+pooled connection counts too. So it gets its own instrument rather than the
 ``forze.connection_pool.*`` names.
 """
 
@@ -38,11 +38,12 @@ def instrument_http_clients(
 
     *clients* maps a label you choose (e.g. ``"payments"``) to an
     :class:`~forze_http.kernel.client.HttpClient`. Emits ``forze.http.client.in_flight``,
-    labelled ``forze.client``: requests sent whose response is not closed yet, queued for a
-    connection or not. A client before ``initialize`` or after ``close`` reports nothing.
+    labelled ``forze.client``: requests sent and not finished, queued for a connection or
+    not. ``request`` counts until it has read the response, ``stream`` and ``send`` until
+    their block exits. A client before ``initialize`` or after ``close`` reports nothing.
 
     The alert that matters: a count that climbs under steady load and never falls back is a
-    streamed response nobody closes, holding its connection.
+    ``stream`` or ``send`` block that never exits, holding its connection.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at assembly time,
     alongside the other ``instrument_*`` calls.
@@ -75,5 +76,5 @@ def instrument_http_clients(
         HTTP_CLIENT_IN_FLIGHT_GAUGE,
         callbacks=[callback],
         unit="1",
-        description="Requests sent through the client whose response is not closed yet.",
+        description="Requests sent through the client and not finished: read, or block exited.",
     )

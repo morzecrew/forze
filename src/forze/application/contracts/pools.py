@@ -25,7 +25,7 @@ class ConnectionPoolStats:
     """Connections checked out, or being opened, right now."""
 
     idle: int
-    """Open connections not checked out."""
+    """Connections in the pool not checked out."""
 
     max_size: int
     """The configured cap on open connections."""

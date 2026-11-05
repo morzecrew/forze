@@ -80,7 +80,7 @@ implements `SupportsConnectionPoolStats`: `PostgresClient`, `RedisClient` and
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
 | `forze.connection_pool.in_use` | observable gauge | 1 | `forze.client` | connections checked out, or being opened or reopened by the pool |
-| `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | open connections not checked out |
+| `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | connections in the pool not checked out |
 | `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`) |
 | `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; Postgres only, absent for Redis and MongoDB |
 
@@ -88,9 +88,9 @@ Where each number comes from:
 
 - **Postgres:** psycopg_pool's public `get_stats()`.
 - **Redis:** redis-py's public `get_connection_count()`, split by its
-  `db.client.connection.state` label. redis-py keeps a connection it disconnected among
-  the idle ones, so `idle` can include closed connections. A pubsub subscription holds a
-  connection in use while it runs.
+  `db.client.connection.state` label. redis-py keeps a connection it disconnected, or
+  failed to connect on checkout, among the idle ones, so `idle` can include closed
+  connections. A pubsub subscription holds a connection in use while it runs.
 - **MongoDB:** pymongo's public `ConnectionPoolListener` events, which the client
   registers when it is built. pymongo keeps one pool per server, and the gauges report
   the pool with the most connections in use, so `max` is the per-server
@@ -121,13 +121,15 @@ gauges. The client counts requests at its own methods instead.
 
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
-| `forze.http.client.in_flight` | observable gauge | 1 | `forze.client` | requests sent whose response is not closed yet, including those queued for a connection |
+| `forze.http.client.in_flight` | observable gauge | 1 | `forze.client` | requests sent and not finished: `request` until it has read the response, `stream` and `send` until their block exits; queued ones count |
 
-It counts requests, not connections. A client before `initialize` or after `close`
-reports nothing. A `RoutedHttpClient` is refused.
+It counts requests, not connections. Leaving a `stream` or `send` block closes its
+response, but closing the response inside the block does not end the count. A client
+before `initialize` or after `close` reports nothing. A `RoutedHttpClient` is refused.
 
 **The alert that matters:** a count that climbs under steady load and never falls back is
-a streamed response nobody closes, holding its connection.
+a `stream` or `send` block that never exits, holding its connection. For a service
+transport, that is an SDK response nobody closes.
 
 ## Crypto and KMS
 

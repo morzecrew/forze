@@ -256,8 +256,9 @@ class RedisClient(RedisClientPort):
         Read from redis-py's public ``get_connection_count()``, which counts the pool's
         connections in memory, without a lock, and labels each count with the OpenTelemetry
         ``db.client.connection.state`` attribute: ``used`` (checked out, or being connected
-        on checkout) or ``idle``. redis-py keeps a connection it has disconnected among the
-        idle ones and reconnects it on checkout, so ``idle`` can include closed connections.
+        on checkout) or ``idle``. redis-py keeps a connection it has disconnected, or failed
+        to connect on checkout, among the idle ones and connects it on the next checkout, so
+        ``idle`` can include closed connections.
         A pubsub subscription, and the invalidation hub, hold a connection in use while they
         run.
 

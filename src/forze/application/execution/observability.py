@@ -373,7 +373,7 @@ def instrument_connection_pools(
     ``RedisClient`` or ``MongoClient``. Emits, per client (labelled ``forze.client``):
 
     - ``forze.connection_pool.in_use``: connections checked out, or being opened;
-    - ``forze.connection_pool.idle``: open connections not checked out;
+    - ``forze.connection_pool.idle``: connections in the pool not checked out;
     - ``forze.connection_pool.max``: the configured cap;
     - ``forze.connection_pool.waiting``: callers queued for a connection, where the
       driver exposes it.
@@ -441,7 +441,7 @@ def instrument_connection_pools(
         CONNECTION_POOL_IDLE_GAUGE,
         callbacks=[_observe(lambda s: s.idle)],
         unit="1",
-        description="Open connections idle in the client's pool.",
+        description="Connections in the client's pool not checked out.",
     )
     meter.create_observable_gauge(
         CONNECTION_POOL_MAX_GAUGE,
