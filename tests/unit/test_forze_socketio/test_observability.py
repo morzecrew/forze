@@ -12,7 +12,15 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+import pytest
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
 from forze.application.execution.background import SpreadOutcome
+from forze.application.execution.realtime.observability import (
+    _forze_meter,  # pyright: ignore[reportPrivateUsage]
+)
 from forze_socketio import (
     BackplaneHealth,
     RealtimeConnectionStats,
@@ -189,3 +197,79 @@ def test_a_scrape_from_another_thread_never_sees_a_dictionary_change_under_it() 
         scraper.join(timeout=10)
 
     assert errors == []
+
+
+# ----------------------- #
+
+
+def _points(reader: InMemoryMetricReader) -> dict[str, dict[tuple[str, ...], Any]]:
+    """Every exported point, by metric name, then by its sorted label values."""
+
+    data = reader.get_metrics_data()
+    assert data is not None
+
+    return {
+        metric.name: {
+            tuple(value for _, value in sorted(point.attributes.items())): point.value
+            for point in metric.data.data_points
+        }
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    }
+
+
+def test_two_channels_on_one_meter_export_a_series_each() -> None:
+    """The SDK keeps a name's first instrument; a second channel must still export."""
+
+    reader = InMemoryMetricReader()
+    meter = MeterProvider(metric_readers=[reader]).get_meter("test")
+    orders, chat = RealtimeConnectionStats(), RealtimeConnectionStats()
+    orders_health, chat_health = BackplaneHealth(), BackplaneHealth()
+    orders.connected("/")
+    chat.refused("/", "auth")
+    chat.drained(SpreadOutcome(closed=1, failed=0, timed_out=0))
+    chat_health.failed()
+
+    for channel, stats, health in (
+        ("orders", orders, orders_health),
+        ("chat", chat, chat_health),
+        ("chat", chat, chat_health),  # a repeat adds nothing
+    ):
+        instrument_realtime_connections(stats, channel=channel, meter=meter)
+        instrument_realtime_backplane(health, channel=channel, meter=meter)
+
+    points = _points(reader)
+    assert points["forze.realtime.connections"] == {("orders", "/"): 1}
+    assert points["forze.realtime.connect_refused"] == {("chat", "/", "auth"): 1}
+    assert points["forze.realtime.drain_closed"] == {
+        ("chat", "closed"): 1,
+        ("chat", "failed"): 0,
+        ("chat", "timed_out"): 0,
+    }
+    assert points["forze.realtime.backplane.consecutive_failures"] == {
+        ("orders",): 0,
+        ("chat",): 1,
+    }
+    assert set(points["forze.realtime.backplane.seconds_since_ok"]) == {("orders",), ("chat",)}
+
+
+def test_nothing_is_registered_without_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    real = metrics.get_meter
+
+    def spy(name: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(name)
+        return real(name, *args, **kwargs)
+
+    _forze_meter.cache_clear()  # the default meter is fetched once per process
+    monkeypatch.setattr(metrics, "get_meter", spy)
+    stats, health = RealtimeConnectionStats(), BackplaneHealth()
+    stats.connected("/")
+    health.failed()
+
+    assert asked == []
+
+    instrument_realtime_connections(stats)
+    instrument_realtime_backplane(health)
+    assert asked == ["forze"]  # the global meter, fetched once, only once asked to

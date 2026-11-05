@@ -17,13 +17,17 @@ require_fastapi()
 
 # ....................... #
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
+
+from forze.application.execution.realtime.observability import (
+    ChannelInstrument,
+    observe_channel,
+)
 
 from .hub import RealtimeSseHub
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation
+    from opentelemetry.metrics import Meter
 
 # ----------------------- #
 
@@ -35,6 +39,21 @@ __all__ = [
 
 REALTIME_HUB_SUBSCRIBERS_COUNTER = "forze.realtime.hub.subscribers"
 REALTIME_HUB_DROPPED_COUNTER = "forze.realtime.hub.dropped"
+
+_HUB_INSTRUMENTS: tuple[ChannelInstrument[RealtimeSseHub], ...] = (
+    ChannelInstrument(
+        REALTIME_HUB_SUBSCRIBERS_COUNTER,
+        "up_down_counter",
+        lambda hub: hub.subscribers,
+        "SSE and WebSocket streams subscribed to the live tail on this node.",
+    ),
+    ChannelInstrument(
+        REALTIME_HUB_DROPPED_COUNTER,
+        "counter",
+        lambda hub: hub.dropped,
+        "Live signals dropped on full subscriber queues (at-most-once leg).",
+    ),
+)
 
 # ....................... #
 
@@ -55,35 +74,12 @@ def instrument_realtime_hub(
 
     Both carry ``forze.realtime.channel``. The callbacks read two in-memory counts, so a
     scrape queries no store. Emits via the global OTel meter unless *meter* is supplied.
-    Call once per meter at assembly time, with the hub handed to the routes: the SDK keeps
-    a name's first instrument and drops a later call's callbacks, so a second hub
-    instrumented on the same meter exports nothing.
+    Call once per channel at assembly time, with the hub handed to the routes. Each channel
+    exports its own series; a repeat call for the same hub and channel adds nothing.
 
     :param hub: The hub the SSE and WebSocket routes share.
     :param channel: The ``forze.realtime.channel`` label.
     :param meter: The meter to register on; the global ``forze`` meter when ``None``.
     """
 
-    from opentelemetry import metrics
-
-    meter = meter or metrics.get_meter("forze")
-    attributes = {"forze.realtime.channel": channel}
-
-    def subscribers(_options: "CallbackOptions") -> "Iterable[Observation]":
-        return [metrics.Observation(hub.subscribers, attributes)]
-
-    def dropped(_options: "CallbackOptions") -> "Iterable[Observation]":
-        return [metrics.Observation(hub.dropped, attributes)]
-
-    meter.create_observable_up_down_counter(
-        REALTIME_HUB_SUBSCRIBERS_COUNTER,
-        callbacks=[subscribers],
-        unit="1",
-        description="SSE and WebSocket streams subscribed to the live tail on this node.",
-    )
-    meter.create_observable_counter(
-        REALTIME_HUB_DROPPED_COUNTER,
-        callbacks=[dropped],
-        unit="1",
-        description="Live signals dropped on full subscriber queues (at-most-once leg).",
-    )
+    observe_channel(hub, _HUB_INSTRUMENTS, channel=channel, meter=meter)

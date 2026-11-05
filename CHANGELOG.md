@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`hold()` no longer warns `UnsupportedFieldAttributeWarning` for a `SerializedBy` key field declared with `frozen=True` or an alias.** The key is validated with the field's constraints and `Annotated` validators only, as before.
 
+- **A second realtime channel on one meter now exports its own series** from `instrument_realtime_gateway`, `instrument_realtime_backplane`, `instrument_realtime_connections` and `instrument_realtime_hub`, instead of being dropped silently. A repeat call for the same object and channel adds nothing.
+
 - **Resilience gauges no longer fail a scrape that lands while a call is admitted.** The bulkhead queue-depth and hedge-delay callbacks of `instrument_resilience` could raise `RuntimeError: OrderedDict mutated during iteration` in the exporter thread and lose that sample.
 
 ## [0.22.0] - 2026-11-04
