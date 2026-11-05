@@ -1067,39 +1067,36 @@ class _Writer:
         """
 
         budget = self.snapshots.interval.total_seconds()
-        clock = asyncio.get_running_loop()
-        deadline = clock.time() + budget
         pending = self.inflight
+        # A tick cancelled by the loop's stop may have left its render running: wait for it
+        # before rendering again, out of the same budget.
+        waiting = pending is not None and not pending.done()
 
-        if pending is not None and not pending.done():
-            # A tick cancelled by the loop's stop left its render running: wait for it first.
-            try:
-                await asyncio.wait_for(asyncio.shield(pending), timeout=budget)
+        try:
+            async with asyncio.timeout(budget):
+                if pending is not None and waiting:
+                    try:
+                        await asyncio.shield(pending)
 
-            except TimeoutError:
+                    except Exception:
+                        _logger.exception("Metrics snapshot render failed")
+
+                    waiting = False
+
+                await self.render_and_write(strict=False)
+
+        except TimeoutError:
+            if waiting:
                 _logger.warning(
                     "Final metrics snapshot skipped: a render still ran after %.1fs; the last "
                     "snapshot stands",
                     budget,
                 )
-                return
 
-            except Exception:
-                _logger.exception("Metrics snapshot render failed")
-
-        remaining = deadline - clock.time()
-
-        if remaining <= 0:
-            _logger.warning("Final metrics snapshot skipped: no budget left; the last stands")
-            return
-
-        try:
-            await asyncio.wait_for(self.render_and_write(strict=False), timeout=remaining)
-
-        except TimeoutError:
-            _logger.warning(
-                "Final metrics snapshot overran %.1fs; it finishes in its thread", budget
-            )
+            else:
+                _logger.warning(
+                    "Final metrics snapshot overran %.1fs; it finishes in its thread", budget
+                )
 
         except Exception:
             _logger.exception("Final metrics snapshot was not written")
