@@ -5906,7 +5906,7 @@ row 16 is amended by D-220 and D-226, row 30 by D-219.
 **Drift count: 4.** Fourteen entries, D-219 to D-232: four `drift` (D-221, D-222, D-223,
 D-226), eight `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's
 wording, §6 and §7, not from a decision row. A review of the first commit found one bug and
-fifteen risks; the PR's two review rounds found sixteen more, and two were refuted. The
+fifteen risks; the PR's three review rounds found eighteen more, and two were refuted. The
 tables at the end record each and where it was fixed.
 
 **Where each item lives.** Credentials in
@@ -6171,3 +6171,13 @@ CodeRabbit's review of `345967512`.
 | R-32 | Bug | NaN or Infinity in a run file's metrics made `--fail-on` comparisons false | Fixed in `a37e77bc3` |
 | R-33 | Bug | A step with `"ms": {}` passed, so its latency thresholds could not fail | Fixed in `a37e77bc3`: p50, p95 and p99 are required, null allowed |
 | R-34 | Docs | The review body's docstring-coverage pre-merge check | Refuted: every public class and function in `forze_load` has a docstring; the undocumented definitions are methods of private classes, local closures, and protocol methods documented on `Auth.session` and `AuthSession.headers`, and the repository's gates set no docstring threshold |
+
+## Review findings — 2026-11-05 (PR #847, third round)
+
+Greptile's review after the merge of `main`.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-35 | Bug | The open-model search skipped the first rate, though a shortfall compares a step with its own offer | Fixed in `3db09c71e`: the search starts at the first rate; only the p99 test needs an earlier one |
+| R-36 | Bug | `compare --fail-on` against a run with no step (cut short before its first) matched nothing and exited 0 | Fixed in `080f2b557`: refused as `load_compare_empty`, exit 2; a report-only compare warns that nothing was compared |
+| R-37 | Test | Found while gating this round: the loop-CPU probe test busy-looped and failed when the scheduler took its time | Fixed in `de5fe7cb5`: driven by a fake clock |
