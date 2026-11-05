@@ -220,6 +220,20 @@ class TestOpenKnee:
             "note": None,
         }
 
+    def test_a_shortfall_at_the_first_rate_is_found(self) -> None:
+        rows = [_open(100, 80, 20.0), _open(200, 80, 21.0)]
+
+        assert find_knee(rows, model="open") == {
+            "knee": {"rate": 100},
+            "confirmed": True,
+            "note": None,
+        }
+
+    def test_a_shortfall_at_the_only_rate_is_unconfirmed(self) -> None:
+        knee = find_knee([_open(100, 80, 20.0)], model="open")
+
+        assert knee == {"knee": {"rate": 100}, "confirmed": False, "note": "last step, unconfirmed"}
+
     def test_a_shortfall_the_next_rate_does_not_repeat_is_not_a_knee(self) -> None:
         rows = [_open(10, 10, 20.0), _open(20, 17, 21.0), _open(40, 40, 22.0)]
 

@@ -249,6 +249,9 @@ def find_knee(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any
 
 
 def _search(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any]:
+    if model == "open":
+        return _open_search(rows)
+
     if len(rows) < 2:
         note = "one step, no comparison" if rows else "no step measured the server"
         return {"knee": None, "confirmed": False, "note": note}
@@ -256,14 +259,6 @@ def _search(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any]:
     for k in range(1, len(rows)):
         before, here = rows[k - 1], rows[k]
         after = rows[k + 1] if k + 1 < len(rows) else None
-
-        if model == "open":
-            found = _open_knee(before, here, after)
-
-            if found is not None:
-                return found
-
-            continue
 
         if before["goodput_rps"] <= 0:
             return {"knee": None, "confirmed": False, "note": f"no goodput at {_key(before)}"}
@@ -282,15 +277,33 @@ def _search(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any]:
     return {"knee": None, "confirmed": False, "note": "goodput rose at every step"}
 
 
+def _open_search(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    # From the first rate: a shortfall compares a step with its own offer, so the first rate
+    # can be the knee. Only the p99 test needs an earlier rate.
+    for k, here in enumerate(rows):
+        before = rows[k - 1] if k else None
+        after = rows[k + 1] if k + 1 < len(rows) else None
+        found = _open_knee(before, here, after)
+
+        if found is not None:
+            return found
+
+    if len(rows) < 2:
+        note = "one step, no comparison" if rows else "no step measured the server"
+        return {"knee": None, "confirmed": False, "note": note}
+
+    return {"knee": None, "confirmed": False, "note": "goodput kept pace at every rate"}
+
+
 def _open_knee(
-    before: Mapping[str, Any],
+    before: Mapping[str, Any] | None,
     here: Mapping[str, Any],
     after: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     # Each test needs the next rate to repeat it, as the closed model's does: one step that
     # falls short or spikes can be a transient, not a capacity limit.
     def spiked(row: Mapping[str, Any]) -> bool:
-        return _p99_doubled(before, row)
+        return before is not None and _p99_doubled(before, row)
 
     for holds in (_short, spiked):
         if not holds(here):
