@@ -953,26 +953,28 @@ class TestHardening:
         log.records.clear()
         writer = _writer(directory, lambda: _body("w-1"))
         writer.prepare()
-        directory.chmod(0o500)
+        # Refused creates, injected: file modes would not stop a root-run test.
+        refusing = [True]
+        real_open = os.open
 
-        try:
-            for _ in range(3):
-                await writer.tick()
+        def open_(name: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if refusing[0] and flags & os.O_CREAT:
+                raise PermissionError(errno.EACCES, "Permission denied")
 
-        finally:
-            directory.chmod(0o700)
+            return real_open(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", open_)
+
+        for _ in range(3):
+            await writer.tick()
 
         assert [level for level, _ in log.records] == ["error"]
 
         # Recovered: the cause is forgotten, so its next occurrence is logged again.
+        refusing[0] = False
         await writer.tick()
-        directory.chmod(0o500)
-
-        try:
-            await writer.tick()
-
-        finally:
-            directory.chmod(0o700)
+        refusing[0] = True
+        await writer.tick()
 
         assert [level for level, _ in log.records] == ["error", "error"]
 
