@@ -91,12 +91,17 @@ def run_command(
     try:
         target = load_object(ref)
 
+        if callable(target) and not isinstance(target, LoadPlan):
+            target = target()
+
+    # A plan module or factory that builds a refused credential or profile is a refusal too.
+    except CoreException as error:
+        typer.echo(f"refused: {error.summary}", err=True)
+        raise typer.Exit(code=2) from error
+
     except (ValueError, ImportError, AttributeError) as error:
         typer.echo(f"cannot load {ref!r}: {error}", err=True)
         raise typer.Exit(code=2) from error
-
-    if callable(target) and not isinstance(target, LoadPlan):
-        target = target()
 
     if not isinstance(target, LoadPlan):
         typer.echo(

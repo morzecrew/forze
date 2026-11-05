@@ -103,6 +103,16 @@ class TestRun:
         assert result.exit_code == 2, result.output
         assert "cannot load" in result.output
 
+    @pytest.mark.parametrize(
+        "ref",
+        [f"{_PLANS}:refusing_factory", "tests.unit.test_forze_load._refusing_plan_module:plan"],
+    )
+    def test_a_plan_refused_at_import_or_by_its_factory_exits_2(self, ref: str) -> None:
+        result = runner.invoke(app, ["load", "run", ref])
+
+        assert result.exit_code == 2, result.output
+        assert "refused" in result.output
+
     def test_an_object_that_is_not_a_plan_is_refused(self) -> None:
         result = runner.invoke(app, ["load", "run", f"{_PLANS}:not_a_plan"])
 

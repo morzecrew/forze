@@ -53,4 +53,10 @@ def make_plan() -> LoadPlan:
     return plan
 
 
+def refusing_factory() -> LoadPlan:
+    password_login("ada", password_env="LOAD_PW", refresh_path="//evil.example/refresh")
+
+    return plan
+
+
 not_a_plan = 42
