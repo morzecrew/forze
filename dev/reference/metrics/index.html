@@ -6587,6 +6587,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#realtime-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime hub
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#realtime-mailbox" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6840,6 +6851,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Realtime connections
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#realtime-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime hub
       </span>
     </span>
   </a>
@@ -7625,6 +7647,40 @@ intervals; <code>-1</code> is a wiring problem, not an outage.</p>
 deploy means a balancer still routes to a replica it should have dropped, and any
 <code>drain_closed{outcome="timed_out"}</code> means the drain's tail is too short for this node's
 closes.</p>
+<h2 id="realtime-hub">Realtime hub<a class="headerlink" href="#realtime-hub" title="Permanent link">&para;</a></h2>
+<p><code>instrument_realtime_hub(hub)</code> from <code>forze_fastapi.realtime</code>, with the <code>RealtimeSseHub</code> the <abbr title="Server-Side Encryption">SSE</abbr>
+and WebSocket routes share. Labelled <code>forze.realtime.channel</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.realtime.hub.subscribers</code></td>
+<td>observable up-down counter</td>
+<td>1</td>
+<td><abbr title="Server-Side Encryption">SSE</abbr> and WebSocket streams subscribed to the live tail on this node</td>
+</tr>
+<tr>
+<td><code>forze.realtime.hub.dropped</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>live signals dropped on a full subscriber queue; each is a lost live frame</td>
+</tr>
+</tbody>
+</table>
+<p>These are not folded into <code>forze.realtime.connections</code>, which only Socket.IO feeds: the
+FastAPI WebSocket route reports to the hub alone, and no Socket.IO connection subscribes to
+it. The two never overlap, so their sum is the node's live realtime connections. A
+catch-up-only <abbr title="Server-Side Encryption">SSE</abbr> stream or a replay-only WebSocket never joins the live tail, so it is in
+neither. <strong>What to watch:</strong> a <code>dropped</code> rate means some
+client reads slower than signals arrive. With a mailbox wired, its durable signals arrive on
+its next reconnect; ephemeral ones are gone.</p>
 <h2 id="realtime-mailbox">Realtime mailbox<a class="headerlink" href="#realtime-mailbox" title="Permanent link">&para;</a></h2>
 <p><code>instrument_realtime_mailbox(mailbox, cursors)</code>. Labelled <code>forze.realtime.channel</code>.</p>
 <table>
@@ -7667,10 +7723,25 @@ closes.</p>
 <td>1</td>
 <td>replays that lost their oldest backlog to the cap</td>
 </tr>
+<tr>
+<td><code>forze.realtime.mailbox.replay_size</code></td>
+<td>histogram</td>
+<td>1</td>
+<td>per connect, the entries past the device's acked cursor that its replay read; recorded only when the replay finishes; the SDK's default buckets cover the default <code>cap</code> of 1000</td>
+</tr>
 </tbody>
 </table>
 <p><strong>The alert that matters:</strong> every <code>overflowed</code> increment is a device that fell more than
-<code>cap</code> entries behind and lost signals it will never see.</p>
+<code>cap</code> entries behind and lost signals it will never see. <code>replay_size</code> warns earlier: a
+tail that keeps growing means devices fall behind on acks. It is a trend, not the backlog's
+size: no gauge counts mailbox rows, since that takes a store query a scrape must not run.</p>
+<p><code>replay_size</code> counts the unacked backlog, not the frames sent. A resume with a last-seen id
+(<abbr title="Server-Side Encryption">SSE</abbr> <code>Last-Event-ID</code>, WebSocket <code>last_event_id</code>) skips the entries delivered before the
+tear, and they still count. A replay the client leaves, or the store fails, records nothing.
+The counters and the replay hook live on the mailbox passed to <code>instrument_realtime_mailbox</code>:
+instrument the instance your <code>mailbox_factory</code> returns. A factory that builds a new mailbox
+per connect records nothing, and neither does the mailbox the gateway or
+<code>RealtimeMailboxWriter</code> builds inside its own step.</p>
 <h2 id="access-token-signing">Access-token signing<a class="headerlink" href="#access-token-signing" title="Permanent link">&para;</a></h2>
 <p><code>instrument_signing({"default": service, ...})</code> — the identity plane. Labelled
 <code>forze.signer</code>, <code>forze.signer.algorithm</code>, and <code>forze.signer.kid</code> when set.</p>

@@ -10973,6 +10973,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>instrument_resilience</code> reports how many calls hold each bulkhead's slots.</strong> New gauge <code>forze.resilience.bulkhead.in_use</code> covers fixed, AIMD and Gradient2 bulkheads. <code>forze.resilience.bulkhead.limit</code> now also carries a fixed bulkhead's cap (<strong>behaviour change</strong>), so <code>in_use / limit</code> is occupancy for every kind.</p>
 </li>
+<li>
+<p><strong><code>instrument_realtime_hub</code> exports the <abbr title="Server-Side Encryption">SSE</abbr>/WebSocket hub's subscribers and dropped live signals</strong>, as <code>forze.realtime.hub.subscribers</code> and <code>forze.realtime.hub.dropped</code>, labelled per channel. <code>instrument_realtime_mailbox</code> also records <code>forze.realtime.mailbox.replay_size</code>: each finished connect replay's unacked backlog.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
