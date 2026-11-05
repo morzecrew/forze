@@ -4701,6 +4701,35 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/load-testing/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Load testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -10907,7 +10936,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.22.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>One Prometheus scrape can cover every worker of a pre-fork server.</strong> Pass <code>snapshots=MetricsSnapshots(...)</code> to <code>attach_metrics_route</code> and run its <code>writer_step</code> in each worker: the route serves every worker's series, labelled <code>service_instance_id</code>, with an age gauge. Needs <code>worker_metrics_reader()</code> (exporter 0.66b0+).</li>
+<li>
+<p><strong>One Prometheus scrape can cover every worker of a pre-fork server.</strong> Pass <code>snapshots=MetricsSnapshots(...)</code> to <code>attach_metrics_route</code> and run its <code>writer_step</code> in each worker: the route serves every worker's series, labelled <code>service_instance_id</code>, with an age gauge. Needs <code>worker_metrics_reader()</code> (exporter 0.66b0+).</p>
+</li>
+<li>
+<p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that <code>forze load compare</code> diffs. Writes are refused unless allowed and the host is loopback or allowlisted.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
