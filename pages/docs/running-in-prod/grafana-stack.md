@@ -456,11 +456,14 @@ What to know before you rely on it:
   `sum without (instance) (rate(forze_operations[5m]))`.
 - **`up` describes the collector.** A process that stops pushing keeps its last values
   until `metric_expiration` (5 minutes in the config) passes, then drops out.
-  `count by (job) (target_info)` counts the processes the collector serves; alert when it
-  falls below the count you run.
-- **Freshness is the export interval.** Each process pushes every
+  `count by (job) (target_info)` counts the processes the collector serves. Alert when it
+  falls below the count you run, and when it is absent, which is what a full outage looks
+  like once every process has expired:
+  `count by (job) (target_info{job="orders-api"}) < 3 or absent(target_info{job="orders-api"})`.
+- **Freshness is the export interval plus the scrape interval.** Each process pushes every
   `metric_export_interval` (15 s by default), and Prometheus reads the latest push on its
-  next scrape.
+  next scrape. Keep `metric_export_interval` well under `metric_expiration`, or a process
+  drops out between pushes.
 - **Traces need a pipeline of their own.** Without one, the collector answers `404` on
   `/v1/traces`. To keep traces, add a traces pipeline to an exporter you run, or use the
   full stack above.

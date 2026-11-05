@@ -6279,10 +6279,11 @@ documented job. Three sabotages each failed it: an unknown exporter key (Tier 1)
   the collector, so no scrape status shows the gap.
 - **Class:** `spec-gap`. The exporter's documentation says so; the table did not look.
 - **Consequence:** the config sets `metric_expiration: 5m` explicitly, so the reader sees the
-  knob. The docs state freshness as the export interval, and give
-  `count by (job) (target_info)` as the alert for a missing process, the recipe's counterpart
-  of `count(forze_metrics_snapshot_age_seconds)`. Tier 2 asserts one `target_info` series per
-  worker.
+  knob. The docs state freshness as the export interval plus the scrape interval, say to keep
+  `metric_export_interval` well under `metric_expiration`, and give
+  `count by (job) (target_info)` below the count you run, or absent, as the alert for a
+  missing process: the recipe's counterpart of `count(forze_metrics_snapshot_age_seconds)`.
+  Tier 2 asserts one `target_info` series per worker.
 - **Proposed row (RFC 0083):** none.
 
 ## D-251 — The recipe gives the push path's names and labels, with `honor_labels: true`
