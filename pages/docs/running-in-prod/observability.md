@@ -250,13 +250,14 @@ client counts if it implements `SupportsConnectionPoolStats`
 (`forze.application.contracts.pools`) with an in-memory snapshot. The callback
 runs on every scrape, so it never does I/O. Today only `PostgresClient` does:
 it reads psycopg_pool's public `get_stats()`. Redis, MongoDB and outbound HTTP
-follow in later releases. A routed client is refused, because it keeps one pool
-per tenant: use the tenant pool gauges above for it. Alert on `waiting` above
-zero across scrapes, or `in_use` pinned at `max`: callers are queueing and will
-start failing at the acquire timeout. A database that is down shows the same
-pattern, because the pool's reconnect attempts hold `in_use` at `max` while
-callers wait. Pair the alert with a connectivity signal, such as the health
-check.
+follow in later releases. A routed client is refused, because it keeps one
+pool per tenant and a sum would hide the saturated one. Its connections are
+not exported: the tenant pool gauges above report only its pool cache. Alert
+on `waiting` above zero across scrapes, or `in_use` pinned at `max`: callers
+are queueing and will start failing at the acquire timeout. A database that is
+down shows the same pattern, because the pool's reconnect attempts hold
+`in_use` at `max` while callers wait. Pair the alert with a connectivity
+signal, such as the health check.
 
 ## Document L1 metrics
 

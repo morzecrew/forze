@@ -84,8 +84,8 @@ and outbound HTTP follow.
 | `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; absent where the driver does not expose it |
 
 A client with no open pool reports nothing. A routed client is refused: summing its
-per-tenant pools would hide the one that is saturated, and the tenant pool gauges above
-cover it.
+per-tenant pools would hide the one that is saturated. Its connections are not exported;
+the tenant pool gauges above report only its pool cache (size and churn).
 
 **The alert that matters:** `waiting` above zero across scrapes, or `in_use` pinned at
 `max`, means callers queue for connections and will start failing at the acquire timeout.

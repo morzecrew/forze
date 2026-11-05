@@ -347,7 +347,8 @@ def instrument_connection_pools(
 
     A client with no open pool (before ``initialize``, after ``close``) reports nothing.
     One series per client, never per tenant: a routed client keeps a pool per tenant and
-    does not implement the protocol; :func:`instrument_tenant_pools` covers it.
+    does not implement the protocol, so its connections are not exported.
+    :func:`instrument_tenant_pools` reports only its pool cache (size and churn).
 
     The alert that matters: ``waiting`` above zero across scrapes, or ``in_use`` pinned at
     ``max``, means callers queue for connections and will start failing at the acquire
