@@ -587,6 +587,9 @@ attach_realtime_sse_route(
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
 ```
 
+This factory builds a new mailbox on every connect, so it records no mailbox metrics: see
+[the metric catalog](../reference/metrics.md#realtime-mailbox).
+
 The live leg reads the realtime stream with a plain (non-group) tail — broadcast
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
 and is at-most-once by contract: the mailbox carries the durable guarantee, and
@@ -639,6 +642,15 @@ A `Last-Event-ID` the browser sends on reconnect is ignored, so a signal publish
 the client was away is not delivered. Durable delivery still takes both factories. Attach
 refuses one factory without the other, a live-only stream without a hub, and
 `ack_route_options` on a live-only stream.
+
+### Hub metrics
+
+The hub counts its subscribers and the live signals it drops on a full subscriber queue
+(256 slots by default). `instrument_realtime_hub(hub)` exports both, once at assembly:
+`forze.realtime.hub.subscribers` and `forze.realtime.hub.dropped`, labelled
+`forze.realtime.channel` (see the [catalog](../reference/metrics.md#realtime-hub)). A
+WebSocket stream on the same hub counts too. The live leg is at-most-once, so every drop
+is a lost live frame; with a mailbox wired, a durable one arrives on the next reconnect.
 
 ### Documenting the SSE routes
 
@@ -712,6 +724,10 @@ lifecycle = [
     realtime_mailbox_writer_lifecycle_step(writer),
 ]
 ```
+
+The writer builds its mailbox inside its own step, where `instrument_realtime_mailbox` cannot
+reach it, so it records no mailbox metrics: see
+[the metric catalog](../reference/metrics.md#realtime-mailbox).
 
 - **Create its group at `0`.** The group-ensure step defaults to `start_id="$"`, which suits
   the gateway: a new group should not emit an old backlog live. A writer whose group is
@@ -917,6 +933,7 @@ runs them. The surface, at a glance:
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
 | `realtime_sse_drain_lifecycle_step` | end the SSE streams and WebSocket tails spread over a window when the replica drains |
 | `attach_realtime_ws_route` | duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed `cmd` dispatch |
+| `instrument_realtime_hub` | export the hub's subscribers and dropped live signals to OpenTelemetry |
 | `build_ws_connection_resolver` | the shipped connection resolver: reauth payload, then cookie, header and opt-in query; credential expiry |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`instrument_resilience` reports how many calls hold each bulkhead's slots.** New gauge `forze.resilience.bulkhead.in_use` covers fixed, AIMD and Gradient2 bulkheads. `forze.resilience.bulkhead.limit` now also carries a fixed bulkhead's cap (**behaviour change**), so `in_use / limit` is occupancy for every kind.
 
+- **`instrument_realtime_hub` exports the SSE/WebSocket hub's subscribers and dropped live signals**, as `forze.realtime.hub.subscribers` and `forze.realtime.hub.dropped`, labelled per channel. `instrument_realtime_mailbox` also records `forze.realtime.mailbox.replay_size`: each finished connect replay's unacked backlog.
+
 ### Changed
 
 - ...

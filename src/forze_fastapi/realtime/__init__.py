@@ -16,6 +16,7 @@ from .lifecycle import (
     realtime_sse_tail_lifecycle_step,
     refresh_sse_presence,
 )
+from .observability import instrument_realtime_hub
 from .sse import (
     LAST_EVENT_ID_HEADER,
     RealtimeAckBody,
@@ -37,6 +38,7 @@ __all__ = [
     "RealtimeSseHub",
     "SseSubscription",
     "presence_rooms",
+    "instrument_realtime_hub",
     "realtime_sse_tail_lifecycle_step",
     "realtime_sse_sharded_tail_lifecycle_step",
     "realtime_sse_presence_heartbeat_lifecycle_step",

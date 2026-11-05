@@ -52,6 +52,9 @@ attach_realtime_sse_route(
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
 ```
 
+This factory builds a new mailbox on every connect, so it records no mailbox metrics: see
+[the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-mailbox).
+
 The SSE routes ship with described query parameters and a `text/event-stream` 200. Set
 their `operation_id`, `description`, `tags`, `openapi_extra` and the rest through
 `route_options=` (stream) and `ack_route_options=` (ack), not by patching the attached
@@ -135,6 +138,10 @@ writer = RealtimeMailboxWriter(
 # realtime_relay_lifecycle_step; "0" so entries appended before the group existed are stored
 step = realtime_mailbox_writer_lifecycle_step(writer)
 ```
+
+The writer builds its mailbox inside its own step, where `instrument_realtime_mailbox` cannot
+reach it, so it records no mailbox metrics: see
+[the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-mailbox).
 
 Run it on every node with one consumer group, but never beside a Socket.IO gateway that
 shares its dedup inbox, mailbox or not: whichever marks a signal first owns it. Rows are

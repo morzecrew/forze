@@ -7,7 +7,7 @@ The transport edge (Socket.IO connection layer, SSE route) owns only what is
 genuinely transport-specific — sessions, framing, and how the handshake arrives.
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from typing import final
 
@@ -15,11 +15,14 @@ import attrs
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
+from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp
 
 from .mailbox import MailboxCursors, RealtimeMailbox
 
 # ----------------------- #
+
+_logger = Logger("integrations.realtime")
 
 __all__ = [
     "resolve_client_key",
@@ -174,10 +177,19 @@ async def iter_backlog(
     consumer that stops early must treat the drain as incomplete — though
     ``outcome.claim_floor`` is safe to read at any point (it trails delivery by the
     unproven run, which is exactly what makes it claimable mid-drain).
+
+    A mailbox with an ``on_replay`` callable is told how many entries the drain yielded,
+    once, when the drain finishes on its own. One drain is one connect's replay, read
+    from the device's acked cursor, so this is the connect's unacked backlog, counted
+    with no extra query. A drain the consumer stops early, or that fails, reports
+    nothing: a partial count would read as a device that caught up. A raising hook is
+    logged and never fails the drain.
     """
 
     cap = getattr(mailbox, "cap", None)
+    on_replay = getattr(mailbox, "on_replay", None)
     tracker = _RunTracker(outcome=outcome, resume=since)
+    yielded = 0
 
     for _ in range(max_rounds):
         fetched = 0
@@ -193,17 +205,35 @@ async def iter_backlog(
                     continue
 
                 progressed = True
+                yielded += 1
 
                 yield entry
 
         if cap is None or fetched < int(cap):
             tracker.seal()  # the window undershot the cap: the retained end, drained
-            return
+            break
 
         if not progressed:
-            return  # a full window of already-yielded entries: no way further
+            break  # a full window of already-yielded entries: no way further
 
-    # round budget exhausted while still cap-filled: not complete
+    # here by a break, or by the round budget running out cap-filled (not complete)
+
+    if on_replay is not None:
+        _report_replay(on_replay, yielded)
+
+
+def _report_replay(on_replay: Callable[[int], None], count: int) -> None:
+    """Hand *count* to the mailbox's metrics hook; metrics never break delivery."""
+
+    try:
+        on_replay(count)
+
+    except Exception:
+        _logger.warning(
+            "Realtime mailbox on_replay hook failed; replay delivery is unaffected",
+            exc_info=True,
+            _dedup_key="realtime.on_replay_failed",
+        )
 
 
 # ....................... #
