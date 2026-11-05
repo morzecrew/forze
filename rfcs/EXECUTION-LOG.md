@@ -5665,10 +5665,11 @@ as §12 assigns them to later phases: operation references and `x-forze-kind` (P
 (P3), the soak (P4). Rows 1–15, 17–18, 20–29 and 31–33 hold as written or do not apply to P1;
 row 16 is amended by D-220 and D-226, row 30 by D-219.
 
-**Drift count: 4.** Twelve entries, D-219 to D-230: four `drift` (D-221, D-222, D-223, D-226),
-six `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's wording, §6 and
-§7, not from a decision row. A review of the first commit found one bug and fifteen risks;
-the table at the end records each and where it was fixed.
+**Drift count: 4.** Fourteen entries, D-219 to D-232: four `drift` (D-221, D-222, D-223,
+D-226), eight `spec-gap`, two `discovery`. The drifts depart from §5.2's sketch, §5.6's
+wording, §6 and §7, not from a decision row. A review of the first commit found one bug and
+fifteen risks; the PR's review found ten more and refuted one. The tables at the end record
+each and where it was fixed.
 
 **Where each item lives.** Credentials in
 [`forze_load/auth.py`](../src/forze_load/auth.py); the plan, `Call` and the write guard in
@@ -5849,6 +5850,35 @@ package's `provides-extras`, pending the maintainer.
   `random.seed`, stable across processes): `picks`, shared with `Call.rng`, and `arrivals`.
 - **Class:** `discovery`.
 
+## D-231 — The run's clients keep no cookie and refuse every other origin
+
+- **Touches:** row 9 (`LOCKED`), D-227 and D-228. The write guard checks the base URL; the
+  RFC is silent on cookies and on URLs built outside `Call.request`.
+- **Found (PR #847 review):** both clients kept httpx's ordinary cookie jar, shared by every
+  principal, so a session cookie one principal received was sent with the others' requests.
+  `password_login`'s `login_path` and `refresh_path` went to httpx as given, so an absolute
+  URL posted the password or refresh token to that host.
+- **Built:** both clients keep a `CookieJar` whose policy accepts nothing; a cookie-mode
+  credential returns its session as an explicit header. `login_path` and `refresh_path` are
+  refused unless they are paths. A request hook on both clients refuses, before sending, any
+  request whose origin differs from the plan's, which covers a scenario or a credential
+  callable that builds an absolute URL itself, and a redirect.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the run's clients store no cookies and refuse any
+  request off the plan's origin; credential routes are paths on the target.
+
+## D-232 — An open-model shortfall is confirmed by the next rate too
+
+- **Touches:** row 16 (`ASSUMED`), D-220.
+- **Found (PR #847 review):** a rate whose goodput fell short of the offered rate was named a
+  confirmed knee on its own, so one transient dip read as a capacity limit, while the p99 test
+  (D-220) and the closed model required the next step to agree.
+- **Built:** the shortfall test needs the next rate to fall short too; at the last rate the
+  knee is reported unconfirmed.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — both open-model knee tests, p99 doubling and the
+  goodput shortfall, are confirmed only when the next rate repeats them (amends D-220's row).
+
 ## Review findings — 2026-11-05
 
 Fresh-eyes review of `4c3f6dd8f`, with the #840 round's RFC amendments.
@@ -5871,3 +5901,21 @@ Fresh-eyes review of `4c3f6dd8f`, with the #840 round's RFC amendments.
 | R-14 | RFC | No knee confirmed by a saturated or misconfigured step; open comparison less expected answers | Built as amended |
 | R-15 | RFC | `target` scheme://host:port only; mixes in meta; `compare` warns on weights or mixes | Built as amended |
 | R-16 | RFC | Docs: `writes` is a declaration the kit trusts | Written on the docs page |
+
+## Review findings — 2026-11-05 (PR #847)
+
+Automated review of `c7e20bab9`. Findings raised by more than one reviewer are one row.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-17 | Bug | A session cookie set for one principal was sent with every principal's requests | Fixed in `c9b4fce03` (D-231) |
+| R-18 | Bug | `login_path` or `refresh_path` given as a URL sent the password or refresh token off the target | Fixed in `c9b4fce03` (D-231) |
+| R-19 | Bug | A call still awaiting its credential when the step closed was lost from the row | Fixed in `d29fc286d` |
+| R-20 | Bug | `compare` keyed steps as text (`rate=50` ≠ `rate=50.0`) and kept one row of a repeated step | Fixed in `4308c29a1` |
+| R-21 | Bug | A run file with a non-numeric latency or key, or a plan that is not an object, crashed `compare` | Fixed in `50a891af7` |
+| R-22 | Bug | `nan`/`inf` rates crashed the in-flight cap; a `nan` stop rate or `--fail-on` threshold disabled it | Fixed in `1447cb7b3` |
+| R-23 | Bug | `--steps 1,,4` ran a different ramp from the one typed | Fixed in `81573ed96` |
+| R-24 | Risk | An open-model shortfall was a confirmed knee without the next rate | Fixed in `b9e293ed0` (D-232) |
+| R-25 | Bug | `access_expires_in: 0` read as 900 s | Fixed in `a87f7e393` |
+| R-26 | Bug | An unloadable plan reference or an unparsable URL printed a traceback (exit 1) | Fixed in `278b9bc2b`, with the fixture cleanup and the census comment |
+| R-27 | Design | Open-model arrivals continue while a step drains | Refuted: load is continuous across step boundaries in both models, and the next step's `warm_s` keeps the transition out of its numbers |
