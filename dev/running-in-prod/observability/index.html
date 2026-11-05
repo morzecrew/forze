@@ -7247,8 +7247,12 @@ production process with tracing off still reports them:</p>
 <td>calls queued behind each bulkhead, sampled at collection</td>
 </tr>
 <tr>
+<td><code>forze.resilience.bulkhead.in_use</code> (gauge)</td>
+<td>calls holding a slot in each bulkhead right now, sampled at collection</td>
+</tr>
+<tr>
 <td><code>forze.resilience.bulkhead.limit</code> (gauge)</td>
-<td>the current adaptive-bulkhead concurrency limit</td>
+<td>each bulkhead's concurrency limit: the fixed cap, or the current AIMD or Gradient2 limit</td>
 </tr>
 <tr>
 <td><code>forze.resilience.hedge.delay</code> (gauge)</td>
@@ -7259,6 +7263,9 @@ production process with tracing off still reports them:</p>
 <p>Two reading notes: <code>breaker_open</code> counts the open transition <em>and</em> every
 admission shed while open, so its rate tracks shed load; and a breaker that
 never tripped reports no state at all — closed by absence.</p>
+<p>For bulkheads, <code>in_use / limit</code> is occupancy for every bulkhead kind. It shows a
+bulkhead filling up before the queue grows, and a slot that is taken and never
+released shows as <code>in_use</code> that stays up when traffic stops.</p>
 <h2 id="tenant-pool-metrics">Tenant pool metrics<a class="headerlink" href="#tenant-pool-metrics" title="Permanent link">&para;</a></h2>
 <p><a href="../../identity-tenancy-enc/multi-tenancy/">Routed clients</a> keep one connection pool per tenant in a
 bounded LRU, and evicting a pool is expensive — the next request rebuilds the

@@ -7085,11 +7085,18 @@ with tracing off still reports these.</p>
 <td>calls queued behind the semaphore</td>
 </tr>
 <tr>
+<td><code>forze.resilience.bulkhead.in_use</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.policy</code>, <code>forze.route</code></td>
+<td>calls holding a slot right now, for every bulkhead kind</td>
+</tr>
+<tr>
 <td><code>forze.resilience.bulkhead.limit</code></td>
 <td>observable gauge</td>
 <td>1</td>
 <td><code>forze.policy</code>, <code>forze.route</code></td>
-<td>current AIMD concurrency limit</td>
+<td>concurrency limit: a fixed bulkhead's cap, or the current AIMD / Gradient2 limit. <code>in_use / limit</code> is occupancy</td>
 </tr>
 <tr>
 <td><code>forze.resilience.hedge.delay</code></td>
