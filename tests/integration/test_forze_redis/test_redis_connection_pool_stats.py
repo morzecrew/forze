@@ -1,7 +1,8 @@
 """Connection pool gauges against a real redis-py pool (issue #843).
 
-A blocking ``XREAD`` holds one connection for as long as it waits, so the pool's state is
-fixed by what the test holds; the ``XADD`` that wakes it takes a second connection. The
+A blocking ``XREAD`` on an empty stream holds one connection for as long as it waits, so
+the pool's state is fixed by what the test holds; the ``XADD`` that wakes it takes a second
+connection. The
 numbers are read through ``instrument_connection_pools`` and an in-memory OTel reader, the
 same path a scrape takes.
 """
@@ -88,7 +89,9 @@ async def test_gauges_follow_a_held_connection(redis_container: RedisContainer) 
             CONNECTION_POOL_MAX_GAUGE: 2,
         }
 
-        reading = asyncio.ensure_future(client.xread({stream: "$"}, block_ms=10_000))
+        # From 0-0, not $: the checkout shows before Redis has the XREAD, and an XADD that
+        # lands first must still wake it rather than leave it blocked until the timeout.
+        reading = asyncio.ensure_future(client.xread({stream: "0-0"}, block_ms=10_000))
         await _until(client, lambda s: s.in_use == 1)
 
         assert _gauges(reader) == {
