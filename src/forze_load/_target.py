@@ -20,7 +20,13 @@ def require_path(url: str, what: str) -> None:
         or a host, so it could carry a credential to another host.
     """
 
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+
+    except ValueError as error:  # a malformed bracketed host, say
+        raise exc.configuration(
+            f"{what} got a URL that cannot be parsed", code="load_plan_invalid"
+        ) from error
 
     if parts.scheme or parts.netloc:
         raise exc.configuration(

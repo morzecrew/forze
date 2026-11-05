@@ -70,13 +70,14 @@ def served(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Served]:
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
     thread = threading.Thread(target=lambda: asyncio.run(server.serve(sockets=[sock])), daemon=True)
     thread.start()
-    deadline = time.perf_counter() + 15
-
-    while not server.started:
-        assert time.perf_counter() < deadline, "uvicorn did not start"
-        time.sleep(0.02)
 
     try:
+        deadline = time.perf_counter() + 15
+
+        while not server.started:
+            assert time.perf_counter() < deadline, "uvicorn did not start"
+            time.sleep(0.02)
+
         yield _Served(port=sock.getsockname()[1], requests=requests)
 
     finally:

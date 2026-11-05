@@ -110,7 +110,13 @@ class TestWriteHostAllowed:
 class TestPlanShape:
     @pytest.mark.parametrize(
         "base_url",
-        ["ftp://127.0.0.1", "127.0.0.1:8000", "http://", "http://user:pw@127.0.0.1"],
+        [
+            "ftp://127.0.0.1",
+            "127.0.0.1:8000",
+            "http://",
+            "http://user:pw@127.0.0.1",
+            "http://[::1:8000",
+        ],
     )
     def test_bad_urls_are_refused(self, base_url: str) -> None:
         with pytest.raises(CoreException) as error:
@@ -180,7 +186,12 @@ class TestCallRequest:
 
     @pytest.mark.parametrize(
         "url",
-        ["https://evil.example/steal", "//evil.example/steal", "http://127.0.0.1:9/x"],
+        [
+            "https://evil.example/steal",
+            "//evil.example/steal",
+            "http://127.0.0.1:9/x",
+            "http://[::1/x",
+        ],
     )
     async def test_a_url_with_a_scheme_or_host_is_refused_before_sending(self, url: str) -> None:
         sent: list[httpx.Request] = []

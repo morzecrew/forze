@@ -94,6 +94,15 @@ class TestRun:
         assert result.exit_code == 2
         assert "does not allow writes" in result.output
 
+    @pytest.mark.parametrize(
+        "ref", ["no-colon", "tests.unit.test_forze_load.absent_module:plan", f"{_PLANS}:absent"]
+    )
+    def test_a_reference_that_cannot_load_exits_2(self, ref: str) -> None:
+        result = runner.invoke(app, ["load", "run", ref])
+
+        assert result.exit_code == 2, result.output
+        assert "cannot load" in result.output
+
     def test_an_object_that_is_not_a_plan_is_refused(self) -> None:
         result = runner.invoke(app, ["load", "run", f"{_PLANS}:not_a_plan"])
 

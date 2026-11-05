@@ -88,7 +88,12 @@ def run_command(
 
     from forze_load import ClosedRamp, LoadPlan, OpenRamp, run, summarize
 
-    target = load_object(ref)
+    try:
+        target = load_object(ref)
+
+    except (ValueError, ImportError, AttributeError) as error:
+        typer.echo(f"cannot load {ref!r}: {error}", err=True)
+        raise typer.Exit(code=2) from error
 
     if callable(target) and not isinstance(target, LoadPlan):
         target = target()

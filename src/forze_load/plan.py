@@ -243,7 +243,11 @@ def safe_target(base_url: str) -> str:
 
 
 def _check_url(base_url: str) -> str:
-    parts = urlsplit(base_url)
+    try:
+        parts = urlsplit(base_url)
+
+    except ValueError as error:  # a malformed bracketed host, say
+        raise _invalid("base_url cannot be parsed as a URL") from error
 
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise _invalid("base_url must be an http or https URL with a host")

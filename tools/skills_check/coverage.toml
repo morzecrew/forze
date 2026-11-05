@@ -19,9 +19,8 @@
 #   D4  Deliberately deferred. In scope, not yet worth the words. Requires a rationale
 #       *and* a trigger that would move it into D1 or D2.
 #
-# D4 is empty, and that is the healthier state: nothing in scope is currently being put
-# off. The vocabulary stays defined because the next integration to land will plausibly
-# want it.
+# D4 holds one unit, `forze_load`, with its trigger below. An empty D4 is the healthier
+# state: every deferral names what moves it into D1 or D2.
 
 # --------------------------------------------------------------------------------------
 # Extras → census units.
