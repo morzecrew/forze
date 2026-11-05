@@ -245,8 +245,10 @@ def safe_target(base_url: str) -> str:
 def _check_url(base_url: str) -> str:
     try:
         parts = urlsplit(base_url)
+        # `port` is parsed lazily: read it here, or `localhost:bad` passes and httpx fails later.
+        _ = parts.port
 
-    except ValueError as error:  # a malformed bracketed host, say
+    except ValueError as error:  # a malformed bracketed host or port, say
         raise _invalid("base_url cannot be parsed as a URL") from error
 
     if parts.scheme not in ("http", "https") or not parts.hostname:

@@ -116,6 +116,8 @@ class TestPlanShape:
             "http://",
             "http://user:pw@127.0.0.1",
             "http://[::1:8000",
+            "http://localhost:bad",
+            "http://localhost:99999",
         ],
     )
     def test_bad_urls_are_refused(self, base_url: str) -> None:
