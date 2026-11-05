@@ -6238,6 +6238,306 @@ row.
 
 ---
 
+# Unit 21 · RFC 0084 P2 — operation references from OpenAPI
+
+Branch `feat/load-op-scenarios`, cut from `main` at `6409668d2`. RFC 0084 P2 per §12:
+`x-forze-kind` in `forze_fastapi` with its test (§5.5, §6), `Scenario.op` resolution with the
+stop-on-mismatch rule (§5.5, row 7, §5.11), `Scenario.reads` and `sample` (§5.5, §5.5.1,
+row 14), the §6 Guards, Sampling and `x-forze-kind` tests, the §7 docs and the changelog. Not
+built, as §12 assigns them to later phases: realtime (P3), the soak (P4). Rows 1–4, 9–13 and
+15–41 hold as written or do not apply to P2. Row 6 holds: the catalog source is the document
+plus the new key. Row 8 holds (D-234). Rows 7 and 14 are refined by D-234 to D-241
+and D-245; row 5's timeout is left as P1 built it (D-242).
+
+**Drift count: 2.** Fourteen entries, D-233 to D-246: two `drift` (D-240, D-246), twelve
+`spec-gap`. D-240 departs from §5.5's wording, D-246 from §7's; no decision row is departed
+from. A fresh-eyes review of the working tree that became `ab9ddcf86` raised fifteen findings;
+four were refuted. The table at the end records each and where it was fixed.
+
+**Where each item lives.** `x-forze-kind` in
+[`forze_fastapi/routes/_attach.py`](../src/forze_fastapi/routes/_attach.py)
+(`FORZE_KIND_EXTENSION`, `_route_openapi_extra`). `Scenario.op`, `Scenario.reads`, `sample`,
+`Sample`, `OpScenario`, `ReadSweep` and `LoadPlan.openapi` in
+[`forze_load/plan.py`](../src/forze_load/plan.py); resolution, the read sweep and the sample
+pool in [`catalog.py`](../src/forze_load/catalog.py); mix expansion, the sampling phase,
+retirement and the early stop in [`engine.py`](../src/forze_load/engine.py); skipped routes
+printed by [`forze_cli/load.py`](../src/forze_cli/load.py). P1's API (D-221) is unchanged:
+references sit beside `Scenario` in `LoadPlan.scenarios`, as D-221 anticipated.
+`forze_load` still imports only `forze` core and `httpx`; nothing under `src/forze_dst`
+imports it.
+
+## D-233 — The document is read from `LoadPlan.openapi`, before sign-in, with no credential
+
+- **Touches:** §5.5 ("Resolution"), §5.9 (`openapi_sha256`), row 6 (`LOCKED`), which holds.
+- **RFC said:** at start the kit reads the OpenAPI document "from `GET /openapi.json` or from a
+  file for deployments that disable docs"; the meta line carries `openapi_sha256`.
+- **Found:** the RFC does not say where a plan names the source, whether the fetch carries a
+  credential, what a malformed document does, or what the digest is taken over. The kind
+  check is validation, and validation runs before any login (§5.11), so the document is read
+  before anyone signs in, which means without a credential.
+- **Built:** `LoadPlan.openapi: str | Path | Mapping`: a path on the target (default
+  `/openapi.json`, refused unless a path, as D-227), a local file, or the parsed document.
+  It is read only when the plan names an operation, through the credential client and its
+  target guard (D-231). A failed fetch, a non-200 answer, a document with no `paths` object,
+  or an operation whose `parameters`, `requestBody` or `content` has the wrong shape stops
+  the run as `load_openapi_unavailable` (exit 2). `openapi_sha256` is the SHA-256 of the
+  document as canonical JSON (sorted keys, compact), so a served copy, a file and a mapping
+  of one document agree; it is `null` when no document was read.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the OpenAPI document is read once per run, before
+  sign-in and without a credential, from `LoadPlan.openapi`: a path on the target (default
+  `/openapi.json`), a local file, or the parsed document; a plan with no operation reference
+  reads none, and a document whose docs route is guarded is passed as a file.
+  `openapi_sha256` digests the document as canonical JSON.
+
+## D-234 — `Scenario.op` declares `writes=False` by default, checked both ways
+
+- **Touches:** row 7 (`ASSUMED`), row 8 (`LOCKED`), §5.2, §5.5, §5.11.
+- **RFC said:** an operation whose `x-forze-kind` "disagrees with the scenario's declared
+  `writes`" stops the run; with writes off, validation refuses "any `Scenario.op` whose
+  `x-forze-kind` is not `query`"; "`writes` has no default on `Scenario.call`". §5.2's sketch
+  gives `Scenario.op` no `writes` at all.
+- **Found:** an operation's effect is checked against its route, so a default cannot hide a
+  write the way a free callable's could. Row 8's no-default rule is about `Scenario.call`.
+- **Built:** `writes=False` by default. The route must confirm the declaration either way: a
+  `command` or unmarked route under `writes=False`, and a `query` route under `writes=True`,
+  both stop the run before sign-in as `load_op_mismatch`. A `writes=True` reference meets
+  P1's guard first (`load_writes_refused`, `load_write_host_refused`), so with writes off
+  every operation that is not a `query` is refused, by one code or the other.
+- **Class:** `spec-gap`. Row 8 holds: nothing the document does not mark `query` runs while
+  writes are off.
+- **Proposed row (RFC 0084):** `ASSUMED` — `Scenario.op` defaults to `writes=False`; the
+  route's `x-forze-kind` must confirm the declaration either way, and a mismatch stops the
+  run before sign-in as `load_op_mismatch`.
+
+## D-235 — A reference must fit its route, and resolve to one route
+
+- **Touches:** row 7, §4 ("operation references fail at start when the operation is gone,
+  renamed or changed kind").
+- **RFC said:** a missing operation or a kind mismatch stops the run.
+- **Found:** a reference can name a real `query` and still fail every call: an unfilled
+  `{id}`, a required query parameter or body left out, or a misspelt query name, which
+  FastAPI ignores, so the request silently changes. Each is the 422 load §4 wants refused at
+  start. An `operationId` can also appear twice; FastAPI only warns.
+- **Built:** before sign-in, `load_plan_invalid` when a reference's `path` keys are not
+  exactly the path's placeholders, a `params` name is not a query parameter the route
+  declares, a required query parameter or body is missing, or a body goes to a route that
+  takes none; `load_op_ambiguous` when the key appears more than once. Local `$ref`s,
+  path-level parameters and path items given by `$ref` are followed.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — an operation reference whose path, query or body
+  does not fit the route's OpenAPI declaration, or whose key the document lists more than
+  once, stops the run before sign-in.
+
+## D-236 — What a sample sends and what it reads
+
+- **Touches:** row 14 (`ASSUMED`), §5.5.1.
+- **RFC said:** `sample("products.list", field="id", size=500)` calls the list operation as
+  each principal and keeps the ids that principal can see, bounded by `size`, which the route
+  caps at 10,000.
+- **Found:** silent on where `size` goes, on the answer's shape, on a sample of an operation
+  that writes, and on a sample request that fails.
+- **Built:** a sample's operation must be a `query` (`load_op_mismatch` otherwise, whatever
+  `allow_writes` says: sampling never writes) that needs no input (`load_plan_invalid`).
+  `size` goes in the JSON body when the body schema has a `size` property (`{}` otherwise),
+  or in the query when the route takes no body and declares `size`. Values come from the
+  answer's `hits` (forze's `Paginated` and `CursorPaginated`) or a bare JSON array; strings
+  and integers only, deduplicated. A transport error, a non-2xx answer or an answer with no
+  list stops the run as `load_sample_failed`; no value at all is `load_sample_empty`. Both
+  name the principal and the operation, never a value. A `size` outside 1–10,000 is refused
+  when the `Sample` is built. Samples run one after another, after sign-in, on the request
+  client, outside every measurement.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a sample reads a `query` operation that needs no
+  input, sending `size` as the body's or the query's `size`, and keeps the field's string and
+  integer values from `hits` or a bare array; a failed or unreadable answer stops the run
+  before load as an empty one does.
+
+## D-237 — Equal samples share one list per principal
+
+- **Touches:** row 14 ("retires the scenario for that principal").
+- **Found:** two scenarios can draw from one list (`products.get` and a write on
+  `sample("products.list")`). An id that answers 404 to one is gone for the other.
+- **Built:** a `Sample` is a value (operation, field, size). Scenarios with equal samples
+  share one list per principal, read once; a 404 drops the id for all of them, and an
+  emptied list retires every scenario of that principal that uses it.
+- **Class:** `spec-gap`. Its row is proposed with D-238.
+
+## D-238 — `sample_exhausted`, `cut_short`, and a principal with nothing left
+
+- **Touches:** row 14, §5.5.1, §5.6 (the knee), row 36 (exit codes).
+- **RFC said:** a sample emptied during the run "retires that scenario for that principal,
+  and the step row records `sample_exhausted` for it", and "with nothing left, the run stops
+  and the summary says why".
+- **Found:** silent on the field's shape, on when the run stops, on a call already under way
+  when its sample empties, and on the knee. One call is a discovery: a call picks its
+  scenario, then waits on its credential (D-228), and the sample can empty in between.
+- **Built:**
+  - `sample_exhausted` is a list of `{"principal", "scenario"}` in the row of the step during
+    which it happened, its drain included; absent otherwise;
+  - a principal left with nothing ends the current step at once and stops the run: `stopped`
+    is the step's key plus `"reason": "sample_exhausted"` and `"principal"`; the run
+    finishes, exit 0 (row 36);
+  - a step whose window a stop ended early says `"cut_short": true` and is left out of the
+    knee search: it measured a shorter window and a smaller mix. A stop that lands while a
+    whole step drains leaves that step whole (R-8);
+  - a call that finds its sample empty when it sends sends nothing and is not counted.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — scenarios with an equal sample share it per
+  principal; `sample_exhausted` lists `{principal, scenario}` in the row of the step it
+  happened in; a principal left with nothing ends that step and stops the run with
+  `stopped.reason: "sample_exhausted"`, a finished run; a step a stop cut short says
+  `cut_short` and is never a knee.
+
+## D-239 — A generated id route samples the `list` of its namespace
+
+- **Touches:** §5.5 ("Ids come from §5.5.1"), rows 7 and 14.
+- **RFC said:** generated reads take their ids from sampling.
+- **Found:** not from which list operation. The document does not link `products.get` to
+  `products.list`; forze's keys do, by namespace (`ns.key(DocumentKernelOp.GET)`).
+- **Built:** an id route `<ns>.<op>` samples `<ns>.list` with `field="id"` and `size=500`. It
+  must be one `query` route that needs no input; otherwise the id route is skipped as
+  `no '<ns>.list' query to sample ids from`. The empty-sample rule holds for generated
+  routes too: a sweep over a namespace with no rows a principal can see stops the run before
+  load, as an explicit reference does.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a generated id route samples the `list` operation
+  of its key's namespace (`orders.list` for `orders.get`), and is skipped without one; an
+  empty sample stops the run for a generated route as for an explicit one.
+
+## D-240 — The sweep's input rule: at most an id, and a body that requires nothing
+
+- **Touches:** row 7, §5.5 ("empty, paginated, or an id with optional `rev`").
+- **RFC said:** generated for routes whose input is empty, paginated, or an id with an
+  optional `rev`.
+- **Found:** "paginated" has no marker in the document. forze's list bodies (`page` and
+  `size`, or `size`, `after` and `before`, with `filters` and `sorts`) require no field, and
+  `{}` is valid for each; `agg_list` requires `aggregates`.
+- **Built:** a `query` route is generated when its required parameters are at most `id`
+  (path, REST style; or query, RPC style) and its JSON body, if any, requires no field and
+  is not an `allOf`, `anyOf` or `oneOf` (R-3). The body is sent as `{}`, so the route's
+  default page size applies; `rev` is never sent. Every other `query` route the prefix
+  matches is skipped with its reason: `needs ['q']`, `its body requires ['aggregates']`,
+  `takes a body that is not JSON`, `its body schema is composed (…)`, `appears 2 times in
+  the document`. This is wider than "paginated": a body whose fields are all optional is
+  generated even when it does not paginate. The request is one the schema accepts, not a
+  guess.
+- **Class:** `drift`. §5.5 names an input class; the build tests a wider one, because the
+  named class cannot be read off the document.
+- **Proposed row (RFC 0084):** `ASSUMED` — the read sweep generates a `query` route whose
+  required parameters are at most `id` (path or query) and whose JSON body requires no field,
+  sent as `{}`; every other `query` route the prefix matches is recorded as skipped with its
+  reason.
+
+## D-241 — A sweep is one mix entry, and skipped routes go in the meta line
+
+- **Touches:** §5.5 ("listed as skipped"), §5.9 (meta), §5.4 (mixes).
+- **Found:** a mix names scenarios before the document is read, so it cannot name generated
+  ones, and "listed" has no place in the RFC's output.
+- **Built:** `Scenario.reads(prefix, name="reads")` is one name in mixes; its weight is split
+  evenly between its generated scenarios, which rows and meta name by operation key. A mix
+  of plain scenarios keeps its integer weights, so P1's picks are unchanged. `plan.scenarios`
+  in the meta line gives each scenario `writes`, a reference its `operation`, and a
+  generated one its `group`; `plan.skipped` maps each skipped key to its reason, and
+  `forze load run` prints them. An operation another scenario of the plan names, explicitly
+  or through an earlier sweep, is skipped as `named by another scenario`. A sweep that
+  generates nothing stops the run as `load_op_missing`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a read sweep is one mix entry whose weight is split
+  evenly between its generated scenarios, named by operation key; skipped routes are recorded
+  in the meta line's `plan.skipped` and printed by the CLI; a sweep that generates nothing
+  stops the run.
+
+## D-242 — `x-deadline-seconds` is not read; every request keeps `timeout_s`
+
+- **Touches:** §5.3 ("a per-request timeout from the plan, or from `x-deadline-seconds` plus a
+  margin when the operation declares one"), row 5, §12.
+- **RFC said:** as quoted; row 5 sizes the in-flight cap from "the longest timeout any
+  scenario can have".
+- **Found:** §12 places this in no phase. P1 had no operations, so it built one plan-wide
+  timeout; P2 is the first phase with a route to read the key from. Per-scenario timeouts
+  would change the request timeout per call, the in-flight cap (row 5) and the drain wait
+  (D-229), all sized from one value today.
+- **Built:** nothing. Operation references use `LoadPlan.timeout_s`; the docs page says so.
+- **Class:** `spec-gap` (phasing).
+- **Proposed row (RFC 0084):** `ASSUMED` — every request uses the plan's `timeout_s`; a
+  per-operation timeout from `x-deadline-seconds` is demand-gated, since the in-flight cap and
+  the drain wait would then be sized per scenario.
+
+## D-243 — The wire names are pinned, the tenant header to core's constant
+
+- **Touches:** §5.2, §6 ("wire-name constants pinned to `forze_fastapi`'s"), row 31, §9.
+- **Found:** P1 restated `X-Tenant-Id` with no pin test. Its server constant is core's
+  `TENANT_ID_HEADER`, not `forze_fastapi`'s, and `x-forze-kind` had no constant before P2.
+- **Built:** `FORZE_KIND_EXTENSION` in `forze_fastapi.routes._attach`, which
+  `_route_openapi_extra` uses. `tests/unit/test_forze_load/test_load_wire_names.py` pins
+  `forze_load`'s `x-forze-kind` to it, `query` and `command` to `OperationKind`, and
+  `X-Tenant-Id` to core's constant. The test imports both packages directly; `forze_load`
+  imports neither.
+- **Class:** `spec-gap`.
+
+## D-244 — `forze_load` stays D4 in the skills census though its trigger fired
+
+- **Touches:** nothing in the RFC; D-224's trigger, "RFC 0084 P2 (operation references from
+  OpenAPI) lands".
+- **Found:** P2 gives a worked example something forze-specific to show (`Scenario.op` against
+  a generated route). Moving the unit to D1 needs a reference in the published `skills/`
+  corpus, which is written for app authors and is outside §12's P2.
+- **Built:** nothing. `tools/skills_check/coverage.toml` is unchanged, rationale and trigger
+  included, so once this lands its rationale describes the past. A follow-up moves
+  `forze_load` to D1 with a worked example.
+- **Class:** `spec-gap`.
+
+## D-245 — A server path in the document must be in the base URL
+
+- **Touches:** §5.5 ("takes its method, path and parameters"), §4.
+- **Found (review R-4):** FastAPI behind a `root_path` lists it as the first server
+  (`/api/v1`) and keeps its paths without it. A base URL without the prefix sends every
+  request to a path that 404s, and each 404 drains a sample, so the run reads as deleted data
+  and ends in `sample_exhausted` instead of a configuration error.
+- **Built:** when the document's first server is a relative path, the base URL's path must end
+  with it, or the run stops before sign-in as `load_plan_invalid`. An absolute server, or
+  none, leaves the base URL to decide. Requests stay relative to the base URL, so a prefix in
+  it reaches every route.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a document whose first server is a path is
+  refused unless the base URL ends with that path.
+
+## D-246 — P2's `forze_load` changes amend P1's unreleased changelog entry
+
+- **Touches:** §7 ("A `CHANGELOG.md` `Added` entry per phase. P2's `x-forze-kind` gets its own
+  line").
+- **Built:** `x-forze-kind` has its own `Added` line, as §7 asks. `Scenario.op`,
+  `Scenario.reads` and `sample()` are folded into the `forze_load` entry P1 added, which has
+  not been released: the changelog records net change per release (`keep-a-changelog`), and
+  AGENTS.md gives the changelog's format to that skill.
+- **Class:** `drift`.
+
+## Review findings — 2026-11-05
+
+Fresh-eyes review of the working tree that became `ab9ddcf86`. Every fix has a test that
+fails without it; R-12's was checked by removing the branch it covers.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Risk | A key the document lists twice under two kinds vanished from the sweep | Fixed in `5f98aa4d0`: skipped as `appears 2 times in the document` |
+| R-2 | Bug | `"parameters": null`, a parameter without a name, or a `requestBody` or `content` that is not an object raised `TypeError`: exit 1 with a traceback | Fixed in `5f98aa4d0`: `load_openapi_unavailable`, exit 2 (D-233) |
+| R-3 | Risk | A body schema built from `allOf`, `anyOf` or `oneOf` looked as if it required nothing, so the sweep would send `{}` into 422s | Fixed in `5f98aa4d0`: skipped with its reason (D-240) |
+| R-4 | Risk | A path item given by `$ref` was ignored, and a server path missing from the base URL turned every request into a 404 that drained the samples | Fixed in `5f98aa4d0`: the `$ref` is followed (D-235); the server path is checked (D-245) |
+| R-5 | Design | A `query` route on `PUT`, `PATCH` or `DELETE` would run while writes are off | Refuted: rows 6 and 8 make the catalog's kind, as `x-forze-kind`, the test; forze binds no `query` to those verbs, and a verb rule would second-guess the key the RFC chose because the verb cannot tell (§3.1) |
+| R-6 | Risk | An undotted key `get` samples `list` | Refuted: the namespace rule (D-239) at the root namespace, applied as it is to `orders.get` |
+| R-7 | Question | Does a sample request go through the guarded client | Confirmed: both clients carry the target guard (D-231), so a document path naming a host is refused before sending |
+| R-8 | Bug | The knee left out the last row on any stop, a whole step when the stop landed in its drain | Fixed in `34519ff43`: only a row whose window a stop ended early says `cut_short` and is left out (D-238) |
+| R-9 | Question | A stop during warm-up wrote a zero-length row as an ordinary step | Fixed in `34519ff43`: the row says `cut_short` |
+| R-10 | Risk | A retirement after the last row is written never reaches a row | Refuted: calls answering after the last row were sent outside every step's window (D-229), and the run is over |
+| R-11 | Risk | A failed sample leaves a file with only its meta line | Refuted: a failed sign-in has done so since P1; `read_run` reads a file with no summary, and `compare` refuses a gate that matched no step (Unit 20, R-36) |
+| R-12 | Test | No test reached the branch where a call's sample empties while it waits on its credential | Fixed in `34519ff43`: two workers and a credential that waits; the test fails with the branch removed |
+| R-13 | Test | No cases for path-level parameters, a path item `$ref`, servers, mixed kinds or malformed shapes | Fixed in `5f98aa4d0`; undotted keys stay as R-6 says |
+| R-14 | Test | The ids test passed even if the run never reached load | Fixed in `34519ff43`: it asserts the sampled ids were called |
+| R-15 | Test | `importorskip("fastapi")` skipped the wire-name pins where fastapi is absent | Fixed in `34519ff43`: imported directly, as Unit 20's R-11 did for uvicorn |
+
+---
+
 # Unit 22 · RFC 0083 P2 — the minimal collector recipe
 
 Branch `docs/otlp-collector-recipe`, cut from `main` at `6409668d2`. RFC 0083 P2 per §12 and
