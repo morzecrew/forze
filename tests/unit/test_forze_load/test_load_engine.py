@@ -505,13 +505,13 @@ class TestRunState:
 
         assert result.rows[0]["client"]["loop_cpu_judged"] is False
 
-    def test_unjudged_loop_cpu_does_not_mark_saturation(self) -> None:
+    def test_unjudged_loop_cpu_does_not_mark_saturation(self, monkeypatch) -> None:
+        clock = {"thread": 0.0, "wall": 0.0}
+        monkeypatch.setattr(time, "thread_time", lambda: clock["thread"])
+        monkeypatch.setattr(time, "perf_counter", lambda: clock["wall"])
         probe = _Probe()
         probe.begin()
-        end = time.perf_counter() + 0.1
-
-        while time.perf_counter() < end:  # a busy loop thread
-            pass
+        clock["thread"] = clock["wall"] = 1.0  # a whole core for a second, with no scheduler luck
 
         assert probe.report(0, 0, cpu_judged=True)["saturated"]
         assert not probe.report(0, 0, cpu_judged=False)["saturated"]
