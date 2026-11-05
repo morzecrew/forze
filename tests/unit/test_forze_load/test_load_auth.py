@@ -187,6 +187,20 @@ class TestPasswordSession:
 
         assert server.refreshes == 1  # not read as the 900 s default
 
+    @pytest.mark.parametrize("lifetime", ["Infinity", "NaN"])
+    async def test_a_lifetime_that_is_not_finite_is_refused(
+        self, password: str, lifetime: str
+    ) -> None:
+        # Raw text: Python's json reads these non-standard literals, httpx will not write them.
+        body = f'{{"access_token": "a", "refresh_token": "r", "access_expires_in": {lifetime}}}'
+        response = httpx.Response(200, text=body, headers={"content-type": "application/json"})
+
+        async with _client(lambda _request: response) as client:
+            with pytest.raises(CoreException) as error:
+                await password_login("ada", password_env="LOAD_PW").session().headers(client)
+
+        assert error.value.code == "load_login_failed"
+
     async def test_a_lifetime_that_is_not_a_number_is_refused(self, password: str) -> None:
         body = {"access_token": "a", "refresh_token": "r", "access_expires_in": "soon"}
 

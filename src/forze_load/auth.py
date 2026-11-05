@@ -10,6 +10,7 @@ other's session family. A plan reused for a second run signs in again.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
@@ -274,9 +275,14 @@ class PasswordSession:
         if expires_in is None:
             expires_in = 900
 
-        if isinstance(expires_in, bool) or not isinstance(expires_in, int | float):
+        # An infinite lifetime would never come due, and nan compares false both ways.
+        if (
+            isinstance(expires_in, bool)
+            or not isinstance(expires_in, int | float)
+            or not math.isfinite(expires_in)
+        ):
             raise self._failed(
-                "Signing in", "a token response whose access_expires_in is not a number"
+                "Signing in", "a token response whose access_expires_in is not a finite number"
             )
 
         now = monotonic()
