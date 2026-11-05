@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from forze.application.contracts.pools import (
+    ConnectionPoolStats,
+    SupportsConnectionPoolStats,
+)
 from forze.base.exceptions import CoreException
 
 pytest.importorskip("psycopg")
@@ -991,3 +995,43 @@ def test_a_failed_pipeline_keeps_its_connection_only_when_left_clean(
     conn.pgconn.transaction_status = transaction
 
     assert _left_clean(conn) is clean
+
+
+# ....................... #
+
+
+class TestConnectionPoolStats:
+    """`connection_pool_stats` maps psycopg_pool's public `get_stats()` keys."""
+
+    def test_maps_the_pool_measures(self) -> None:
+        client, _conn, pool = _client_with_stub_pool()
+        pool.get_stats = lambda: {  # type: ignore[method-assign]
+            "pool_min": 1,
+            "pool_max": 10,
+            "pool_size": 7,
+            "pool_available": 3,
+            "requests_waiting": 2,
+            "connections_errors": 0,
+        }
+
+        assert client.connection_pool_stats() == ConnectionPoolStats(
+            in_use=4,
+            idle=3,
+            max_size=10,
+            waiting=2,
+        )
+
+    def test_reports_nothing_without_an_open_pool(self) -> None:
+        assert PostgresClient().connection_pool_stats() is None
+
+    def test_a_routed_client_does_not_report_one(self) -> None:
+        """A routed client holds one pool per tenant; summing them would hide a saturated one.
+
+        Its per-tenant view is `instrument_tenant_pools`, so it stays out of the protocol and
+        `instrument_connection_pools` refuses it at wiring instead of on every scrape.
+        """
+
+        from forze_postgres.kernel.client.routed_client import RoutedPostgresClient
+
+        assert issubclass(PostgresClient, SupportsConnectionPoolStats)
+        assert not issubclass(RoutedPostgresClient, SupportsConnectionPoolStats)

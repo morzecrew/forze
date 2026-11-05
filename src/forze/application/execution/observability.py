@@ -7,7 +7,7 @@ extra. Emits via the global OpenTelemetry providers — configure the SDK + expo
 app.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -17,12 +17,16 @@ from forze.application.contracts.execution import (
     MiddlewareFactory,
     MiddlewareStep,
 )
+from forze.application.contracts.pools import (
+    ConnectionPoolStats,
+    SupportsConnectionPoolStats,
+)
 from forze.application.contracts.tenancy import TenantPoolStats
 
 # OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
 # merely importing this module (it is re-exported from ``forze.application.execution``)
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
-from forze.base.exceptions import CoreException, is_server_error_kind
+from forze.base.exceptions import CoreException, exc, is_server_error_kind
 
 from .context.invocation import InvocationSurface
 from .operations.registry import OperationRegistry
@@ -65,6 +69,11 @@ TENANT_POOL_CAPACITY_GAUGE = "forze.tenancy.pool.capacity"
 TENANT_POOL_CREATED_COUNTER = "forze.tenancy.pool.created"
 TENANT_POOL_DISPOSED_COUNTER = "forze.tenancy.pool.disposed"
 TENANT_POOL_EVICTED_COUNTER = "forze.tenancy.pool.evicted_explicit"
+
+CONNECTION_POOL_IN_USE_GAUGE = "forze.connection_pool.in_use"
+CONNECTION_POOL_IDLE_GAUGE = "forze.connection_pool.idle"
+CONNECTION_POOL_MAX_GAUGE = "forze.connection_pool.max"
+CONNECTION_POOL_WAITING_GAUGE = "forze.connection_pool.waiting"
 
 _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_close": 0,
@@ -313,6 +322,101 @@ def instrument_tenant_pools(
         callbacks=[_observe(lambda s: s.evicted_explicit)],
         unit="1",
         description="Cumulative explicit tenant evictions (rotation signals).",
+    )
+
+
+# ....................... #
+
+
+def instrument_connection_pools(
+    clients: Mapping[str, SupportsConnectionPoolStats],
+    *,
+    meter: "Meter | None" = None,
+) -> None:
+    """Export each client's connection pool as OpenTelemetry observable gauges.
+
+    *clients* maps a label you choose (e.g. ``"postgres"``) to a client implementing
+    :class:`~forze.application.contracts.pools.SupportsConnectionPoolStats`; today that is
+    ``PostgresClient``. Emits, per client (labelled ``forze.client``):
+
+    - ``forze.connection_pool.in_use``: connections checked out, or being opened;
+    - ``forze.connection_pool.idle``: open connections not checked out;
+    - ``forze.connection_pool.max``: the configured cap;
+    - ``forze.connection_pool.waiting``: callers queued for a connection, where the
+      driver exposes it.
+
+    A client with no open pool (before ``initialize``, after ``close``) reports nothing.
+    One series per client, never per tenant: a routed client keeps a pool per tenant and
+    does not implement the protocol; :func:`instrument_tenant_pools` covers it.
+
+    The alert that matters: ``waiting`` above zero across scrapes, or ``in_use`` pinned at
+    ``max``, means callers queue for connections and will start failing at the acquire
+    timeout. ``in_use`` that climbs under steady load and never falls back is a connection
+    that is never returned. A database that is down looks the same: the pool's reconnect
+    attempts hold ``in_use`` at ``max`` while callers wait, so pair the alert with a
+    connectivity signal.
+
+    Emits via the global OTel meter unless *meter* is supplied. Call once at assembly
+    time, alongside the other ``instrument_*`` calls.
+
+    :raises CoreException: ``configuration`` when a client does not implement the
+        protocol; otherwise every collection would fail on it without a word.
+    """
+
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
+
+    clients = dict(clients)
+
+    for label, client in clients.items():
+        if not isinstance(client, SupportsConnectionPoolStats):
+            raise exc.configuration(
+                f"Client {label!r} ({type(client).__name__}) does not report connection pool "
+                "stats: it has no connection_pool_stats() method.",
+            )
+
+    meter = meter or metrics.get_meter("forze")
+
+    def _observe(
+        pick: Callable[[ConnectionPoolStats], int | None],
+    ) -> Callable[["CallbackOptions"], Iterable[Observation]]:
+        def callback(_options: "CallbackOptions") -> Iterable[Observation]:
+            for label, client in clients.items():
+                stats = client.connection_pool_stats()
+
+                if stats is None:
+                    continue
+
+                value = pick(stats)
+
+                if value is not None:
+                    yield Observation(value, {"forze.client": label})
+
+        return callback
+
+    meter.create_observable_gauge(
+        CONNECTION_POOL_IN_USE_GAUGE,
+        callbacks=[_observe(lambda s: s.in_use)],
+        unit="1",
+        description="Connections checked out of, or being opened by, the client's pool.",
+    )
+    meter.create_observable_gauge(
+        CONNECTION_POOL_IDLE_GAUGE,
+        callbacks=[_observe(lambda s: s.idle)],
+        unit="1",
+        description="Open connections idle in the client's pool.",
+    )
+    meter.create_observable_gauge(
+        CONNECTION_POOL_MAX_GAUGE,
+        callbacks=[_observe(lambda s: s.max_size)],
+        unit="1",
+        description="Configured cap on the client's open connections.",
+    )
+    meter.create_observable_gauge(
+        CONNECTION_POOL_WAITING_GAUGE,
+        callbacks=[_observe(lambda s: s.waiting)],
+        unit="1",
+        description="Callers queued for a connection from the client's pool.",
     )
 
 
