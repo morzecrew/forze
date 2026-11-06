@@ -6,6 +6,7 @@ Covers:
   the installed SDK's ``AsyncTransaction``);
 - ABORTED commit mapping to the CONCURRENCY exception kind (OCC retry hook);
 - rollback on ``asyncio.CancelledError`` with the error propagating unmapped;
+- rollback on ``RollbackSignal`` (a ``rollback_only()`` scope), propagating unmapped;
 - ``count_documents`` attaching the ambient context transaction;
 - per-call ``database`` selection raising a configuration error instead of
   silently using the default database.
@@ -25,6 +26,7 @@ pytest.importorskip("google.cloud.firestore")
 from google.api_core import exceptions as gax_exceptions
 from google.cloud.firestore_v1 import AsyncTransaction
 
+from forze.application.contracts.transaction import RollbackSignal
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_firestore.kernel.client.client import _TX_PRIVATE_API, FirestoreClient
 
@@ -185,6 +187,20 @@ class TestTransactionScope:
         assert tx.rolled_back
         assert not tx.committed
         assert not client.is_in_transaction()
+
+    @pytest.mark.asyncio
+    async def test_rollback_signal_rolls_back_and_propagates_unmapped(self) -> None:
+        tx = _FakeTransaction()
+        client = _make_client(tx)
+        signal = RollbackSignal()
+
+        with pytest.raises(RollbackSignal) as caught:
+            async with client.transaction():
+                raise signal
+
+        assert caught.value is signal
+        assert tx.rolled_back
+        assert not tx.committed
 
     @pytest.mark.asyncio
     async def test_rollback_skipped_when_begin_never_completed(self) -> None:

@@ -217,6 +217,7 @@ class MockStrictTxManagerAdapter(TransactionManagerPort, TxLockCapable):
         # serializable; nested scopes are real savepoints.
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
+            savepoints=True,
         )
 
     # ....................... #
@@ -238,6 +239,17 @@ class MockStrictTxManagerAdapter(TransactionManagerPort, TxLockCapable):
         """
 
         return _mock_tx_read_only.get()
+
+    # ....................... #
+
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a scope opened now joins the transaction already open on this task.
+
+        Every mock route shares one state, so any open root of this manager is the one a
+        scope on another route joins.
+        """
+
+        return _strict_tx_depth.get() > 0
 
     # ....................... #
 
@@ -362,6 +374,17 @@ class MockJournalTxManagerAdapter(TransactionManagerPort, TxLockCapable):
         """
 
         return _mock_tx_read_only.get()
+
+    # ....................... #
+
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a scope opened now joins the transaction already open on this task.
+
+        Every mock route shares one state, so any open root of this manager is the one a
+        scope on another route joins.
+        """
+
+        return _journal_tx_depth.get() > 0
 
     # ....................... #
 

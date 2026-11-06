@@ -27,6 +27,21 @@ double-execute or roll back around a change that is actually committed.
 # ....................... #
 
 
+class RollbackSignal(BaseException):
+    """Control flow, not an error: ends a transaction with a rollback on purpose.
+
+    :meth:`~forze.application.execution.context.transaction.TransactionContext.scope` throws
+    it into the manager's :meth:`TransactionManagerPort.transaction` when the scope was marked
+    ``rollback_only()``, and catches it again as it leaves. A :class:`BaseException`, like
+    :class:`asyncio.CancelledError`, so it takes the path cancellation already takes: every
+    manager rolls back on it and re-raises it, and no ``except Exception`` error log sees it.
+    Never raise or catch it yourself; call ``rollback_only()`` on the scope's handle.
+    """
+
+
+# ....................... #
+
+
 @final
 class IsolationLevel(IntEnum):
     """Transaction isolation level, ordered weakest → strongest.
@@ -60,6 +75,12 @@ class TransactionallyEnlistable(Protocol):
     A store bound to a **different** client/pool is not enlisted: its write commits on its own
     connection, silently breaking any "commit atomically" guarantee. See
     :meth:`~forze.application.execution.context.transaction.TransactionContext.assert_enlisted`.
+
+    A transaction manager implements it too: ``True`` when a scope opened now would join a
+    transaction already open on this task, because its client is in one. A scope on another
+    route whose manager answers ``False``, or cannot answer, opens a transaction of its own,
+    which commits at its own exit (see
+    :class:`~forze.application.execution.context.transaction.TransactionScopeHandle`).
     """
 
     def is_transactionally_enlisted(self) -> bool:
@@ -84,12 +105,20 @@ class TxCapabilities:
     isolation: frozenset[IsolationLevel]
     """Isolation levels this manager can honor.
 
-    The capability report intentionally covers only what the kernel **enforces** at resolve
-    (the declared isolation). Other transaction features (savepoints / partial rollback,
-    read-only enforcement) are honored by the adapter at runtime, not advertised here — add
-    a field only when the kernel grows a fail-closed check that consults it. Whether a
-    read-only root is enforced depends on the transaction actually opened, so it is asked of
-    the open transaction (:class:`ReadOnlyAware`), not reported here."""
+    The capability report intentionally covers only what the kernel **enforces** (the
+    declared isolation, and :attr:`savepoints`). Other transaction features (read-only
+    enforcement) are honored by the adapter at runtime, not advertised here — add a field
+    only when the kernel grows a fail-closed check that consults it. Whether a read-only
+    root is enforced depends on the transaction actually opened, so it is asked of the open
+    transaction (:class:`ReadOnlyAware`), not reported here."""
+
+    savepoints: bool = False
+    """Whether a nested scope is a savepoint the backend can roll back on its own.
+
+    ``False`` when nested scopes share the root's transaction (Mongo, Firestore, Neo4j, the
+    journal mock): a nested scope's writes can then only be discarded with the whole
+    transaction. The kernel consults it when a nested scope asks for ``rollback_only()``,
+    and refuses there when it is ``False`` (fail-closed)."""
 
 
 # ....................... #
@@ -163,6 +192,12 @@ class TransactionManagerPort(Protocol):
         Transaction options (isolation, ``read_only``) are honored only at the root —
         the kernel never forwards ``read_only`` to nested calls, and implementations
         must not attempt mid-transaction option changes.
+
+        Rollback on request: a scope marked ``rollback_only()`` exits by throwing
+        :class:`RollbackSignal` into this context manager. Roll back as for any exception
+        and let it propagate. It is a :class:`BaseException`, like cancellation, so a
+        manager that already rolls back on cancellation needs nothing more, and must not
+        log it as an error.
 
         Isolation is opt-in: a manager that can honor an explicit
         :class:`IsolationLevel` implements :class:`IsolationAware` (reporting its

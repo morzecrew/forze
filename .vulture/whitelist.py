@@ -314,6 +314,7 @@ _.edges_of  # unused method (src/forze/application/contracts/inventory/registry.
 _.to_ast  # unused method (src/forze/application/contracts/querying/builder.py:75)
 _.not_  # unused method (src/forze/application/contracts/querying/builder.py:509)
 is_operation_running  # unused function (src/forze/application/execution/context/active_operation.py:109)
+_.rollback_only  # unused method (src/forze/application/execution/context/transaction.py:131)
 _.resolution_trace  # unused method (src/forze/application/execution/deps/frozen.py:350)
 _.to_dag  # unused method (src/forze/application/execution/deps/resolution/graph.py:48)
 _.get_descriptors  # unused method (src/forze/application/execution/operations/registry/registries.py:73)
