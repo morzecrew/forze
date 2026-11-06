@@ -133,6 +133,27 @@ async def _aiter_once(data: bytes) -> AsyncIterator[bytes]:
 # ....................... #
 
 
+def validate_storage_prefix(prefix: str | None) -> None:
+    """Refuse a storage prefix outside the key charset, or with a ``..`` segment.
+
+    Shared by :class:`ObjectStorageAdapter` and the in-memory mock, so a prefix a test
+    passes against the mock is one the real adapter accepts.
+
+    :raises CoreException: ``precondition`` when the prefix is refused.
+    """
+
+    if prefix is None:
+        return
+
+    # ``fullmatch``: ``$`` would also match before a trailing newline.
+    if not re.fullmatch(rf"[{_KEY_CHARS}]*", prefix):
+        raise exc.precondition(f"Invalid object storage prefix: {prefix}")
+
+    # A key minted under a ``..`` segment would fail the key check on every read.
+    if ".." in prefix.split("/"):
+        raise exc.precondition(f"Unsafe object storage prefix: {prefix!r}")
+
+
 def _reject_duplicate_part_numbers(parts: Sequence[UploadPart]) -> None:
     """Reject a parts list with a repeated ``part_number`` before assembly.
 
@@ -337,16 +358,7 @@ class ObjectStorageAdapter(
 
     @staticmethod
     def _validate_prefix(prefix: str | None) -> None:
-        if prefix is None:
-            return
-
-        # ``fullmatch``: ``$`` would also match before a trailing newline.
-        if not re.fullmatch(rf"[{_KEY_CHARS}]*", prefix):
-            raise exc.precondition(f"Invalid object storage prefix: {prefix}")
-
-        # A key minted under a ``..`` segment would fail :meth:`_validate_key` on every read.
-        if ".." in prefix.split("/"):
-            raise exc.precondition(f"Unsafe object storage prefix: {prefix!r}")
+        validate_storage_prefix(prefix)
 
     # ....................... #
 
@@ -1630,15 +1642,19 @@ class ObjectStorageAdapter(
         if isinstance(prefix, tuple):
             prefix = default_path_codec.join(*prefix)
 
-        # The codec strips the caller's trailing ``/``; restored on the path below.
-        folder = prefix is not None and prefix.endswith("/")
+        # The codec strips the caller's trailing ``/``s; restored, every one, on the path
+        # below, so ``lake//`` stays a plain prefix as on the mock.
+        trailing = len(prefix) - len(prefix.rstrip("/")) if prefix is not None else 0
         prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
 
+        if not prefix:  # only slashes: the root, one folder boundary under a tenant
+            trailing = min(trailing, 1)
+
         path = self.construct_path(prefix)
 
-        if folder and path:
-            path = f"{path}/"
+        if trailing and path:
+            path += "/" * trailing
 
         bucket = await self._resolved_bucket()
 

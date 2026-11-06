@@ -34,6 +34,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.integrations.storage.adapter import (
     _reject_duplicate_part_numbers,  # pyright: ignore[reportPrivateUsage]
+    validate_storage_prefix,
 )
 from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
@@ -173,6 +174,7 @@ class MockStorageAdapter(
         data = obj.data
         prefix = obj.prefix
         description = obj.description
+        validate_storage_prefix(prefix)  # as the real adapter refuses it
         key = f"{prefix.strip('/') + '/' if prefix else ''}{uuid7()}"
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         stored = StoredObject(
@@ -210,6 +212,7 @@ class MockStorageAdapter(
         """
 
         _ = chunk_size
+        validate_storage_prefix(prefix)  # before the stream is drained, as the real adapter
 
         buffer = bytearray()
         async for piece in chunks:
@@ -763,6 +766,7 @@ class MockStorageAdapter(
         """
 
         _ = include_tags  # tags are always included for free in the mock
+        validate_storage_prefix(prefix)  # as the real adapter refuses it
 
         with self.state.lock:
             # Inside the lock with the read it guards: checking existence outside it would

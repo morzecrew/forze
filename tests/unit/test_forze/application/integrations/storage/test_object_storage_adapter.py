@@ -390,6 +390,7 @@ def _listing_adapter(**kw) -> ObjectStorageAdapter:
         ("/", ""),
         ("lake/symbol=BTC", "lake/symbol=BTC"),
         ("lake/symbol=BTC/", "lake/symbol=BTC/"),
+        ("lake//", "lake//"),  # every trailing `/` kept, as the mock's plain prefix
         ("/lake/symbol=BTC/", "lake/symbol=BTC/"),
         (("lake", "symbol=BTC"), "lake/symbol=BTC"),
     ],
@@ -406,7 +407,13 @@ async def test_list_keeps_a_trailing_slash_as_a_folder_boundary(
 
 @pytest.mark.parametrize(
     ("prefix", "suffix"),
-    [(None, ""), ("/", "/"), ("lake/symbol=BTC", "/lake/symbol=BTC"), ("lake/", "/lake/")],
+    [
+        (None, ""),
+        ("/", "/"),
+        ("//", "/"),
+        ("lake/symbol=BTC", "/lake/symbol=BTC"),
+        ("lake/", "/lake/"),
+    ],
 )
 async def test_list_keeps_the_folder_boundary_under_a_tenant(
     prefix: str | None, suffix: str
