@@ -1,3 +1,5 @@
+from typing import Any
+
 """Tests for HTTP service specs."""
 
 from enum import StrEnum
@@ -167,14 +169,16 @@ class TestResponseDecoding:
 
         assert op.return_type is return_type
 
-    def test_raw_refuses_any_other_model(self) -> None:
+    @pytest.mark.parametrize("return_type", [_Out, list[RawBody]], ids=["model", "alias"])
+    def test_raw_refuses_any_other_return_type(self, return_type: Any) -> None:
+        # A generic alias is no class: refused as configuration, not a TypeError.
         with pytest.raises(CoreException, match="requires return_type RawBody") as raised:
             HttpOperationSpec(
                 name="get",
                 method="GET",
                 path="/",
                 args_type=None,
-                return_type=_Out,
+                return_type=return_type,
                 response_decoding="raw",
             )
 

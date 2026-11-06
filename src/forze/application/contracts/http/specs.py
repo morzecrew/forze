@@ -185,10 +185,13 @@ class HttpOperationSpec(Generic[In, Out]):
                     f"HTTP operation {self.name!r}: query_from unknown fields {sorted(unknown)}",
                 )
 
-        if self.response_decoding == "raw" and not issubclass(self.return_type, RawBody):
+        # `isinstance(..., type)` first: a generic alias is no class, and `issubclass` would raise.
+        if self.response_decoding == "raw" and not (
+            isinstance(self.return_type, type) and issubclass(self.return_type, RawBody)
+        ):
             raise exc.configuration(
                 f"HTTP operation {self.name!r}: response_decoding 'raw' requires return_type "
-                f"RawBody or a subclass, got {self.return_type.__name__}",
+                f"RawBody or a subclass, got {self.return_type!r}",
             )
 
 
