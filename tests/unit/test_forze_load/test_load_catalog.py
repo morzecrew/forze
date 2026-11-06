@@ -628,3 +628,153 @@ class TestReadSweep:
 
 def read_back(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+# ....................... #
+
+
+class TestRouteInputs:
+    """What a route needs, read as the OpenAPI specification defines it."""
+
+    async def test_a_sweep_skips_a_route_needing_a_header_or_a_cookie(self) -> None:
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/h": {"get": _op("a.region", params=[("X-Region", "header", True)])},
+                "/c": {"get": _op("a.session", params=[("session", "cookie", True)])},
+                "/o": {"get": _op("a.traced", params=[("X-Trace", "header", False)])},
+            }
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"a.read", "a.traced"}
+        assert result.meta["plan"]["skipped"] == {
+            "a.region": "needs ['header X-Region']",
+            "a.session": "needs ['cookie session']",
+        }
+
+    async def test_a_sample_of_a_route_needing_a_header_is_refused(self) -> None:
+        doc = {
+            "paths": {
+                "/x/{id}": {"get": _op("x.get", params=_ID)},
+                "/x/list": {"get": _op("x.list", params=[("X-Region", "header", True)])},
+            }
+        }
+        plan = _plan(Scenario.op("x.get", path={"id": sample("x.list")}))
+
+        assert await _refused(_App({}, doc), plan) == "load_plan_invalid"
+
+    @pytest.mark.parametrize(
+        "schema",
+        [{"type": "array"}, {"type": "string"}, {"type": "object", "minProperties": 1}],
+    )
+    async def test_a_body_that_cannot_be_an_empty_object_is_skipped(self, schema) -> None:
+        doc = {"paths": {"/a": {"get": _op("a.read")}, "/b": {"post": _op("a.batch", body=schema)}}}
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {"a.batch": "its body cannot be an empty object"}
+
+    async def test_an_operation_parameter_overrides_the_path_s_own(self) -> None:
+        doc = {
+            "paths": {
+                "/x": {
+                    "parameters": [{"name": "q", "in": "query", "required": True}],
+                    "get": _op("x.read", params=[("q", "query", False)]),
+                }
+            }
+        }
+
+        explicit = await _run(_App({}, doc), _plan(Scenario.op("x.read")))
+        swept = await _run(_App({}, doc), _plan(Scenario.reads("x.")))
+
+        assert explicit.rows[0]["calls"] > 0
+        assert set(swept.meta["plan"]["scenarios"]) == {"x.read"}
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "#/components/schemas/Missing",
+            "other.json#/components/schemas/B",
+            "#/components/schemas/Loop",
+        ],
+    )
+    async def test_a_body_schema_that_cannot_be_resolved_is_skipped(self, ref: str) -> None:
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/b": {"post": _op("a.body", body={"$ref": ref})},
+            },
+            "components": {
+                "schemas": {
+                    "Loop": {"$ref": "#/components/schemas/Loop2"},
+                    "Loop2": {"$ref": "#/components/schemas/Loop"},
+                }
+            },
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {"a.body": "its body schema cannot be resolved"}
+
+    @pytest.mark.parametrize(
+        "paths",
+        [
+            {"/x": {"post": {**_op("x.read"), "requestBody": {"$ref": "#/components/x/Gone"}}}},
+            {"/x": {"$ref": "#/components/pathItems/Gone"}},
+        ],
+    )
+    async def test_an_unresolvable_body_or_path_item_is_refused(self, paths) -> None:
+        plan = _plan(Scenario.op("x.read", body={}))
+
+        assert await _refused(_App({}, {"paths": paths}), plan) == "load_openapi_unavailable"
+
+    async def test_an_escaped_json_pointer_resolves(self) -> None:
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/b": {"post": _op("a.body", body={"$ref": "#/components/schemas/a~1b~0c"})},
+            },
+            "components": {"schemas": {"a/b~c": {"properties": {"k": {}}, "required": ["k"]}}},
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {"a.body": "its body requires ['k']"}
+
+    async def test_a_body_for_a_route_that_takes_no_json_is_refused(self) -> None:
+        form = {"multipart/form-data": {"schema": {}}}
+        upload = {**_op("x.upload", "command"), "requestBody": {"required": True, "content": form}}
+        plan = _plan(Scenario.op("x.upload", writes=True, body={"f": "x"}), allow_writes=True)
+
+        assert await _refused(_App({}, {"paths": {"/u": {"post": upload}}}), plan) == (
+            "load_plan_invalid"
+        )
+
+    async def test_a_json_flavoured_media_type_takes_a_json_body(self) -> None:
+        merge = {"application/merge-patch+json": {"schema": {"properties": {"n": {}}}}}
+        patch = {**_op("x.patch", "command"), "requestBody": {"required": True, "content": merge}}
+        plan = _plan(Scenario.op("x.patch", writes=True, body={"n": 1}), allow_writes=True)
+
+        result = await _run(_App({}, {"paths": {"/p": {"patch": patch}}}), plan)
+
+        assert result.rows[0]["calls"] > 0
+
+    async def test_an_explicit_body_missing_a_required_field_is_refused(self) -> None:
+        assert await _refused(_App({}), _plan(Scenario.op("products.agg_list", body={}))) == (
+            "load_plan_invalid"
+        )
+
+        result = await _run(_App({}), _plan(Scenario.op("products.agg_list", body={"a": 1})))
+        assert result.rows[0]["calls"] > 0
+
+    async def test_an_operation_called_under_another_name_is_left_to_it(self) -> None:
+        plan = _plan(
+            Scenario.op("products.list", name="list", body={}), Scenario.reads("products.")
+        )
+
+        result = await _run(_App({"ada": ["p1"]}), plan)
+
+        assert result.meta["plan"]["skipped"]["products.list"] == "named by another scenario"
+        assert "products.list" not in result.meta["plan"]["scenarios"]

@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import attrs
 import httpx
@@ -68,13 +68,24 @@ class _Route:
     path_params: frozenset[str]
     query_params: frozenset[str]
     required_query: frozenset[str]
+    required_other: frozenset[str]
+    """Required header and cookie parameters, as ``"header X-Region"``: nothing the kit fills."""
+
     has_body: bool
     body_required: bool
     body_json: bool
+    """The body takes ``application/json`` or another ``application/*+json`` type."""
+
     body_fields: frozenset[str]
     body_requires: tuple[str, ...]
     body_composed: bool
     """The body schema is an ``allOf``, ``anyOf`` or ``oneOf``: what it requires is not read."""
+
+    body_unresolved: bool
+    """The body schema is a ``$ref`` that is missing, external or circular."""
+
+    body_takes_object: bool
+    """The body schema accepts ``{}``: no non-object ``type`` and no ``minProperties``."""
 
     @property
     def kind(self) -> str:
@@ -87,14 +98,20 @@ class _Route:
 
         needed = (self.path_params | self.required_query) - ({_ID} if allow_id else set())
 
-        if needed:
-            return f"needs {sorted(needed)}"
+        if needed or self.required_other:
+            return f"needs {sorted(needed | self.required_other)}"
 
         if self.body_required and not self.body_json:
             return "takes a body that is not JSON"
 
+        if self.has_body and self.body_unresolved:
+            return "its body schema cannot be resolved"
+
         if self.has_body and self.body_composed:
             return "its body schema is composed (allOf, anyOf or oneOf)"
+
+        if self.has_body and not self.body_takes_object:
+            return "its body cannot be an empty object"
 
         if self.body_requires:
             return f"its body requires {list(self.body_requires)}"
@@ -114,9 +131,16 @@ class SamplePool:
     _values: dict[tuple[str, Sample], list[Any]] = attrs.field(factory=dict)
 
     def put(self, principal: str, sample: Sample, values: list[Any]) -> None:
+        """Keep *values* as *principal*'s sample."""
+
         self._values[(principal, sample)] = values
 
     def pick(self, principal: str, sample: Sample, rng: random.Random) -> Any:
+        """One of *principal*'s values, at random.
+
+        :raises SampleExhausted: 404s have emptied the sample.
+        """
+
         values = self._values.get((principal, sample))
 
         if not values:
@@ -125,6 +149,8 @@ class SamplePool:
         return rng.choice(values)
 
     def drop(self, principal: str, sample: Sample, value: Any) -> None:
+        """Remove *value*, which answered 404, and report a sample it leaves empty."""
+
         values = self._values.get((principal, sample))
 
         # Another call may have dropped it first; only the call that empties it reports.
@@ -275,7 +301,10 @@ async def resolve(plan: LoadPlan, client: httpx.AsyncClient) -> Catalog:
 
     document = await _read_document(plan.openapi, client)
     _check_server(document, plan.base_url)
-    builder = _Builder(index=_index(document), pool=pool, taken={s.name for s in plan.scenarios})
+    # A sweep leaves alone every scenario name, and every operation a reference already calls.
+    taken = {s.name for s in plan.scenarios}
+    taken |= {s.operation for s in plan.scenarios if isinstance(s, OpScenario)}
+    builder = _Builder(index=_index(document), pool=pool, taken=taken)
 
     for scenario in plan.scenarios:
         builder.add(scenario)
@@ -486,6 +515,10 @@ def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
 
     for path, raw in document["paths"].items():
         item = _deref(document, raw)
+
+        if item is None:
+            raise _unavailable(f"Path {path!r} has a $ref that cannot be resolved")
+
         shared = item.get("parameters", [])
 
         if not isinstance(shared, list):
@@ -519,25 +552,40 @@ def _route(
     if not isinstance(own, list):
         raise _malformed(key, "'parameters' that are not a list")
 
-    parameters = [_deref(document, p) for p in (*shared, *own)]
+    declared = [_deref(document, p) for p in (*shared, *own)]
+    parameters = [p for p in declared if p is not None]
+
+    if len(parameters) != len(declared):
+        raise _malformed(key, "a parameter whose $ref cannot be resolved")
 
     if not all(isinstance(p.get("name"), str) and isinstance(p.get("in"), str) for p in parameters):
         raise _malformed(key, "a parameter without a name or a location")
+
+    # An operation's parameter replaces the path item's of the same name and location.
+    parameters = list({(p["name"], p["in"]): p for p in parameters}.values())
 
     if raw_body is not None and not isinstance(raw_body, dict):
         raise _malformed(key, "a 'requestBody' that is not an object")
 
     query = [p for p in parameters if p["in"] == "query"]
     body = _deref(document, raw_body)
+
+    if body is None:
+        raise _malformed(key, "a 'requestBody' whose $ref cannot be resolved")
+
     content = body.get("content", {})
 
     if not isinstance(content, dict):
         raise _malformed(key, "a body 'content' that is not an object")
 
-    media = content.get("application/json")
+    json_types = [t for t in content if t == "application/json" or _is_json_type(t)]
+    media = content[json_types[0]] if json_types else None
     schema = _deref(document, media.get("schema") if isinstance(media, dict) else None)
-    fields = schema.get("properties")
-    requires = schema.get("required")
+    resolved = schema or {}
+    fields = resolved.get("properties")
+    requires = resolved.get("required")
+    minimum = resolved.get("minProperties")
+    shape = resolved.get("type")
 
     return _Route(
         operation=key,
@@ -547,15 +595,31 @@ def _route(
         path_params=frozenset(_PLACEHOLDER.findall(path)),
         query_params=frozenset(p["name"] for p in query),
         required_query=frozenset(p["name"] for p in query if p.get("required")),
+        required_other=frozenset(
+            f"{p['in']} {p['name']}"
+            for p in parameters
+            if p["in"] in ("header", "cookie") and p.get("required")
+        ),
         has_body=bool(body),
         body_required=bool(body.get("required")),
-        body_json="application/json" in content,
+        body_json=bool(json_types),
         body_fields=frozenset(fields) if isinstance(fields, dict) else frozenset(),
         body_requires=tuple(r for r in requires if isinstance(r, str))
         if isinstance(requires, list)
         else (),
-        body_composed=any(k in schema for k in ("allOf", "anyOf", "oneOf")),
+        body_composed=any(k in resolved for k in ("allOf", "anyOf", "oneOf")),
+        body_unresolved=schema is None,
+        body_takes_object=(
+            shape is None or shape == "object" or (isinstance(shape, list) and "object" in shape)
+        )
+        and not (isinstance(minimum, int) and minimum > 0),
     )
+
+
+def _is_json_type(media_type: str) -> bool:
+    """``application/*+json`` (``merge-patch+json``, ``problem+json``): JSON on the wire."""
+
+    return media_type.startswith("application/") and media_type.endswith("+json")
 
 
 def _check_server(document: Mapping[str, Any], base_url: str) -> None:
@@ -582,26 +646,39 @@ def _check_server(document: Mapping[str, Any], base_url: str) -> None:
         )
 
 
-def _deref(document: Mapping[str, Any], node: Any) -> dict[str, Any]:
-    """*node* with a local ``$ref`` (``#/components/...``) followed, or ``{}``."""
+def _deref(document: Mapping[str, Any], node: Any) -> dict[str, Any] | None:
+    """*node* with its local ``$ref`` (``#/components/...``) followed.
+
+    ``{}`` for a node that is absent or not an object; ``None`` for a ``$ref`` that cannot be
+    followed: missing, external, or a cycle. A caller must not read an unresolved schema as
+    one that requires nothing.
+    """
 
     for _ in range(8):  # a chain of refs ends quickly; a cycle must not hang the start
         if not isinstance(node, dict):
             return {}
 
-        ref = node.get("$ref")
+        if "$ref" not in node:
+            return node
+
+        ref = node["$ref"]
 
         if not isinstance(ref, str) or not ref.startswith("#/"):
-            return node
+            return None
 
         target: Any = document
 
-        for part in ref[2:].split("/"):
-            target = target.get(part) if isinstance(target, dict) else None
+        # A JSON Pointer in a URI fragment: percent-decoded, then ~1 is "/" and ~0 is "~".
+        for part in unquote(ref[2:]).split("/"):
+            token = part.replace("~1", "/").replace("~0", "~")
+            target = target.get(token) if isinstance(target, dict) else None
+
+        if not isinstance(target, dict):
+            return None
 
         node = target
 
-    return {}
+    return None
 
 
 def _find(index: Mapping[str, list[_Route]], key: str) -> _Route:
@@ -658,8 +735,23 @@ def _check_inputs(op: OpScenario, route: _Route) -> None:
     if op.body is None and route.body_required:
         raise _invalid(f"{where} needs a body")
 
-    if op.body is not None and not route.has_body:
-        raise _invalid(f"{where} sends a body to a route that takes none")
+    if op.body is None:
+        return
+
+    # The body goes out as JSON: a route that takes none, or only a form, refuses it.
+    if not route.body_json:
+        raise _invalid(f"{where} sends a JSON body to a route that takes no JSON body")
+
+    # Only what the schema states plainly is checked; a composed or unresolved one is not read.
+    if route.body_requires and not (route.body_composed or route.body_unresolved):
+        absent = (
+            sorted(set(route.body_requires) - set(op.body))
+            if isinstance(op.body, Mapping)
+            else list(route.body_requires)
+        )
+
+        if absent:
+            raise _invalid(f"{where} sends a body without its required fields {absent}")
 
 
 def _send(route: _Route, op: OpScenario, pool: SamplePool) -> SendFn:

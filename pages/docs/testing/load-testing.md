@@ -97,8 +97,12 @@ plan = LoadPlan(
   kind disagrees with that declaration. A route with no `x-forze-kind`, or an unknown value,
   counts as `command`: a hand-written route, or one served by a forze older than the key.
 - **The inputs are checked too.** Every placeholder in the path must be filled, query names
-  must be ones the route declares, and a route that requires a body must get one. Path values
-  are URL-encoded; `body` is sent as given.
+  must be ones the route declares, and a route that requires a body must get one. `body` is
+  sent as JSON, so the route must take `application/json` or another `application/*+json`
+  type, and a body must carry the fields its schema requires at the top level. An
+  operation's parameter replaces the path's of the same name and location, as OpenAPI
+  says. Path values are URL-encoded. Header and cookie parameters are not checked: a
+  principal's credential may be what supplies them.
 - **Where the document comes from.** `openapi` defaults to `/openapi.json` on the target,
   fetched without credentials and only when the plan names an operation. For a deployment
   that serves no docs, or guards them, save the document and pass
@@ -131,15 +135,18 @@ another.
 `Scenario.reads("orders.")` generates one scenario per `query` operation whose key starts
 with the prefix and whose input the kit can fill without guessing:
 
-- no input, or a body that requires no field, such as a paginated list, sent as `{}`;
+- no input, or a JSON body whose schema takes an object and requires no field, such as a
+  paginated list, sent as `{}`;
 - an `id`, in the path or the query, with an optional `rev`. Ids are sampled from the `list`
   operation beside the route: `orders.list` for `orders.get`.
 
 Every other `query` route is recorded with its reason under `plan.skipped` in the meta line,
-and `forze load run` prints them. `command` routes are never generated. A mix weights the
-group by its name, `reads` by default, and the weight is split evenly between the generated
-scenarios; the rows name each by its operation key. An operation another scenario of the
-plan already names is left to that scenario, and a sweep that generates nothing stops the
+and `forze load run` prints them: one that needs a header or a cookie, or whose body schema
+is composed, cannot be resolved, or takes no empty object, among them. `command` routes are
+never generated. A mix weights the group by its name, `reads` by default, and the weight is
+split evenly between the generated scenarios; the rows name each by its operation key. An
+operation another scenario of the plan already calls, by its name or as a `Scenario.op`
+under another name, is left to that scenario, and a sweep that generates nothing stops the
 run.
 
 ## Run a ramp
