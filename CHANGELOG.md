@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SessionRevocation.check` returns a `FreshEpoch` when the token is on its principal's current epoch, `None` otherwise, instead of the epoch; `ApiKeyRevocation.fresh` returns `FreshEpoch | None` instead of a bool** (**Breaking**). A custom verifier that compared the epoch tests the result for `None`.
 
+- **`instrument_realtime_mailbox()` now exports every mailbox built in the process** (**Breaking**), per-connect factories, gateway and writer included, so its counters no longer read zero. It takes only `meter` and labels each series by spec (`forze.document`). `DocumentRealtimeMailbox.on_replay` can no longer be set.
+
 ### Removed
 
 - **`InProcessResilienceExecutor.adaptive_bulkhead_limits()` is removed** (**Breaking**). Use `bulkhead_occupancy()`: it yields `(policy, route, in_use, limit)` for fixed, AIMD and Gradient2 bulkheads.

@@ -570,6 +570,7 @@ from forze_fastapi.realtime import (
     attach_realtime_sse_route,
     realtime_sse_tail_lifecycle_step,
 )
+from forze_kits.integrations.realtime import instrument_realtime_mailbox
 
 hub = RealtimeSseHub()
 attach_realtime_sse_route(
@@ -585,9 +586,12 @@ attach_realtime_sse_route(
 )
 # register alongside the app's lifecycle steps: one supervised tail loop per node
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
+# once at assembly: exports the mailbox metrics of every mailbox built in the process
+instrument_realtime_mailbox()
 ```
 
-This factory builds a new mailbox on every connect, so it records no mailbox metrics: see
+The factory builds a new mailbox on every connect. The mailbox metrics are counted per spec
+rather than per instance, so every connect's replay and ack still counts: see
 [the metric catalog](../reference/metrics.md#realtime-mailbox).
 
 The live leg reads the realtime stream with a plain (non-group) tail — broadcast
@@ -724,10 +728,6 @@ lifecycle = [
     realtime_mailbox_writer_lifecycle_step(writer),
 ]
 ```
-
-The writer builds its mailbox inside its own step, where `instrument_realtime_mailbox` cannot
-reach it, so it records no mailbox metrics: see
-[the metric catalog](../reference/metrics.md#realtime-mailbox).
 
 - **Create its group at `0`.** The group-ensure step defaults to `start_id="$"`, which suits
   the gateway: a new group should not emit an old backlog live. A writer whose group is

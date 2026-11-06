@@ -148,9 +148,9 @@ def observe_channel[S](
     source: S,
     instruments: Sequence[ChannelInstrument[S]],
     *,
-    channel: str,
+    channel: str | None,
     meter: "Meter | None",
-) -> None:
+) -> "Meter":
     """Export *source* as one ``forze.realtime.channel`` series of each instrument.
 
     The first call on a meter registers each instrument once; every later call appends
@@ -162,15 +162,19 @@ def observe_channel[S](
 
     :param source: The in-memory counts the instruments read.
     :param instruments: What to export from *source*.
-    :param channel: The ``forze.realtime.channel`` label.
+    :param channel: The ``forze.realtime.channel`` label, or ``None`` for a source whose
+        readings carry every label they need.
     :param meter: The meter to register on; the global ``forze`` meter when ``None``.
+    :returns: The meter registered on, for a caller that adds a synchronous instrument to
+        the same one.
     """
 
     if meter is None:
         with _METER_LOCK:
             meter = _forze_meter()
 
-    by_name, fresh = _enlist(meter, instruments, source, {"forze.realtime.channel": channel})
+    attributes = {"forze.realtime.channel": channel} if channel is not None else {}
+    by_name, fresh = _enlist(meter, instruments, source, attributes)
 
     create = {
         "counter": meter.create_observable_counter,
@@ -186,6 +190,8 @@ def observe_channel[S](
             unit=instrument.unit,
             description=instrument.description,
         )
+
+    return meter
 
 
 def _enlist[S](
