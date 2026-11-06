@@ -34,7 +34,7 @@ from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.document import DocumentCommandDepKey
 from forze.application.execution.deps.frozen import FrozenDeps
 from forze.application.execution.operations import run_operation
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import FrozenTimeSource, bind_time_source, monotonic, utcnow
 from forze_identity.authn import AuthnKernelConfig, instrument_revocation_states
 from forze_identity.authn.adapters import credential_deactivation
@@ -920,6 +920,74 @@ async def test_a_key_verification_leaves_no_fresh_admission_behind() -> None:
 
     # The eligibility check after a key verification always reads.
     assert await asyncio.create_task(request()) is None
+
+
+@pytest.mark.parametrize("which", ["session", "api key"])
+@pytest.mark.parametrize("fresh", [True, False])
+async def test_a_bool_fresh_is_refused_at_the_call(which: str, fresh: bool) -> None:
+    # A verifier written before FreshEpoch passes a bool, which used to fail later.
+    principal = uuid4()
+
+    async def request() -> None:
+        if which == "session":
+            admitted = AdmittedSession(
+                principal_id=principal, session_id=uuid4(), family_id=None, epoch=1
+            )
+            remember_admitted_session(admitted, fresh=fresh)  # type: ignore[arg-type]
+        else:
+            remember_admitted_api_key(
+                AdmittedApiKey(principal_id=principal, digest="d"),
+                fresh=fresh,  # type: ignore[arg-type]
+            )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert "FreshEpoch" in caught.value.summary
+
+
+async def test_a_fresh_whose_repr_fails_is_still_a_configuration_error() -> None:
+    class Unprintable:
+        def __repr__(self) -> str:
+            raise RuntimeError("repr is broken")
+
+    async def request() -> None:
+        remember_admitted_api_key(
+            AdmittedApiKey(principal_id=uuid4(), digest="d"),
+            fresh=Unprintable(),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert "Unprintable" in caught.value.summary
+
+
+@pytest.mark.parametrize("which", ["session", "api key"])
+@pytest.mark.parametrize("vouches", [True, False])
+async def test_an_epoch_or_none_fresh_is_remembered(which: str, vouches: bool) -> None:
+    principal = uuid4()
+
+    async def request() -> None:
+        states = RevocationStates(route=STATES, ttl=TTL)
+        epoch = FreshEpoch(principal_id=principal, states=states, until=monotonic() + 60)
+        fresh = epoch if vouches else None
+
+        if which == "session":
+            admitted = AdmittedSession(
+                principal_id=principal, session_id=uuid4(), family_id=None, epoch=1
+            )
+            remember_admitted_session(admitted, fresh=fresh)
+        else:
+            remember_admitted_api_key(
+                AdmittedApiKey(principal_id=principal, digest="d"), fresh=fresh
+            )
+
+        assert admitted_just_now(principal) is fresh
+
+    await asyncio.create_task(request())
 
 
 async def test_a_process_that_serves_no_api_keys_still_issues_sessions_and_provisions() -> None:
