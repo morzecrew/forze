@@ -42,7 +42,15 @@ def request_parts(
 
         return path, None, None
 
-    values = args.model_dump(mode="json", exclude_none=True)
+    # Only path and query fields need their defaults: a body field left unset is never
+    # dumped, so a default the encoder cannot serialize does not fail the request.
+    if op.method == "GET" and not op.query_from:
+        values = args.model_dump(mode="json", exclude_none=True)
+
+    else:
+        named = set(placeholders) | set(op.query_from or ())
+        values = args.model_dump(mode="json", exclude_none=True, include=named)
+
     body = {
         k: v
         for k, v in args.model_dump(mode="json", exclude_unset=True).items()

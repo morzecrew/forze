@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from forze.application.contracts.http import HttpOperationSpec
 from forze.application.integrations.http import form_fields, request_parts
@@ -141,6 +141,27 @@ def _op(
         return_type=OrderPath,
         query_from=query_from,
     )
+
+
+class _Opaque:
+    """A value the JSON encoder cannot serialize."""
+
+
+class _BodyWithOpaqueDefault(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    extra: _Opaque = Field(default_factory=_Opaque)
+
+
+def test_an_unset_body_default_is_never_serialized() -> None:
+    # Only path and query fields are dumped with their defaults; a body keeps exclude_unset.
+    _, query, body = request_parts(
+        _op("POST", _BodyWithOpaqueDefault), _BodyWithOpaqueDefault(name="a")
+    )
+
+    assert body == {"name": "a"}
+    assert query is None
 
 
 class TestQueryDefaults:
