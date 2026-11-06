@@ -118,13 +118,58 @@ authz_module = AuthzDepsModule(
 
 The `AuthzResourceName` members are document spec names, so each one you list needs a store wired under that name like any other `DocumentSpec` — and `POLICY_PRINCIPALS` must be tenant-unaware, since eligibility is checked before a tenant is bound.
 
+## One `RevocationStates` for authn and authz
+
+With `RevocationStates` on the authn kernel, access tokens (and, with `key_mac`, API keys)
+are verified from cached states in Redis. Pass the **same object** to the authz kernel too,
+and every write that may deactivate a policy principal raises the principal's epoch, so the
+eligibility read after a verification is skipped:
+
+```python
+from datetime import timedelta
+
+from forze_identity.authn import AuthnKernelConfig, RevocationStates, StateMacKeys
+from forze_identity.authz import AuthzKernelConfig
+
+states = RevocationStates(
+    route="authn-revocations",  # the revocation states port's route: Redis, or the mock
+    ttl=timedelta(minutes=5),
+    key_mac=StateMacKeys(active=mac_key),  # required for the skip: the epochs are signed
+)
+authn_kernel = AuthnKernelConfig(..., revocation_states=states)
+authz_kernel = AuthzKernelConfig(revocation_states=states)
+```
+
+- **What it skips:** the eligibility read right after a token or a cached API key was
+  admitted on its principal's current epoch. A later authz decision about the same
+  principal, in the same task and outside a transaction, skips its policy principal read
+  too, for at most `ttl`. Logins, refreshes and tenant switches still read.
+- **Refusals:** an authz `revocation_states` without `key_mac` is refused
+  (`authn_eligibility_skip_requires_key_mac`); authn and authz carrying different
+  configurations are refused when the eligibility gate is built
+  (`authn_revocation_states_mismatch`). The authz skip compares by identity, so build the
+  value once and pass it to both.
+- **Postgres only:** the skip needs the policy principal and the principal epochs on
+  Postgres. Elsewhere, the mock included, every verification reads.
+- **Configure every process that writes policy principals.** A process without the authz
+  configuration raises no epoch, so a token it should have ended stays valid until its `exp`.
+
+A custom verifier built on the shipped revocation services gets a `FreshEpoch | None` from
+`SessionRevocation.check` and `ApiKeyRevocation.fresh` (all in
+`forze_identity.authn.services`). Pass that value on unchanged as
+`remember_admitted_session(..., fresh=...)` or `remember_admitted_api_key(..., fresh=...)`.
+Never pass a bool: `fresh=True` is stored as the epoch and fails on the next eligibility
+check.
+
 ## Anti-patterns
 
 - **Binding identity inside handlers** — bind at the boundary only.
 - **Treating authz as domain-only state** — use authz ports for policy decisions that depend on external grants.
 - **Forgetting authn document specs need storage wiring** — `forze_identity.authn` and `forze_identity.authz` specs are still `DocumentSpec`s; `identity_mapping_spec` must allow neither cache nor history.
 - **Using `AccessTokenCredentials.scheme` / `profile` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
+- **Building `RevocationStates` twice, once per kernel** — two equal values still lose the authz skip, which compares by identity; build one and pass it to both.
 
 ## Reference
 
 - [Authentication](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/identity/)
+- [Skip the eligibility read](https://morzecrew.github.io/forze/latest/integrations/authn/#skip-the-eligibility-read)

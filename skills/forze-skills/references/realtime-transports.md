@@ -34,6 +34,7 @@ steps = [realtime_gateway_lifecycle_step(gateway, max_consecutive_crashes=5)]
 from forze_fastapi.realtime import (
     RealtimeSseHub,
     attach_realtime_sse_route,
+    instrument_realtime_hub,
     realtime_sse_tail_lifecycle_step,
 )
 from forze_kits.integrations.realtime import instrument_realtime_mailbox
@@ -51,12 +52,14 @@ attach_realtime_sse_route(
     authorize_topics=grant_topics,   # required for ?topics=; fail-closed
 )
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
+instrument_realtime_hub(hub)     # subscribers and live frames dropped on a full queue
 instrument_realtime_mailbox()    # once: every mailbox in the process, per spec
 ```
 
 The factory builds a new mailbox on every connect, and the mailbox metrics still count each
-one: they are kept per spec, not per instance. See
-[the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-mailbox).
+one: they are kept per spec, not per instance. The hub, gateway, backplane and connections
+calls take `channel=`: call each once per channel, with the same `meter=` or none. See
+[the metric catalog](https://morzecrew.github.io/forze/latest/reference/metrics/#realtime-hub).
 
 The SSE routes ship with described query parameters and a `text/event-stream` 200. Set
 their `operation_id`, `description`, `tags`, `openapi_extra` and the rest through
@@ -215,6 +218,7 @@ wiring notes below.
   (`tenant_aware_required`).
 - Realtime loops are supervised: they restart on crash with jittered backoff and
   register as drainable. A custom signal source must accept a stop signal.
+- A proxy that ignores SSE's `X-Accel-Buffering: no` and `no-transform` must not buffer it.
 - A realtime stream route that declares an encryption tier is **refused at start** —
   seal the mailbox at rest instead (sealing the replay index is refused).
 - Generate clients from the AsyncAPI document (`asyncapi_document(catalog, router)`
