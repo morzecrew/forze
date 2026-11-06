@@ -21,6 +21,7 @@ from forze_duckdb import DuckDbAnalyticsConfig, DuckDbDepsModule, DuckDbQueryCon
 from forze_duckdb.kernel.client import (
     SOURCE_ACCESS_DENIED_CODE,
     SOURCE_BUCKET_NOT_FOUND_CODE,
+    SOURCE_CORRUPT_CODE,
     SOURCE_NOT_FOUND_CODE,
     SOURCE_THROTTLED_CODE,
     SOURCE_UNAVAILABLE_CODE,
@@ -47,6 +48,13 @@ def _http_error(first_line: str, url: str, status: int, *, body: str = "") -> du
     return error
 
 
+def _map(error: duckdb.Error) -> CoreException:
+    mapped = object_store_error(error)
+    assert mapped is not None
+
+    return mapped
+
+
 def _assert_mapped(error: CoreException, kind: ExceptionKind, code: str) -> None:
     assert error.kind is kind
     assert error.code == code
@@ -60,7 +68,7 @@ def test_a_404_on_a_single_object_is_not_found() -> None:
     url = "s3://bucket/part/k1/data.parquet"
     error = _http_error(f"HTTP HEAD error checking '{url}' (HTTP 404 Not Found)", url, 404)
 
-    mapped = object_store_error(error)
+    mapped = _map(error)
 
     _assert_mapped(mapped, ExceptionKind.NOT_FOUND, SOURCE_NOT_FOUND_CODE)
     assert mapped.details == {"path": url, "status": 404}
@@ -72,7 +80,7 @@ def test_a_glob_that_matched_nothing_is_not_found() -> None:
         f'IO Error: No files found that match the pattern "{pattern}"{_LINE.format(url=pattern)}'
     )
 
-    mapped = object_store_error(error)
+    mapped = _map(error)
 
     _assert_mapped(mapped, ExceptionKind.NOT_FOUND, SOURCE_NOT_FOUND_CODE)
     assert mapped.details == {"path": pattern}
@@ -88,7 +96,7 @@ def test_a_404_naming_no_such_bucket_is_configuration() -> None:
     )
 
     _assert_mapped(
-        object_store_error(error), ExceptionKind.CONFIGURATION, SOURCE_BUCKET_NOT_FOUND_CODE
+        _map(error), ExceptionKind.CONFIGURATION, SOURCE_BUCKET_NOT_FOUND_CODE
     )
 
 
@@ -102,7 +110,7 @@ def test_a_refusal_is_infrastructure_and_leaves_the_body_out(status: int) -> Non
         body="<Error><Message>body-secret</Message></Error>",
     )
 
-    mapped = object_store_error(error)
+    mapped = _map(error)
 
     _assert_mapped(mapped, ExceptionKind.INFRASTRUCTURE, SOURCE_ACCESS_DENIED_CODE)
     assert "body-secret" not in repr(mapped.details)
@@ -114,7 +122,7 @@ def test_a_429_is_throttled() -> None:
     url = "http://127.0.0.1:9000/bucket/data.parquet"
     error = _http_error(f"Request returned HTTP 429 for HTTP HEAD to '{url}'", url, 429)
 
-    _assert_mapped(object_store_error(error), ExceptionKind.THROTTLED, SOURCE_THROTTLED_CODE)
+    _assert_mapped(_map(error), ExceptionKind.THROTTLED, SOURCE_THROTTLED_CODE)
 
 
 @pytest.mark.parametrize(
@@ -135,7 +143,7 @@ def test_a_429_is_throttled() -> None:
     ids=["503", "timeout", "refused"],
 )
 def test_any_other_failed_read_is_retryable_infrastructure(error: duckdb.IOException) -> None:
-    mapped = object_store_error(error)
+    mapped = _map(error)
 
     _assert_mapped(mapped, ExceptionKind.INFRASTRUCTURE, SOURCE_UNAVAILABLE_CODE)
     assert mapped.details is not None
@@ -146,7 +154,7 @@ def test_the_path_loses_its_query_string_and_user_info() -> None:
     url = "https://user:pass@host/b/k.parquet?X-Amz-Signature=sig&X-Amz-Credential=AKIA"
     error = _http_error(f"HTTP HEAD error on '{url}' (HTTP 404 Not Found)", url, 404)
 
-    assert object_store_error(error).details == {"path": "https://host/b/k.parquet", "status": 404}
+    assert _map(error).details == {"path": "https://host/b/k.parquet", "status": 404}
 
 
 def test_a_path_that_does_not_parse_is_left_out() -> None:
@@ -154,10 +162,21 @@ def test_a_path_that_does_not_parse_is_left_out() -> None:
         'IO Error: No files found that match the pattern "//[bad/missing.parquet"'
     )
 
-    mapped = object_store_error(error)
+    mapped = _map(error)
 
     _assert_mapped(mapped, ExceptionKind.NOT_FOUND, SOURCE_NOT_FOUND_CODE)
     assert mapped.details == {"path": None}
+
+
+def test_an_invalid_input_that_is_not_a_file_read_is_left_alone() -> None:
+    error = duckdb.InvalidInputException("Invalid Input Error: Unsupported option 'nope'")
+
+    assert object_store_error(error) is None
+
+    with pytest.raises(duckdb.InvalidInputException) as caught, object_store_errors():
+        raise error
+
+    assert caught.value is error
 
 
 async def test_the_stream_maps_a_failed_fetch_but_not_what_is_thrown_in() -> None:
@@ -206,7 +225,7 @@ def test_a_non_io_driver_error_passes_through_unchanged() -> None:
 
 
 # ....................... #
-# Through the adapter, over the driver's real IOException
+# Through the adapter, over the driver's real errors
 
 
 async def _drain(chunks: AsyncIterator[Any]) -> None:
@@ -246,16 +265,48 @@ async def test_every_read_path_raises_a_missing_source_as_not_found(
         assert isinstance(caught.value.__cause__, duckdb.IOException), path
 
 
-async def test_a_sql_error_keeps_the_driver_class(
-    events_parquet: str, make_adapter: Callable[..., Any]
+@pytest.mark.parametrize("cut", ["empty", "too_small", "truncated"])
+async def test_every_read_path_raises_a_file_that_is_not_parquet_as_corrupt(
+    events_parquet: str, make_adapter: Callable[..., Any], cut: str
 ) -> None:
+    data = Path(events_parquet).read_bytes()
+    Path(events_parquet).write_bytes(
+        {"empty": b"", "too_small": data[:5], "truncated": data[: len(data) // 2]}[cut]
+    )
     adapter = make_adapter(
-        f"SELECT nope AS day, total FROM read_parquet('{events_parquet}') "
-        "WHERE total >= $min_total"
+        f"SELECT day, total FROM read_parquet('{events_parquet}') WHERE total >= $min_total"
     )
 
-    with pytest.raises(duckdb.BinderException):
+    for path, call in _read_paths(adapter).items():
+        with pytest.raises(CoreException) as caught:
+            await call()
+
+        _assert_mapped(caught.value, ExceptionKind.INTERNAL, SOURCE_CORRUPT_CODE)
+        assert caught.value.details == {"path": events_parquet}, path
+        assert isinstance(caught.value.__cause__, duckdb.InvalidInputException), path
+
+
+@pytest.mark.parametrize(
+    ("sql", "error"),
+    [
+        ("SELECT nope AS day, total FROM read_parquet('{parquet}')", duckdb.BinderException),
+        (
+            "SELECT day, 'abc'::INTEGER AS total FROM read_parquet('{parquet}')",
+            duckdb.ConversionException,
+        ),
+        ("SELECT error('not a file read') AS day, 1 AS total", duckdb.InvalidInputException),
+    ],
+    ids=["binder", "cast", "invalid_input"],
+)
+async def test_a_sql_error_keeps_the_driver_class(
+    events_parquet: str, make_adapter: Callable[..., Any], sql: str, error: type[Exception]
+) -> None:
+    adapter = make_adapter(sql.format(parquet=events_parquet) + " WHERE $min_total >= 0")
+
+    with pytest.raises(error) as caught:
         await adapter.run("by_day", Params(min_total=0))
+
+    assert not isinstance(caught.value, CoreException)
 
 
 @pytest.mark.parametrize("method", ["run_chunked", "select_run_chunked"])

@@ -2,9 +2,10 @@
 
 A query that scans ``s3://`` / ``gs://`` / ``http(s)://`` or local files fails with
 ``duckdb.IOException``, or its subclass ``duckdb.HTTPException`` when the store answered with a
-status. :func:`object_store_error` translates either; every other driver error is left to its
-caller. The analytics adapter applies it on every read path. The dynamic-read adapter keeps
-its own translation (RFC 0078 §4.5), and the routed client's attestation reads driver classes.
+status, and with ``duckdb.InvalidInputException`` when a Parquet file is not one.
+:func:`object_store_error` translates those; every other driver error is left to its caller.
+The analytics adapter applies it on every read path. The dynamic-read adapter keeps its own
+translation (RFC 0078 §4.5), and the routed client's attestation reads driver classes.
 """
 
 from forze_duckdb._compat import require_duckdb
@@ -40,12 +41,23 @@ SOURCE_UNAVAILABLE_CODE = "duckdb_source_unavailable"
 """Code of the ``infrastructure`` error for every other failed read: 5xx, timeout, refused
 connection, local IO."""
 
+SOURCE_CORRUPT_CODE = "duckdb_source_corrupt"
+"""Code of the ``internal`` error for a file DuckDB cannot read as Parquet."""
+
 _NO_FILES = "No files found that match the pattern"
 """DuckDB's ``IOException`` for a path or glob that matched no file, on every filesystem."""
 
 _NO_SUCH_BUCKET = "<Code>NoSuchBucket</Code>"
 """S3's error body for a missing bucket. A ``HEAD`` has no body, so a missing bucket under a
 single-object path still reads as a missing object."""
+
+_NOT_PARQUET = (
+    "too small to be a Parquet file",
+    "No magic bytes found at end of file",
+    "Footer length error in file",
+)
+"""``InvalidInputException`` messages for an empty, truncated or non-Parquet file, the same on
+DuckDB 1.5 and 2.0. Any other invalid input, such as a failed cast, is the statement's."""
 
 _QUOTED = re.compile(r"""['"]([^'"]+)['"]""")
 """The first quoted token of the message's first line: the path or URL the read failed on."""
@@ -78,20 +90,39 @@ def _location(message: str) -> str | None:
 # ....................... #
 
 
-def object_store_error(error: duckdb.IOException) -> CoreException:
+def object_store_error(error: duckdb.Error) -> CoreException | None:
     """Translate a failed object-store or file read into a :class:`CoreException`.
 
     A ``404`` or a pattern that matched no file is the caller's miss, ``not_found``; a missing
-    bucket is ``configuration``; ``429`` is ``throttled``. Everything else, ``401`` and ``403``
-    included (vended or rotated credentials recover), is ``infrastructure``, so a retry policy
-    may take another attempt. The details name the path and the status, never the response's
-    headers or body, and are not shown to clients.
+    bucket is ``configuration``; ``429`` is ``throttled``. A file that is not Parquet is
+    ``internal``: a re-read returns the same bytes, and a healthy store must not count against
+    a circuit breaker. Every other IO failure, ``401`` and ``403`` included (vended or rotated
+    credentials recover), is ``infrastructure``, so a retry policy may take another attempt.
+    The details name the path and the status, never the response's headers or body, and are
+    not shown to clients.
 
     :param error: The driver's exception; the caller chains it as ``__cause__``.
-    :returns: The error to raise.
+    :returns: The error to raise, or ``None`` when *error* is not a failed read.
     """
 
     message = str(error)
+
+    if isinstance(error, duckdb.InvalidInputException):
+        if not any(marker in message for marker in _NOT_PARQUET):
+            return None
+
+        mapped = exc.internal(
+            "DuckDB source is not a readable Parquet file.",
+            code=SOURCE_CORRUPT_CODE,
+            details={"path": _location(message)},
+        )
+        mapped.expose_details = False
+
+        return mapped
+
+    if not isinstance(error, duckdb.IOException):
+        return None
+
     status = getattr(error, "status_code", None)  # set on an ``HTTPException`` by the driver
     details: dict[str, object] = {"path": _location(message)}
 
@@ -141,13 +172,18 @@ def object_store_error(error: duckdb.IOException) -> CoreException:
 
 @contextmanager
 def object_store_errors() -> Iterator[None]:
-    """Raise a ``duckdb.IOException`` from the block as :func:`object_store_error`'s error."""
+    """Raise a failed read from the block as :func:`object_store_error`'s error."""
 
     try:
         yield
 
-    except duckdb.IOException as error:
-        raise object_store_error(error) from error
+    except duckdb.Error as error:
+        mapped = object_store_error(error)
+
+        if mapped is None:
+            raise
+
+        raise mapped from error
 
 
 async def object_store_stream[T](chunks: AsyncIterator[T]) -> AsyncGenerator[T]:

@@ -1,15 +1,17 @@
 """A failed object-store read reaches an analytics caller as a CoreException, from real responses.
 
 ``httpfs`` reads from a local HTTP server that answers with the status a path names, and from
-RustFS for the S3 cases: a missing object, a glob over a prefix that holds nothing, and a
-missing bucket.
+RustFS for the S3 cases: a missing object, a glob over a prefix that holds nothing, a missing
+bucket, and a truncated object.
 """
 
 from __future__ import annotations
 
 import http.server
+import io
 import threading
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +26,7 @@ from forze_duckdb.adapters import DuckDbAnalyticsAdapter
 from forze_duckdb.kernel.client import (
     SOURCE_ACCESS_DENIED_CODE,
     SOURCE_BUCKET_NOT_FOUND_CODE,
+    SOURCE_CORRUPT_CODE,
     SOURCE_NOT_FOUND_CODE,
     SOURCE_THROTTLED_CODE,
     SOURCE_UNAVAILABLE_CODE,
@@ -184,3 +187,30 @@ async def test_a_missing_s3_source_maps_to_its_kind(
 
     assert (caught.value.kind, caught.value.code) == (kind, code)
     assert isinstance(caught.value.__cause__, duckdb.IOException)
+
+
+async def test_a_truncated_s3_object_is_corrupt(
+    s3_container: tuple[Any, str], s3_bucket: tuple[str, str], tmp_path: Path
+) -> None:
+    bucket, endpoint = s3_bucket
+    local = tmp_path / "data.parquet"
+    duckdb.connect().execute(
+        f"COPY (SELECT range::VARCHAR AS day FROM range(1000)) TO '{local}' (FORMAT parquet)"
+    )
+    data = local.read_bytes()[:-16]  # the footer's length and magic bytes are gone
+    s3_container[0].get_client().put_object(
+        bucket, "part/k2/data.parquet", io.BytesIO(data), len(data)
+    )
+    location = f"s3://{bucket}/part/k2/data.parquet"
+    client = await _client(_s3_secret(endpoint))
+
+    try:
+        with pytest.raises(CoreException) as caught:
+            await _first_chunk(client, location)
+
+    finally:
+        await client.close()
+
+    assert (caught.value.kind, caught.value.code) == (ExceptionKind.INTERNAL, SOURCE_CORRUPT_CODE)
+    assert caught.value.details == {"path": location}
+    assert isinstance(caught.value.__cause__, duckdb.InvalidInputException)
