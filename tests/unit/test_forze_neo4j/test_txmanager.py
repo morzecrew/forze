@@ -30,11 +30,16 @@ class _FakeClient:
     entered: int = 0
     committed: int = 0
     rolled_back: int = 0
+    depth: int = 0
+
+    def is_in_transaction(self) -> bool:
+        return self.depth > 0
 
     @contextlib.asynccontextmanager
     async def transaction(self, *, database: str | None = None) -> AsyncGenerator[None]:
         _ = database
         self.entered += 1
+        self.depth += 1
         try:
             yield
         except BaseException:
@@ -42,6 +47,8 @@ class _FakeClient:
             raise
         else:
             self.committed += 1
+        finally:
+            self.depth -= 1
 
 
 def test_is_transaction_manager_and_isolation_aware() -> None:
@@ -103,3 +110,12 @@ async def test_rollback_only_rolls_back_the_root_and_is_refused_nested() -> None
             nested.rollback_only()
 
     assert caught.value.code == "tx_nested_rollback_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_a_scope_joins_only_inside_its_clients_transaction() -> None:
+    mgr = Neo4jTxManagerAdapter(client=_FakeClient())  # type: ignore[arg-type]
+    assert not mgr.is_transactionally_enlisted()
+
+    async with mgr.transaction():
+        assert mgr.is_transactionally_enlisted()

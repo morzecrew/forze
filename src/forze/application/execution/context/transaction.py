@@ -104,13 +104,24 @@ class TransactionScopeHandle:
       :class:`~forze.application.contracts.transaction.TxCapabilities` reports no
       ``savepoints``), :meth:`rollback_only` refuses with a ``precondition``: the writes could
       only be discarded with the whole transaction.
+    - **A scope on another route with a transaction of its own** — a route whose manager runs
+      on another client, so it is not in a transaction when the scope opens (see
+      :class:`~forze.application.contracts.transaction.TransactionallyEnlistable`). It commits
+      at its own exit, which the root cannot undo. So it rolls back instead when the root is
+      already marked by then, and :meth:`rollback_only` on the root refuses with a
+      ``precondition`` once such a scope may have committed. A dry run that spans such routes
+      calls :meth:`rollback_only` before opening them.
     - **An exception after the mark** propagates as it would without it: the scope rolls back
       and the error is logged and raised as any error is. The mark never swallows an error.
     - **Logging** — a rollback on request is not an error, so nothing logs it above ``DEBUG``.
     """
 
+    route: str
+    """The route the scope opened on."""
+
     _nested_in: TransactionManagerPort | None = attrs.field(default=None, alias="nested_in")
-    """The manager a nested scope runs on, asked about savepoints; ``None`` at the root."""
+    """The manager of a nested scope that joins the root's transaction, asked about savepoints;
+    ``None`` at the root and for a scope with a transaction of its own."""
 
     _rollback: bool = attrs.field(default=False, init=False)
     """Whether :meth:`rollback_only` was called."""
@@ -118,11 +129,15 @@ class TransactionScopeHandle:
     _ended: bool = attrs.field(default=False, init=False)
     """Whether the scope has exited (set by :meth:`TransactionContext.scope`)."""
 
+    _independent_commits: list[str] = attrs.field(factory=list, init=False)
+    """Routes of scopes opened inside this root, with transactions of their own, that left
+    without rolling back, so they may have committed (set by :meth:`TransactionContext.scope`)."""
+
     # ....................... #
 
     @property
     def rollback_requested(self) -> bool:
-        """Whether the scope will roll back instead of committing."""
+        """Whether :meth:`rollback_only` was called on this scope."""
 
         return self._rollback
 
@@ -134,7 +149,8 @@ class TransactionScopeHandle:
         :raises CoreException: ``precondition`` (``tx_scope_ended``) once the scope has exited,
             when the outcome is already decided; ``precondition``
             (``tx_nested_rollback_unsupported``) in a nested scope on a backend without
-            savepoints.
+            savepoints; ``precondition`` (``tx_rollback_after_independent_commit``) on a root
+            once a scope on another route, with a transaction of its own, may have committed.
         """
 
         if self._ended:
@@ -142,6 +158,15 @@ class TransactionScopeHandle:
                 "rollback_only() called after its transaction scope exited: the scope has "
                 "already committed or rolled back.",
                 code="tx_scope_ended",
+            )
+
+        if self._independent_commits:
+            routes = ", ".join(repr(route) for route in sorted(set(self._independent_commits)))
+            raise exc.precondition(
+                f"rollback_only() called after a scope on route(s) {routes} may have committed "
+                "a transaction of its own, which this root cannot roll back. Call "
+                "rollback_only() before opening scopes on other routes.",
+                code="tx_rollback_after_independent_commit",
             )
 
         manager = self._nested_in
@@ -219,6 +244,24 @@ class TransactionContext:
         on_setattr=attrs.setters.frozen,
     )
     """Queued ``(callback, fatal)`` pairs run after a successful root transaction exit."""
+
+    __cb_scopes: ContextVar[tuple[list[_DeferredCallback], ...]] = attrs.field(
+        factory=lambda: ContextVar("cb_scopes", default=()),
+        init=False,
+        repr=False,
+        on_setattr=attrs.setters.frozen,
+    )
+    """The callbacks each open nested scope deferred, innermost last. A nested scope that rolls
+    back on request removes its own from :attr:`__cb_stack` by identity, never by position: a
+    sibling task shares that queue and may add to it while the scope is open."""
+
+    __root_scope: ContextVar[TransactionScopeHandle | None] = attrs.field(
+        factory=lambda: ContextVar("root_scope", default=None),
+        init=False,
+        repr=False,
+        on_setattr=attrs.setters.frozen,
+    )
+    """The active root scope's handle, consulted by scopes opened inside it."""
 
     __tx_routes: ContextVar[set[str] | None] = attrs.field(
         factory=lambda: ContextVar("tx_routes", default=None),
@@ -336,7 +379,22 @@ class TransactionContext:
         if q is None:
             raise exc.internal("defer_callback requires an active TransactionContext.scope scope")
 
-        q.append((cb, fatal))
+        entry = (cb, fatal)
+        q.append(entry)
+
+        for scope_callbacks in self.__cb_scopes.get():
+            scope_callbacks.append(entry)
+
+    # ....................... #
+
+    def _drop_callbacks(self, dropped: list[_DeferredCallback]) -> None:
+        """Remove *dropped* from the root's queue, in place and by identity."""
+
+        q = self.__cb_stack.get()
+
+        if q is not None and dropped:
+            ids = {id(entry) for entry in dropped}
+            q[:] = [entry for entry in q if id(entry) not in ids]
 
     # ....................... #
 
@@ -480,37 +538,58 @@ class TransactionContext:
 
             # Set by the root alongside the depth, so a nested scope always finds it.
             entered = self.__tx_routes.get() or set()
-            token_d = self.__tx_depth.set(depth + 1)
-            nested = TransactionScopeHandle(nested_in=tx)
+            root = self.__root_scope.get()
+            nested_route = str(getattr(route, "value", route))
+            # A route whose manager is not in a transaction yet runs on another client: this
+            # scope opens a transaction of its own there, committed at its own exit. Asked
+            # before entering, and fail-closed: a manager that cannot tell counts as separate.
+            independent = (
+                root is not None
+                and nested_route != root.route
+                and not (
+                    isinstance(tx, TransactionallyEnlistable) and tx.is_transactionally_enlisted()
+                )
+            )
+            nested = TransactionScopeHandle(
+                route=nested_route, nested_in=None if independent else tx
+            )
             nested_signal: RollbackSignal | None = None
-            # The root's queue (set with the depth), and where this scope's callbacks begin in it.
-            callbacks = self.__cb_stack.get()
-            callbacks_mark = len(callbacks) if callbacks is not None else 0
+            own_callbacks: list[_DeferredCallback] = []
+            token_d = self.__tx_depth.set(depth + 1)
+            token_cs = self.__cb_scopes.set((*self.__cb_scopes.get(), own_callbacks))
 
             try:
                 with self._staging_scope(root=False):
                     async with tx.transaction():
                         yield nested
 
-                        if nested.rollback_requested:
+                        # A transaction of its own under a root already marked rolls back
+                        # too: committing it would keep writes the dry run discards.
+                        if nested.rollback_requested or (
+                            independent and root is not None and root.rollback_requested
+                        ):
+                            # Before any await: a cancellation landing in the rollback must
+                            # not leave them queued for the enclosing scope's commit.
+                            self._drop_callbacks(own_callbacks)
                             nested_signal = RollbackSignal()
                             raise nested_signal
 
                         # Recorded once the body succeeds, before leaving commits it: a body
                         # that failed rolled back, and committed nothing beside the root.
-                        entered.add(str(getattr(route, "value", route)))
+                        entered.add(nested_route)
+
+                        if independent and root is not None:
+                            root._independent_commits.append(nested_route)  # pyright: ignore[reportPrivateUsage]
 
             except RollbackSignal as caught:
                 if caught is not nested_signal:
                     raise
 
-                # The callbacks it deferred follow writes its savepoint just discarded.
-                if callbacks is not None:
-                    del callbacks[callbacks_mark:]
                 logger.debug("Nested transaction scope rolled back on request (rollback_only)")
 
             finally:
                 nested._ended = True  # pyright: ignore[reportPrivateUsage]
+                self.__cb_scopes.reset(token_cs)
                 self.__tx_depth.reset(token_d)
 
             return
@@ -560,7 +639,8 @@ class TransactionContext:
         deferred: list[_DeferredCallback] | None = None
         committed = False
         commit_reached = False
-        handle = TransactionScopeHandle()
+        handle = TransactionScopeHandle(route=route_name)
+        token_root = self.__root_scope.set(handle)
         signal: RollbackSignal | None = None
 
         try:
@@ -627,6 +707,7 @@ class TransactionContext:
 
             finally:
                 handle._ended = True  # pyright: ignore[reportPrivateUsage]
+                self.__root_scope.reset(token_root)
                 self._tx_tracer.on_scope_exit(
                     route=route_name,
                     depth=self.__tx_depth.get(),

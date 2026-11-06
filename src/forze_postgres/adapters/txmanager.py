@@ -94,6 +94,18 @@ class PostgresTxManagerAdapter(TransactionManagerPort, TxLockCapable):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a scope opened now joins a transaction already open on this client.
+
+        ``False`` on a client with none open: the scope then begins a transaction of its own,
+        which commits at its exit even inside another route's root (see
+        :class:`~forze.application.contracts.transaction.TransactionallyEnlistable`).
+        """
+
+        return self.client.is_in_transaction()
+
+    # ....................... #
+
     def tx_lock(self) -> TxLockPort:
         """:class:`TxLockCapable`: ``pg_advisory_xact_lock`` on this manager's client."""
 

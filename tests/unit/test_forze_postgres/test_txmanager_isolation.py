@@ -58,6 +58,14 @@ def test_is_isolation_aware_and_reports_all_levels() -> None:
     assert adapter.capabilities().savepoints  # a nested scope is a real savepoint
 
 
+def test_a_scope_joins_only_inside_its_clients_transaction() -> None:
+    adapter, client = _adapter()
+    assert not adapter.is_transactionally_enlisted()
+
+    client.in_transaction = True
+    assert adapter.is_transactionally_enlisted()
+
+
 @pytest.mark.parametrize(
     ("read_only", "in_outer_transaction", "enforced"),
     [

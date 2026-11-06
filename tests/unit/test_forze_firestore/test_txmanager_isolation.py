@@ -14,16 +14,34 @@ from forze_firestore.adapters.txmanager import FirestoreTxManagerAdapter
 class _FakeClient:
     def __init__(self) -> None:
         self.entered = 0
+        self.depth = 0
+
+    def is_in_transaction(self) -> bool:
+        return self.depth > 0
 
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[None]:
         self.entered += 1
-        yield
+        self.depth += 1
+
+        try:
+            yield
+
+        finally:
+            self.depth -= 1
 
 
 def _adapter() -> tuple[FirestoreTxManagerAdapter, _FakeClient]:
     client = _FakeClient()
     return FirestoreTxManagerAdapter(client=client), client  # type: ignore[arg-type]
+
+
+async def test_a_scope_joins_only_inside_its_clients_transaction() -> None:
+    adapter, _ = _adapter()
+    assert not adapter.is_transactionally_enlisted()
+
+    async with adapter.transaction():
+        assert adapter.is_transactionally_enlisted()
 
 
 def test_reports_all_levels_serializable_satisfies_any() -> None:

@@ -76,3 +76,22 @@ def harness(
 @pytest.mark.parametrize("check", TX_ROLLBACK_ONLY_BATTERY, ids=lambda check: check.__name__)
 async def test_tx_rollback_only_battery(check: Check, harness: RollbackOnlyHarness) -> None:
     await check(harness)
+
+
+@pytest.mark.parametrize("transactions", ["journal", "strict"])
+async def test_another_route_on_the_same_state_joins_the_dry_run(transactions: str) -> None:
+    """Every mock route shares one state, so a scope on another route is never separate."""
+
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state, transactions=transactions))  # type: ignore[arg-type]
+
+    async with ctx.tx_ctx.scope("orders") as tx:
+        await ctx.document.command(SPEC).create(ThingCreate(name="outer"))
+
+        async with ctx.tx_ctx.scope("billing"):
+            await ctx.document.command(SPEC).create(ThingCreate(name="other-route"))
+
+        # Decided at the end: the other route committed nothing of its own, so it is allowed.
+        tx.rollback_only()
+
+    assert state.documents.get("things", {}) == {}

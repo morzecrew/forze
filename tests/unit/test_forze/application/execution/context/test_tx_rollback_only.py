@@ -7,6 +7,7 @@ battery in ``tests/support/tx_rollback_only_conformance.py``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -16,6 +17,7 @@ import pytest
 
 from forze.application.contracts.transaction import (
     IsolationLevel,
+    RollbackSignal,
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
@@ -41,6 +43,8 @@ class _RecordingManager:
     """Records how each level of the nest ended, as ``"<level>:commit"`` or ``"<level>:<error>"``."""
 
     savepoints: bool = True
+    cancel_nested_rollback: bool = False
+    """Cancel the task while a nested scope rolls back on request, as a deadline would."""
     events: list[str] = attrs.field(factory=list)
     depth: int = 0
 
@@ -52,6 +56,10 @@ class _RecordingManager:
         return TxCapabilities(
             isolation=frozenset({IsolationLevel.READ_COMMITTED}), savepoints=self.savepoints
         )
+
+    def is_transactionally_enlisted(self) -> bool:
+        # One manager is one client: a scope joins only while this one has a transaction open.
+        return self.depth > 0
 
     @asynccontextmanager
     async def transaction(
@@ -65,6 +73,17 @@ class _RecordingManager:
 
         except BaseException as error:
             self.events.append(f"{level}:{type(error).__name__}")
+
+            if (
+                self.cancel_nested_rollback
+                and level == "nested"
+                and isinstance(error, RollbackSignal)
+            ):
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+                await asyncio.sleep(0)  # the rollback's round trip, where the cancel lands
+
             raise
 
         else:
@@ -92,6 +111,14 @@ class _NoCapsManager(TransactionManagerPort):
 def _tx(manager: object) -> TransactionContext:
     tx = TransactionContext()
     tx.lock(lambda _route: manager)  # type: ignore[arg-type, return-value]
+    return tx
+
+
+def _routes(**managers: object) -> TransactionContext:
+    """One manager per route; a manager given twice is one client behind two routes."""
+
+    tx = TransactionContext()
+    tx.lock(lambda route: managers[str(route)])  # type: ignore[arg-type, return-value]
     return tx
 
 
@@ -244,3 +271,149 @@ class TestNested:
         if isinstance(manager, _RecordingManager):
             # A real error from then on: it rolls the whole transaction back unless caught.
             assert manager.events == ["nested:CoreException", "root:CoreException"]
+
+    async def test_a_signal_the_scopes_did_not_raise_is_never_swallowed(self) -> None:
+        """Raising it by hand is not a way to ask for a rollback: it leaves every scope."""
+
+        manager = _RecordingManager()
+        tx = _tx(manager)
+        foreign = RollbackSignal()
+
+        with pytest.raises(RollbackSignal) as caught:
+            async with tx.scope("r"), tx.scope("r"):
+                raise foreign
+
+        assert caught.value is foreign
+        assert manager.events == ["nested:RollbackSignal", "root:RollbackSignal"]
+
+
+class TestNestedCallbacks:
+    async def test_a_cancelled_rollback_cannot_leave_them_queued(self) -> None:
+        """A cancel landing in the savepoint rollback, caught, then the outer commit."""
+
+        tx = _tx(_RecordingManager(cancel_nested_rollback=True))
+        ran: list[str] = []
+
+        async def outer() -> None:
+            ran.append("outer")
+
+        async def inner() -> None:
+            ran.append("inner")
+
+        async with tx.scope("r"):
+            await tx.run_or_defer(outer)
+
+            with pytest.raises(asyncio.CancelledError):
+                async with tx.scope("r") as nested:
+                    await tx.run_or_defer(inner)
+                    nested.rollback_only()
+
+            task = asyncio.current_task()
+            assert task is not None
+            task.uncancel()
+
+        assert ran == ["outer"]
+
+    async def test_a_sibling_tasks_outer_callback_survives(self) -> None:
+        """A task of the outer scope defers while the nested scope is open: it is not the nested's."""
+
+        tx = _tx(_RecordingManager())
+        ran: list[str] = []
+        go, deferred = asyncio.Event(), asyncio.Event()
+
+        async def inner() -> None:
+            ran.append("inner")
+
+        async def sibling_effect() -> None:
+            ran.append("sibling")
+
+        async def sibling() -> None:
+            await go.wait()
+            await tx.run_or_defer(sibling_effect)
+            deferred.set()
+
+        async with tx.scope("r"):
+            task = asyncio.create_task(sibling())
+
+            async with tx.scope("r") as nested:
+                await tx.run_or_defer(inner)
+                go.set()
+                await deferred.wait()
+                nested.rollback_only()
+
+            await task
+
+        assert ran == ["sibling"]
+
+
+class TestOtherRoutes:
+    """A scope on a route whose manager runs on another client has a transaction of its own."""
+
+    async def test_a_root_marked_first_rolls_it_back(self) -> None:
+        a, b = _RecordingManager(), _RecordingManager()
+        tx = _routes(a=a, b=b)
+
+        async with tx.scope("a") as root:
+            root.rollback_only()
+
+            async with tx.scope("b"):
+                pass
+
+        assert b.events == ["root:RollbackSignal"]
+        assert a.events == ["root:RollbackSignal"]
+
+    async def test_a_root_marked_while_it_is_open_rolls_it_back(self) -> None:
+        a, b = _RecordingManager(), _RecordingManager()
+        tx = _routes(a=a, b=b)
+
+        async with tx.scope("a") as root, tx.scope("b"):
+            root.rollback_only()
+
+        assert b.events == ["root:RollbackSignal"]
+        assert a.events == ["root:RollbackSignal"]
+
+    @pytest.mark.parametrize(
+        "other",
+        [_RecordingManager(), _NoCapsManager()],
+        ids=["separate-client", "cannot-tell"],
+    )
+    async def test_rollback_only_after_it_committed_is_refused(self, other: object) -> None:
+        a = _RecordingManager()
+        tx = _routes(a=a, b=other)
+
+        with pytest.raises(CoreException) as caught:
+            async with tx.scope("a") as root:
+                async with tx.scope("b"):
+                    pass
+
+                root.rollback_only()
+
+        assert caught.value.kind is ExceptionKind.PRECONDITION
+        assert caught.value.code == "tx_rollback_after_independent_commit"
+        # The refusal is an error through the root, which rolls back what it can.
+        assert a.events == ["root:CoreException"]
+
+        if isinstance(other, _RecordingManager):
+            assert other.events == ["root:commit"]
+
+    async def test_a_route_on_the_same_client_joins_and_is_not_refused(self) -> None:
+        a = _RecordingManager()
+        tx = _routes(a=a, b=a)
+
+        async with tx.scope("a") as root:
+            async with tx.scope("b"):
+                pass
+
+            root.rollback_only()
+
+        assert a.events == ["nested:commit", "root:RollbackSignal"]
+
+    async def test_it_rolls_back_alone_without_savepoints(self) -> None:
+        a, b = _RecordingManager(), _RecordingManager(savepoints=False)
+        tx = _routes(a=a, b=b)
+
+        async with tx.scope("a"), tx.scope("b") as other:
+            other.rollback_only()
+
+        assert b.events == ["root:RollbackSignal"]
+        assert a.events == ["root:commit"]

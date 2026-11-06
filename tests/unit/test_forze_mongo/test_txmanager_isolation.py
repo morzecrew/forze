@@ -15,16 +15,34 @@ from forze_mongo.kernel.client import MongoTransactionOptions
 class _FakeClient:
     def __init__(self) -> None:
         self.options: MongoTransactionOptions | None = None
+        self.depth = 0
+
+    def is_in_transaction(self) -> bool:
+        return self.depth > 0
 
     @asynccontextmanager
     async def transaction(self, *, options: MongoTransactionOptions) -> AsyncGenerator[None]:
         self.options = options
-        yield
+        self.depth += 1
+
+        try:
+            yield
+
+        finally:
+            self.depth -= 1
 
 
 def _adapter() -> tuple[MongoTxManagerAdapter, _FakeClient]:
     client = _FakeClient()
     return MongoTxManagerAdapter(client=client), client  # type: ignore[arg-type]
+
+
+async def test_a_scope_joins_only_inside_its_clients_transaction() -> None:
+    adapter, _ = _adapter()
+    assert not adapter.is_transactionally_enlisted()
+
+    async with adapter.transaction():
+        assert adapter.is_transactionally_enlisted()
 
 
 def test_reports_snapshot_but_not_serializable() -> None:

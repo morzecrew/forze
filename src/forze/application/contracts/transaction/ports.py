@@ -75,6 +75,12 @@ class TransactionallyEnlistable(Protocol):
     A store bound to a **different** client/pool is not enlisted: its write commits on its own
     connection, silently breaking any "commit atomically" guarantee. See
     :meth:`~forze.application.execution.context.transaction.TransactionContext.assert_enlisted`.
+
+    A transaction manager implements it too: ``True`` when a scope opened now would join a
+    transaction already open on this task, because its client is in one. A scope on another
+    route whose manager answers ``False``, or cannot answer, opens a transaction of its own,
+    which commits at its own exit (see
+    :class:`~forze.application.execution.context.transaction.TransactionScopeHandle`).
     """
 
     def is_transactionally_enlisted(self) -> bool:

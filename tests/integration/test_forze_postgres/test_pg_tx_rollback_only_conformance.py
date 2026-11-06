@@ -10,10 +10,15 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
+import attrs
 import pytest
 from psycopg import sql
 from testcontainers.postgres import PostgresContainer
 
+from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_postgres.adapters import PostgresTxManagerAdapter
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.kernel.client import PostgresConfig
 from forze_postgres.kernel.client.client import PostgresClient
@@ -88,3 +93,92 @@ async def test_a_real_error_still_logs_at_error(harness: RollbackOnlyHarness) ->
 
     assert any("rolling back" in message for message in errors), errors
     assert await harness.stored() == set()
+
+
+# ....................... #
+# Routes on two clients: a scope on the other client's route has a transaction of its own.
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _TwoClients:
+    ctx: ExecutionContext
+    first: PostgresClient
+    second: PostgresClient
+    table: sql.Identifier
+
+    async def write(self, client: PostgresClient, key: str) -> None:
+        await client.execute(sql.SQL("INSERT INTO {} (k) VALUES (%s)").format(self.table), (key,))
+
+    async def stored(self) -> set[str]:
+        rows = await self.first.fetch_all(sql.SQL("SELECT k FROM {}").format(self.table))
+        return {row["k"] for row in rows}  # type: ignore[call-overload]
+
+
+@pytest.fixture
+async def second_client(postgres_container: PostgresContainer) -> AsyncIterator[PostgresClient]:
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=3))
+
+    yield client
+
+    await client.close()
+
+
+@pytest.fixture
+async def two(pg_client: PostgresClient, second_client: PostgresClient) -> _TwoClients:
+    table = sql.Identifier(f"rollback_only_{uuid4().hex[:12]}")
+    await pg_client.execute(sql.SQL("CREATE TABLE {} (k text PRIMARY KEY)").format(table))
+
+    # "a" and "same" share the first client, as one deps module with tx={"a", "same"} does.
+    managers = {
+        "a": lambda _ctx: PostgresTxManagerAdapter(client=pg_client),
+        "same": lambda _ctx: PostgresTxManagerAdapter(client=pg_client),
+        "b": lambda _ctx: PostgresTxManagerAdapter(client=second_client),
+    }
+    ctx = context_from_deps(Deps.routed({TransactionManagerDepKey: managers}))
+
+    return _TwoClients(ctx=ctx, first=pg_client, second=second_client, table=table)
+
+
+async def test_a_dry_run_declared_first_covers_another_clients_route(two: _TwoClients) -> None:
+    async with two.ctx.tx_ctx.scope("a") as tx:
+        tx.rollback_only()
+        await two.write(two.first, "first")
+
+        async with two.ctx.tx_ctx.scope("b"):
+            await two.write(two.second, "second")
+
+    assert await two.stored() == set()
+
+
+async def test_a_dry_run_decided_after_another_client_committed_is_refused(
+    two: _TwoClients,
+) -> None:
+    with pytest.raises(CoreException) as caught:
+        async with two.ctx.tx_ctx.scope("a") as tx:
+            await two.write(two.first, "first")
+
+            async with two.ctx.tx_ctx.scope("b"):
+                await two.write(two.second, "second")
+
+            tx.rollback_only()
+
+    assert caught.value.kind is ExceptionKind.PRECONDITION
+    assert caught.value.code == "tx_rollback_after_independent_commit"
+    # The other client's transaction committed at its own exit; the root rolled back.
+    assert await two.stored() == {"second"}
+
+
+async def test_a_route_on_the_same_client_joins_a_dry_run_decided_at_the_end(
+    two: _TwoClients,
+) -> None:
+    async with two.ctx.tx_ctx.scope("a") as tx:
+        await two.write(two.first, "first")
+
+        async with two.ctx.tx_ctx.scope("same"):
+            await two.write(two.first, "same-client")
+
+        tx.rollback_only()
+
+    assert await two.stored() == set()

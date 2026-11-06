@@ -152,6 +152,13 @@ dry run up front.
   root's transaction. There `rollback_only()` raises `exc.precondition`
   (`code="tx_nested_rollback_unsupported"`) at the call instead of keeping writes
   you asked to discard. The mock's `transactions="strict"` mode has savepoints.
+- **A route on another client** opens a transaction of its own, which commits when its
+  scope exits, and the root cannot undo that. Under a root already marked, such a scope
+  rolls back too. Once one has exited, `rollback_only()` on the root raises
+  `exc.precondition` (`code="tx_rollback_after_independent_commit"`). So a dry run that
+  spans clients calls `rollback_only()` before it opens their scopes. Routes on the same
+  client, such as `tx={"orders", "billing"}` in one deps module, share the root's
+  transaction and need no care.
 - **An exception after the mark** propagates as usual: the scope rolls back, and the
   error is logged and raised like any other. The mark never swallows an error.
 - **After the scope exits**, `rollback_only()` raises `exc.precondition`
@@ -160,7 +167,10 @@ dry run up front.
 The scope rolls back by throwing `RollbackSignal` into the transaction manager and
 catching it again on the way out. It is a `BaseException`, like a cancellation, so a
 custom manager that rolls back on a cancel handles it with no change. A manager
-reports savepoints through `TxCapabilities(savepoints=True)`.
+reports savepoints through `TxCapabilities(savepoints=True)`, and whether a scope opened
+now joins a transaction already open on its client through
+`TransactionallyEnlistable.is_transactionally_enlisted()`. A manager that cannot tell
+counts as another client.
 
 ## Read-only transactions
 
