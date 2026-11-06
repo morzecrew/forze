@@ -37,7 +37,7 @@ from .plan import (
     validate_plan,
 )
 from .report import SCHEMA, RunWriter
-from .soak import MIN_FIT_WINDOWS, ServerSeries, drift_report
+from .soak import MIN_FIT_WINDOWS, Fetched, ServerSeries, drift_report
 from .stats import StepRecorder, classify, error_share, find_knee
 
 # ----------------------- #
@@ -855,6 +855,10 @@ async def _open(
         await asyncio.gather(*drivers, *inflight, return_exceptions=True)
 
 
+_DONE: dict[str, Any] = {"reason": "done"}
+"""The halt a soak sets at its last boundary: no new sends, while calls in flight drain."""
+
+
 async def _soak(
     state: _Run,
     profile: Soak,
@@ -863,13 +867,16 @@ async def _soak(
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[float]]:
     """One load level, window after window, with no gap between them.
 
-    The load starts once and runs to the end: one window closes and the next opens at the
-    same instant, on a fixed schedule from the load's start, so every call counts in a
-    window and open-model arrivals keep their phase. A closed window's calls drain, and its
-    scrape runs, beside the next window; its row is written, and the stop rule read, once
-    both are done. A stop found that way ends the window then running, which is written
-    cut short. Returns the rows, why the soak stopped, and each window's end in seconds
-    since the load started, at full precision, for the fit.
+    The load starts once. Windows close on a fixed schedule from its start, whatever the
+    drains and scrapes take, and the next opens at the same instant, so every call counts in
+    a window and open-model arrivals keep their phase. A closed window's calls drain and its
+    scrape runs from its close, beside the windows after it, each within ``timeout_s``.
+    Rows are written in window order, each once its own drain and scrape are done, and the
+    stop rule is read on each as it is written. A stop ends the window then running, which
+    is written cut short. At the last boundary, or once a stop is known, no call is sent any
+    more; the calls in flight drain into the window that sent them. Returns the rows, why
+    the soak stopped, and each window's end in seconds since the load started, at full
+    precision, for the fit.
     """
 
     model, (level,) = _levels(profile)
@@ -886,16 +893,16 @@ async def _soak(
     )
     rows: list[dict[str, Any]] = []
     ends: list[float] = []
-    pending: asyncio.Task[dict[str, Any]] | None = None
+    closing: list[asyncio.Task[tuple[dict[str, Any], Fetched | None]]] = []
+    closed: asyncio.Queue[int | None] = asyncio.Queue()
+    rule: list[dict[str, Any]] = []
     started = time.perf_counter()
 
     def check() -> None:
         if state.failure is not None:
             raise state.failure
 
-    def close(
-        window: int, recorder: StepRecorder, *, cut_short: bool
-    ) -> asyncio.Task[dict[str, Any]]:
+    def close(window: int, recorder: StepRecorder, *, cut_short: bool) -> None:
         ends.append(time.perf_counter() - started)
         client = state.probe.report(
             recorder.scheduled, recorder.behind, cpu_judged=state.cpu_judged
@@ -909,37 +916,46 @@ async def _soak(
             "warm": window <= profile.warm_windows,
             "t_s": round(ends[-1], 3),
         }
-
-        return asyncio.create_task(
-            _window_row(state, server, recorder, row, client, measured, cut_short=cut_short)
+        closing.append(
+            asyncio.create_task(
+                _window_row(state, server, recorder, row, client, measured, cut_short=cut_short)
+            )
         )
+        closed.put_nowait(len(closing) - 1)
 
-    async def keep(task: asyncio.Task[dict[str, Any]]) -> dict[str, Any] | None:
-        """Write the closed window's row; why the soak stops after it, or ``None``."""
+    async def write_rows() -> None:
+        """Write the closed windows' rows in order, and read the stop rule on each."""
 
-        row = await task
-        check()
-        rows.append(row)
-        writer.write(row)
+        while (index := await closed.get()) is not None:
+            row, fetched = await closing[index]
 
-        # A soak's warm-up is cold start, as a ramp's `warm_s` is: a burst there stops nothing.
-        return None if row["warm"] else _stop_reason(row, profile.stop_error_rate)
+            if server is not None and fetched is not None:
+                row["server"] = server.record(row["window"], fetched)
+
+            rows.append(row)
+            writer.write(row)
+
+            # A soak's warm-up is cold start, as a ramp's `warm_s` is: a burst there stops
+            # nothing. Only the first stop counts, and a window cut short is already the last.
+            if rule or row["warm"] or row.get("cut_short"):
+                continue
+
+            stopped = _stop_reason(row, profile.stop_error_rate)
+
+            if stopped is not None:
+                rule.append(stopped)
+                state.stop(stopped)  # no new sends; the running window ends cut short
+
+    rows_done = asyncio.create_task(write_rows())
+    halted_at: int | None = None
+    window = 0
 
     try:
-        for window in range(1, profile.windows + 1):
+        while True:  # the last window, or a halt, breaks out
+            window += 1
             recorder = StepRecorder(warm_until=time.perf_counter())
             state.current = recorder
             state.probe.begin()
-
-            if pending is not None:
-                stopped, pending = await keep(pending), None
-
-                if stopped is not None:
-                    pending = close(window, recorder, cut_short=True)
-                    state.current = None
-                    await keep(pending)
-
-                    return rows, stopped, ends
 
             with contextlib.suppress(TimeoutError):
                 deadline = started + window * profile.window_s
@@ -948,23 +964,33 @@ async def _soak(
                 )
 
             check()
-            halt = state.halt
-            pending = close(window, recorder, cut_short=halt is not None)
+            halted = state.halt is not None
 
-            if halt is not None:
+            if halted or window == profile.windows:
+                halted_at = window if halted else None
+                state.stop(_DONE)  # a no-op once halted: either way, nothing more is sent
                 state.current = None
-                await keep(pending)
+                close(window, recorder, cut_short=halted)
+                break
 
-                return rows, {"window": window, **key, **halt}, ends
+            close(window, recorder, cut_short=False)
 
-        state.current = None
-        stopped = await keep(pending) if pending is not None else None
+        closed.put_nowait(None)
+        await rows_done
+        check()
+        halt = state.halt
 
-        return rows, stopped, ends
+        if rule:
+            return rows, rule[0], ends
+
+        if halted_at is not None and halt is not None:
+            return rows, {"window": halted_at, **key, **halt}, ends
+
+        return rows, None, ends
 
     finally:
         state.current = None
-        tasks = [*load, *inflight, *([pending] if pending is not None else [])]
+        tasks = [*load, *inflight, *closing, rows_done]
 
         for task in tasks:
             task.cancel()
@@ -981,16 +1007,21 @@ async def _window_row(
     measured: float,
     *,
     cut_short: bool,
-) -> dict[str, Any]:
-    """Drain a closed window's calls and take its scrape side by side, then finish its row."""
+) -> tuple[dict[str, Any], Fetched | None]:
+    """Drain a closed window's calls and take its scrape side by side, then finish its row.
+
+    The scrape comes back unrecorded: scrapes can finish out of order, and
+    :meth:`ServerSeries.record` takes them in window order.
+    """
 
     drain = recorder.drain(state.plan.timeout_s + _DRAIN_MARGIN_S)
+    fetched: Fetched | None = None
 
     if server is None:
         await drain
 
     else:
-        _, row["server"] = await asyncio.gather(drain, server.sample(row["window"]))
+        _, fetched = await asyncio.gather(drain, server.fetch())
 
     summary = recorder.summary(measured)
     scenarios = summary.pop("scenarios")
@@ -1002,7 +1033,7 @@ async def _window_row(
     if cut_short:
         row["cut_short"] = True
 
-    return row
+    return row, fetched
 
 
 # ....................... #

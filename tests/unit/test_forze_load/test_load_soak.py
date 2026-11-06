@@ -836,6 +836,91 @@ class TestSoakRun:
         assert elapsed < 1.7
         assert all("series" in row["server"] for row in result.rows)
 
+    async def test_nothing_is_sent_after_the_last_window_closes(self) -> None:
+        sends: list[float] = []
+        scrapes = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal scrapes
+
+            if request.url.path == "/metrics":
+                scrapes += 1
+                number = scrapes  # scrapes overlap: read the count before sleeping
+                await asyncio.sleep(0.3 if number > 1 else 0.0)
+                return _leaking(number)
+
+            sends.append(time.perf_counter())
+            await asyncio.sleep(0.15)
+
+            return httpx.Response(200)
+
+        soak = Soak(duration_s=1.2, window_s=0.2, workers=2)
+        began = time.perf_counter()
+
+        result = await run(_plan(), soak, transport=httpx.MockTransport(handler))
+        elapsed = time.perf_counter() - began
+
+        # The load starts with the first send. No call starts after the last window closes,
+        # while its 0.3 s scrape runs; the calls in flight drain into it.
+        assert max(sends) <= sends[0] + result.rows[-1]["t_s"] + 0.05
+        assert result.rows[-1]["unfinished"] == 0
+        assert "cut_short" not in result.rows[-1]
+        # Six windows, then one route's drain beside one scrape, with room for a slow runner.
+        assert elapsed < 1.2 + 0.3 + 0.5
+
+    async def test_boundaries_hold_beside_a_scrape_slower_than_a_window(self) -> None:
+        scrapes = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal scrapes
+
+            if request.url.path == "/metrics":
+                scrapes += 1
+                number = scrapes  # scrapes overlap: read the count before sleeping
+                await asyncio.sleep(0.3 if number > 1 else 0.0)
+                return _leaking(number)
+
+            await asyncio.sleep(0.001)
+
+            return httpx.Response(200)
+
+        soak = Soak(duration_s=1.2, window_s=0.2, workers=1)
+
+        result = await run(_plan(), soak, transport=httpx.MockTransport(handler))
+
+        # Each 0.3 s scrape overlaps the next one, and no window waits for it.
+        assert [row["window"] for row in result.rows] == [1, 2, 3, 4, 5, 6]
+        assert [row["duration_s"] for row in result.rows] == pytest.approx([0.2] * 6, abs=0.07)
+        assert [row["t_s"] for row in result.rows] == pytest.approx(
+            [0.2 * n for n in range(1, 7)], abs=0.1
+        )
+        # Each row has its own scrape, recorded in window order.
+        leaks = [row["server"]["series"]["forze_leak"] for row in result.rows]
+        assert leaks == sorted(set(leaks))
+        assert len(leaks) == 6
+
+    async def test_a_stop_ends_the_sends_as_soon_as_it_is_known(self) -> None:
+        sends: list[float] = []
+
+        async def failing(request: httpx.Request) -> httpx.Response:
+            sends.append(time.perf_counter())
+            await asyncio.sleep(0.001)
+
+            return httpx.Response(503)
+
+        soak = Soak(duration_s=2.4, window_s=0.2, workers=1)
+
+        result = await run(_plan(metrics=None), soak, transport=httpx.MockTransport(failing))
+        stopped, last = result.summary["stopped"], result.rows[-1]
+
+        # The stopping window's row is read as its calls drain, early in the next window,
+        # which ends there, cut short; nothing is sent after it.
+        assert stopped["reason"] == "errors"
+        assert len(result.rows) < soak.windows
+        assert last.get("cut_short")
+        assert last["t_s"] - stopped["window"] * soak.window_s < 0.1
+        assert max(sends) <= sends[0] + last["t_s"] + 0.05
+
     async def test_open_arrivals_keep_their_schedule_across_windows(self) -> None:
         sent: list[float] = []
 

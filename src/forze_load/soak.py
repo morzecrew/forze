@@ -230,6 +230,10 @@ class ScrapeFailed(Exception):
     """A scrape got no readable Prometheus text; the message says why, without the body."""
 
 
+type Fetched = tuple[float, float, list[MetricSample]] | ScrapeFailed
+"""One scrape: when it was sent and answered, and its samples; or why it failed."""
+
+
 async def fetch_metrics(client: httpx.AsyncClient, path: str) -> list[MetricSample]:
     """``GET`` *path* on the target, without a credential, and parse the answer.
 
@@ -290,34 +294,48 @@ class ServerSeries:
         :raises CoreException: ``configuration`` (``load_metrics_unavailable``).
         """
 
-        try:
-            sent = time.perf_counter()
-            samples = await fetch_metrics(self.client, self.path)
-            self.add(0, sent, samples, answered=time.perf_counter())
+        fetched = await self.fetch()
 
-        except ScrapeFailed as error:
+        if isinstance(fetched, ScrapeFailed):
             raise exc.configuration(
-                f"The soak's metrics route {self.path!r} cannot be read: {error}. Serve "
+                f"The soak's metrics route {self.path!r} cannot be read: {fetched}. Serve "
                 "Prometheus text there "
                 "(attach_metrics_route), or set LoadPlan.metrics=None for client numbers only",
                 code="load_metrics_unavailable",
-            ) from error
+            ) from fetched
 
-    async def sample(self, window: int) -> dict[str, Any]:
-        """Scrape at the end of *window* and return the row's ``server`` record.
+        self.record(0, fetched)
 
-        A failed scrape is recorded as ``{"error": ...}`` and the run carries on: the next
-        scrape's counter rates then span both windows.
+    async def fetch(self) -> Fetched:
+        """Scrape once, and say when the request was sent and answered.
+
+        It touches no state, so the scrapes of windows that closed close together can run at
+        once; :meth:`record` then takes them in window order.
         """
 
+        sent = time.perf_counter()
+
         try:
-            sent = time.perf_counter()
             samples = await fetch_metrics(self.client, self.path)
 
         except ScrapeFailed as error:
-            return {"error": str(error)}
+            return error
 
-        return self.add(window, sent, samples, answered=time.perf_counter())
+        return sent, time.perf_counter(), samples
+
+    def record(self, window: int, fetched: Fetched) -> dict[str, Any]:
+        """Record *window*'s scrape and return the row's ``server`` record.
+
+        A failed scrape is recorded as ``{"error": ...}`` and the run carries on: the next
+        scrape's counter rates then span both windows. Calls must come in window order.
+        """
+
+        if isinstance(fetched, ScrapeFailed):
+            return {"error": str(fetched)}
+
+        sent, answered, samples = fetched
+
+        return self.add(window, sent, samples, answered=answered)
 
     def add(
         self,

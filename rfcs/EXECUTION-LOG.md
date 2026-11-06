@@ -6773,9 +6773,9 @@ Row 22 holds, and D-274 settles the detection rule §10 left to RFC 0083's shape
 **Drift count: 3.** Sixteen entries, D-270 to D-285: three `drift` (D-275, D-281, D-282),
 twelve `spec-gap`, one `discovery`. The drifts depart from §5.2's CLI sketch and from §7's page
 and changelog wording, not from a decision row. A review of the branch raised eight findings,
-and PR #872's reviews ten more, all fixed; the two tables at the end record each. The first
-round amended D-272, D-275, D-276 and D-278 and added D-283 and D-284; the second amended
-D-272 to D-276, D-278, D-279 and D-284 and added D-285.
+and PR #872's reviews eleven more, all fixed; the two tables at the end record each. The
+first round amended D-272, D-275, D-276 and D-278 and added D-283 and D-284; the second
+amended D-272 to D-276, D-278, D-279 and D-284 and added D-285, which a follow-up amended.
 
 **Where each item lives.** The parser, the scrape, the per-series points, the one-process rule
 and the fit in [`forze_load/soak.py`](../src/forze_load/soak.py); the `Soak` profile and the
@@ -6799,7 +6799,9 @@ second round adds twelve: `inconclusive` removed, rounded `t_s` fitted, a cut-sh
 fitted, timestamps unchecked, any escape read, a value's token in the error, a gap for the
 scrape between windows, run-file flags unchecked, the "not evaluated" line removed, the
 interleaved warning reworded, and the previous round's engine run against the back-to-back
-and arrival-schedule tests.
+and arrival-schedule tests. The follow-up adds five: sends left running after the last
+boundary, windows waiting for their scrapes, a stop that does not halt sends, and the
+previous engine against the last-boundary and slow-scrape tests.
 
 ## D-270 — Row 24's and row 25's gauges, as `main` has them
 
@@ -7019,8 +7021,9 @@ and arrival-schedule tests.
   `stop_error_rate`, or that is misconfigured, ends the soak; `stopped` names the window, the
   load level and the reason. A warm-up window never stops it: a cold-start burst of 5xx is
   what a ramp's `warm_s` keeps out of its stop rule too. A window's row is read once its
-  calls drain and its scrape answers, while the next window runs (D-285), so the rule sees
-  every call; a stop found then ends that next window, which is written cut short. A
+  calls drain and its scrape answers, while the windows after it run (D-285), so the rule
+  sees every call; a stop found then ends the window then running, which is written cut
+  short, and halts the sends at once. A
   principal whose samples run out halts the soak as it halts a ramp (D-238). Drift is
   computed over the windows written, and the run exits 0.
 - **Because:** a server that falls over mid-soak is the finding; hours of errors after it
@@ -7138,20 +7141,31 @@ and arrival-schedule tests.
   scrape lengthened the run (six 60 s windows behind 8 s scrapes took at least 408 s). The
   open model also restarted its arrival schedule at each window with an immediate arrival,
   so `rate=0.001` with 60 s windows sent about one request a window, not one per 1,000 s.
-- **Built:** the soak has its own loop. The load starts once and runs to the end. Windows
-  close on a fixed schedule from the load's start, `started + n × window_s`, and the next
-  opens at the same instant, so every call counts in one window. A closed window's drain
-  and its scrape run side by side, beside the next window, and the scrape is stamped when
-  it is sent (D-283). The row is written, and the stop rule read, when both are done. A
-  soak lasts its windows plus the last window's drain and scrape; a scrape slower than a
-  window delays the next row and lengthens that window, and no call goes uncounted. The
-  open model keeps one arrival schedule for the whole soak. The ramps keep `main`'s step
-  loop: their steps change rate, and their `warm_s` keeps the switch out of their numbers.
+- **Found (PR #872 follow-up, R-19):** the first version of this entry still let the
+  load run past the last window while its drain and scrape finished, with nothing recording
+  those calls, and a drain or scrape longer than `window_s` pushed every later boundary
+  back.
+- **Built:** the soak has its own loop. The load starts once. Windows close on a fixed
+  schedule from the load's start, `started + n × window_s`, whatever the drains and
+  scrapes take, and the next opens at the same instant, so every call counts in one window.
+  A closed window's drain and its scrape start at its close and run side by side, beside
+  the windows after it, each within `timeout_s`; a scrape slower than a window overlaps the
+  next one, and is stamped when it is sent (D-283). A scrape is fetched without touching
+  the series and recorded only when its row is written. Rows are written in window order,
+  each once its own drain and scrape are done, and the stop rule is read on each as it is
+  written. At the last boundary, or as soon as a row calls for a stop, the soak halts its
+  sends: the closed model's workers start no new call and the arrival schedule ends, while
+  the calls in flight drain into the window that sent them. A stop ends the window then
+  running, which is written cut short. A soak lasts its windows plus the last drain and
+  scrape. The open model keeps one arrival schedule for the whole soak. The ramps keep
+  `main`'s step loop: their steps change rate, and their `warm_s` keeps the switch out of
+  their numbers.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a soak's windows run back to back on a fixed
-  schedule from the load's start, with one load and one arrival schedule throughout; a
-  window's drain and scrape run beside the next window, and its row and stop rule follow
-  when both are done.
+  schedule from the load's start, with one load and one arrival schedule throughout; each
+  window's drain and scrape start at its close and run beside the windows after it, and
+  rows and the stop rule follow in window order; nothing is sent after the last boundary or
+  once a stop is known, and calls in flight drain into their window.
 
 ## Review findings — 2026-11-06
 
@@ -7184,3 +7198,4 @@ CodeRabbit's and CodeAnt's reviews of `f79908a42`. Every fix has a test that fai
 | R-16 | Risk | A window a stop cut short fed the client fit, where one slow answer could flag latency drift | Fixed (D-276): left out of the client fit; its scrape still counts |
 | R-17 | Bug | `read_run` took any `warm`; a string `"false"` is truthy and skipped that window's `--fail-on` gate | Fixed (D-279): `warm` and `cut_short` must be booleans, or the file is refused |
 | R-18 | Risk | An unknown label-value escape was read as its character, accepting malformed text and merging distinct series | Fixed (D-273): only `\\`, `\"` and `\n`; another refuses the scrape |
+| R-19 | Bug | The soak waited for its last drain and scrape with the load still running and its calls unrecorded, and a drain or scrape longer than a window pushed later boundaries back | Fixed (D-285): boundaries fixed at `started + n × window_s`, each window's drain and scrape from its close, rows in window order, and no sends after the last boundary or a stop |
