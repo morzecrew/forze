@@ -6,6 +6,7 @@ from .errors import (
     SOURCE_THROTTLED_CODE,
     SOURCE_UNAVAILABLE_CODE,
     object_store_errors,
+    object_store_stream,
 )
 from .port import DuckDbClientPort, DuckDbDynamicReadClientPort
 from .routed_client import (
@@ -29,6 +30,7 @@ __all__ = [
     "SOURCE_THROTTLED_CODE",
     "SOURCE_UNAVAILABLE_CODE",
     "object_store_errors",
+    "object_store_stream",
     "DuckDbClient",
     "DuckDbClientPort",
     "DuckDbDynamicReadClientPort",

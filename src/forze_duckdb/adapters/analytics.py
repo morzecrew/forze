@@ -49,6 +49,7 @@ from forze_duckdb.kernel.client import (
     DuckDbClientPort,
     build_count_sql,
     object_store_errors,
+    object_store_stream,
 )
 
 # ----------------------- #
@@ -230,16 +231,17 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        with object_store_errors():
-            async for chunk in stream_shaped_chunks(
-                raw,
-                fetch_batch_size=fetch_batch_size,
-                read_codec=self.spec.resolved_read_codec,
-                read_type=self.spec.read,
-                return_type=None,
-                return_fields=None,
-            ):
-                yield chunk
+        chunks = stream_shaped_chunks(
+            raw,
+            fetch_batch_size=fetch_batch_size,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=None,
+            return_fields=None,
+        )
+
+        async for chunk in object_store_stream(chunks):
+            yield chunk
 
     # ....................... #
 
@@ -268,16 +270,17 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        with object_store_errors():
-            async for chunk in stream_shaped_chunks(
-                raw,
-                fetch_batch_size=fetch_batch_size,
-                read_codec=self.spec.resolved_read_codec,
-                read_type=self.spec.read,
-                return_type=return_type,
-                return_fields=None,
-            ):
-                yield chunk
+        chunks = stream_shaped_chunks(
+            raw,
+            fetch_batch_size=fetch_batch_size,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+        async for chunk in object_store_stream(chunks):
+            yield chunk
 
     # ....................... #
 

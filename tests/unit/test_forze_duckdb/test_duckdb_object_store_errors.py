@@ -26,10 +26,11 @@ from forze_duckdb.kernel.client import (
     SOURCE_UNAVAILABLE_CODE,
     DuckDbClient,
     object_store_errors,
+    object_store_stream,
 )
 from forze_duckdb.kernel.client.errors import object_store_error
 from tests.support.execution_context import context_from_deps
-from tests.unit.test_forze_duckdb.conftest import Params
+from tests.unit.test_forze_duckdb.conftest import Params, Row
 
 # ----------------------- #
 
@@ -159,6 +160,33 @@ def test_a_path_that_does_not_parse_is_left_out() -> None:
     assert mapped.details == {"path": None}
 
 
+async def test_the_stream_maps_a_failed_fetch_but_not_what_is_thrown_in() -> None:
+    async def chunks(fail: bool) -> AsyncIterator[int]:
+        yield 1
+
+        if fail:
+            raise duckdb.IOException('IO Error: No files found that match the pattern "/x"')
+
+        yield 2
+
+    failing = object_store_stream(chunks(fail=True))
+    assert await anext(failing) == 1
+
+    with pytest.raises(CoreException) as caught:
+        await anext(failing)
+
+    assert caught.value.code == SOURCE_NOT_FOUND_CODE
+
+    healthy = object_store_stream(chunks(fail=False))
+    assert await anext(healthy) == 1
+    thrown = duckdb.IOException("IO Error: the consumer's own")
+
+    with pytest.raises(duckdb.IOException) as raised:
+        await healthy.athrow(thrown)
+
+    assert raised.value is thrown
+
+
 def test_the_driver_error_is_kept_as_the_cause() -> None:
     error = duckdb.IOException('IO Error: No files found that match the pattern "/x/*.parquet"')
 
@@ -228,6 +256,24 @@ async def test_a_sql_error_keeps_the_driver_class(
 
     with pytest.raises(duckdb.BinderException):
         await adapter.run("by_day", Params(min_total=0))
+
+
+@pytest.mark.parametrize("method", ["run_chunked", "select_run_chunked"])
+async def test_what_the_consumer_throws_in_comes_back_unmapped(
+    events_parquet: str, make_adapter: Callable[..., Any], method: str
+) -> None:
+    adapter = make_adapter(
+        f"SELECT day, total FROM read_parquet('{events_parquet}') WHERE total >= $min_total"
+    )
+    args = (Row, "by_day") if method == "select_run_chunked" else ("by_day",)
+    chunks = getattr(adapter, method)(*args, Params(min_total=0), fetch_batch_size=2)
+    await anext(chunks)
+    thrown = duckdb.IOException("IO Error: the consumer's own")
+
+    with pytest.raises(duckdb.IOException) as caught:
+        await chunks.athrow(thrown)
+
+    assert caught.value is thrown
 
 
 async def test_the_public_port_raises_not_found_from_run_chunked(

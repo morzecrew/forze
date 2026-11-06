@@ -14,7 +14,7 @@ require_duckdb()
 # ....................... #
 
 import re
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import contextmanager
 from urllib.parse import urlsplit, urlunsplit
 
@@ -148,3 +148,21 @@ def object_store_errors() -> Iterator[None]:
 
     except duckdb.IOException as error:
         raise object_store_error(error) from error
+
+
+async def object_store_stream[T](chunks: AsyncIterator[T]) -> AsyncGenerator[T]:
+    """Yield *chunks*, translating a failed read only while the next one is fetched.
+
+    The ``yield`` stays outside :func:`object_store_errors`, so what the consumer throws in
+    comes back as it was.
+    """
+
+    while True:
+        with object_store_errors():
+            try:
+                chunk = await anext(chunks)
+
+            except StopAsyncIteration:
+                return
+
+        yield chunk
