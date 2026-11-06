@@ -1,4 +1,4 @@
-from .adapter import ObjectStorageAdapter, guess_content_type_with_magic
+from .adapter import ObjectStorageAdapter, guess_content_type_with_magic, validate_storage_prefix
 from .client import (
     PRESIGN_MAX_EXPIRY,
     ObjectBody,
@@ -48,5 +48,6 @@ __all__ = [
     "refuse_direct_transfer_when_encrypted",
     "reject_contradictory_write_conditions",
     "validate_storage_encryption_wiring",
+    "validate_storage_prefix",
     "validate_storage_tenancy_wiring",
 ]

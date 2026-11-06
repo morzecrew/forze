@@ -97,6 +97,14 @@ _FRAME_PREFIX_MAX = 512
 """Upper bound on a frame's length-prefix region (is_final + nonce + ct-length), used
 for the rare header-probe-too-small fallback when deriving the stride."""
 
+_KEY_CHARS = r"a-zA-Z0-9!\-_.*'()/="
+"""Characters an object key or prefix may hold (a regex character-class body).
+
+S3's safe set plus ``=``, so Hive-style ``key=value`` partition segments
+(``lake/bars/symbol=BTCUSDT/data.parquet``) address objects through the port. ``=`` is
+URL-encoded by the S3 and GCS SDKs and cannot form a traversal; the ``..`` and leading
+``/`` checks in :meth:`ObjectStorageAdapter._validate_key` are separate."""
+
 
 async def _count_bytes(source: AsyncIterator[bytes], total: list[int]) -> AsyncIterator[bytes]:
     """Pass *source* through untouched while tallying its byte count into ``total[0]``."""
@@ -123,6 +131,27 @@ async def _aiter_once(data: bytes) -> AsyncIterator[bytes]:
 
 
 # ....................... #
+
+
+def validate_storage_prefix(prefix: str | None) -> None:
+    """Refuse a storage prefix outside the key charset, or with a ``..`` segment.
+
+    Shared by :class:`ObjectStorageAdapter` and the in-memory mock, so a prefix a test
+    passes against the mock is one the real adapter accepts.
+
+    :raises CoreException: ``precondition`` when the prefix is refused.
+    """
+
+    if prefix is None:
+        return
+
+    # ``fullmatch``: ``$`` would also match before a trailing newline.
+    if not re.fullmatch(rf"[{_KEY_CHARS}]*", prefix):
+        raise exc.precondition(f"Invalid object storage prefix: {prefix}")
+
+    # A key minted under a ``..`` segment would fail the key check on every read.
+    if ".." in prefix.split("/"):
+        raise exc.precondition(f"Unsafe object storage prefix: {prefix!r}")
 
 
 def _reject_duplicate_part_numbers(parts: Sequence[UploadPart]) -> None:
@@ -329,12 +358,7 @@ class ObjectStorageAdapter(
 
     @staticmethod
     def _validate_prefix(prefix: str | None) -> None:
-        if prefix is None:
-            return
-
-        # ``fullmatch``: ``$`` would also match before a trailing newline.
-        if not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]*", prefix):
-            raise exc.precondition(f"Invalid object storage prefix: {prefix}")
+        validate_storage_prefix(prefix)
 
     # ....................... #
 
@@ -358,7 +382,7 @@ class ObjectStorageAdapter(
         upload/list — take the key verbatim.
         """
 
-        if not key or not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]+", key):
+        if not key or not re.fullmatch(rf"[{_KEY_CHARS}]+", key):
             raise exc.precondition(f"Invalid object storage key: {key!r}")
 
         if key.startswith("/") or ".." in key.split("/"):
@@ -1608,12 +1632,29 @@ class ObjectStorageAdapter(
         :attr:`StoredObjectPage.container_missing`. Under per-tenant buckets that flag is
         the difference between a tenant nothing has provisioned and a tenant that has
         simply uploaded nothing, which are the same zero objects to anyone downstream.
+
+        A string ``prefix`` matches keys as a plain string prefix, as S3 and GCS do, except
+        that a trailing ``/`` is kept as a folder boundary: ``lake/symbol=BTC/`` lists that
+        folder only, never ``lake/symbol=BTCUSDT/…``. A tuple is joined into path segments
+        and matched the same way, without a trailing ``/``.
         """
 
+        if isinstance(prefix, tuple):
+            prefix = default_path_codec.join(*prefix)
+
+        # The codec strips the caller's trailing ``/``s; restored, every one, on the path
+        # below, so ``lake//`` stays a plain prefix as on the mock.
+        trailing = len(prefix) - len(prefix.rstrip("/")) if prefix is not None else 0
         prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
 
+        if not prefix:  # only slashes: the root, one folder boundary under a tenant
+            trailing = min(trailing, 1)
+
         path = self.construct_path(prefix)
+
+        if trailing and path:
+            path += "/" * trailing
 
         bucket = await self._resolved_bucket()
 

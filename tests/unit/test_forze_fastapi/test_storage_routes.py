@@ -6,6 +6,7 @@ import inspect
 import io
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -213,6 +214,23 @@ class TestStorageRoutes:
 
         assert client.get(f"/files/{stored['key']}").status_code == 200
         assert client.delete(f"/files/{stored['key']}").status_code == 204
+
+    def test_keys_may_hold_hive_partition_segments(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        stored = client.post(
+            "/files",
+            files={"file": ("data.parquet", b"btc", "application/octet-stream")},
+            data={"prefix": "lake/bars/symbol=BTCUSDT"},
+        ).json()
+        key = stored["key"]
+        assert key.startswith("lake/bars/symbol=BTCUSDT/")
+
+        # Literal and percent-encoded ``=`` name the same object.
+        assert client.get(f"/files/{key}").content == b"btc"
+        assert client.get(f"/files/{quote(key)}").content == b"btc"
+        assert client.delete(f"/files/{quote(key, safe='')}").status_code == 204
+        assert client.post("/files/list", json={}).json()["hits"] == []
 
     def test_rpc_paths_are_operation_named(self) -> None:
         paths = _build_app("rpc").openapi()["paths"]

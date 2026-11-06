@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from forze.application.contracts.storage import SELF_COPY_CODE
+from forze.application.contracts.storage import SELF_COPY_CODE, UploadedObject
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze_mock.adapters.storage import MockStorageAdapter
@@ -123,9 +123,7 @@ async def test_download_if_changed_matching_etag_returns_none(
     stored = await _upload(adapter, b"hello world")
     head = await adapter.head(stored.key)
 
-    result = await adapter.download_if_changed(
-        stored.key, if_none_match=head.etag
-    )
+    result = await adapter.download_if_changed(stored.key, if_none_match=head.etag)
 
     assert result is None
 
@@ -136,9 +134,7 @@ async def test_download_if_changed_stale_etag_returns_body(
 ) -> None:
     stored = await _upload(adapter, b"hello world")
 
-    result = await adapter.download_if_changed(
-        stored.key, if_none_match='"deadbeef"'
-    )
+    result = await adapter.download_if_changed(stored.key, if_none_match='"deadbeef"')
 
     assert result is not None
     assert result.data == b"hello world"
@@ -305,3 +301,24 @@ async def test_upload_stream_round_trip(adapter: MockStorageAdapter) -> None:
 async def test_download_stream_missing_key_raises(adapter: MockStorageAdapter) -> None:
     with pytest.raises(CoreException):
         await adapter.download_stream("nope")
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize("prefix", ["lake/../private", "..", "lake/x\n", "lake x"])
+async def test_an_unsafe_prefix_is_refused_as_the_real_adapter_refuses_it(
+    adapter: MockStorageAdapter, prefix: str
+) -> None:
+    # A test that passes against the mock must not fail once the real adapter is wired.
+    async def chunks():
+        yield b"x"
+
+    with pytest.raises(CoreException):
+        await adapter.upload(UploadedObject(filename="a.txt", data=b"x", prefix=prefix))
+
+    with pytest.raises(CoreException):
+        await adapter.upload_stream(chunks(), filename="a.txt", prefix=prefix)
+
+    with pytest.raises(CoreException):
+        await adapter.list(10, 0, prefix=prefix)

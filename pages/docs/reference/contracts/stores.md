@@ -181,6 +181,14 @@ upload sessions), and a client-side-encrypting route refuses to resolve the spec
 `configuration` error (`storage_direct_transfer_encrypted`). Objects are addressed by string
 `key`.
 
+A key or `prefix` may hold only `A–Z a–z 0–9 ! - _ . * ' ( ) / =`. Any other character, a
+`..` segment, or a key that starts with `/` is refused with `precondition`. A `list`
+prefix is a plain string prefix, but one that ends in `/` lists exactly that folder:
+`symbol=BTC/` never returns `symbol=BTCUSDT/…`.
+The `=` allows Hive-style `key=value` partition segments
+(`lake/bars/symbol=BTCUSDT/data.parquet`), so a Parquet lake written through the port is one
+[DuckDB](../../integrations/duckdb.md#the-lake-source) reads with partition pruning.
+
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|
 | query | `download` | `download(key)` | the whole object, buffered — a `DownloadedObject` (bytes + metadata) |

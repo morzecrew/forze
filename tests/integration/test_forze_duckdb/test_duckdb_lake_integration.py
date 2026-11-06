@@ -2,6 +2,8 @@
 
 * Parquet on S3 (RustFS) with credentials resolved from the secrets backend via a
   :class:`~forze.application.contracts.secrets.SecretRef` — the adapter-preferred path.
+* Hive-partitioned Parquet written through the ``forze_s3`` storage port, read back with
+  ``hive_partitioning`` and partition pruning.
 * Delta Lake table read from a local directory — the lakehouse path (gated on ``deltalake``).
 
 Both drive a real DuckDB engine with ``httpfs`` / ``delta`` auto-loaded from the typed
@@ -11,25 +13,32 @@ sources and credentials, so the extension-derivation wiring is exercised, not fa
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 import duckdb
 import pytest
+from pydantic import SecretStr
 
 from forze.application.contracts.secrets import SecretRef, SecretsDepKey
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
+from forze.testing import context_from_deps
 from forze_duckdb import (
     DeltaSource,
     DuckDbClient,
     IcebergSource,
     ParquetSource,
     S3Credentials,
+    S3SecretPayload,
 )
 from forze_duckdb.execution.deps import DuckDbClientDepKey
 from forze_duckdb.execution.lifecycle.pool import DuckDbStartupHook
 from forze_kits.adapters.secrets import MappingSecrets
+from forze_s3.execution.deps import S3DepsModule, S3StorageConfig
+from forze_s3.kernel.client import S3Client, S3Config
 from tests.integration.test_forze_duckdb.conftest import (
     S3_ACCESS_KEY,
     S3_SECRET_KEY,
@@ -111,6 +120,88 @@ async def test_parquet_on_s3_via_secret_ref(
             ("b", 20),
             ("c", 30),
             ("d", 40),
+        ]
+
+    finally:
+        await client.close()
+
+
+# ....................... #
+
+
+async def _one_chunk(data: bytes) -> AsyncIterator[bytes]:
+    yield data
+
+
+async def test_hive_partitions_written_through_the_storage_port(
+    s3_container: tuple[Any, str],
+    tmp_path: Path,
+) -> None:
+    """A lake ``ctx.storage`` writes is the lake ``hive_partitioning`` reads and prunes."""
+
+    container, endpoint = s3_container
+    bucket = f"forze-duckdb-{uuid4().hex[:12]}"
+    container.get_client().make_bucket(bucket)
+
+    s3 = S3Client()
+    await s3.initialize(
+        endpoint=f"http://{endpoint}",
+        access_key_id=S3_ACCESS_KEY,
+        secret_access_key=S3_SECRET_KEY,
+        config=S3Config(s3={"addressing_style": "path"}),
+    )
+    ctx = context_from_deps(
+        S3DepsModule(client=s3, storages={"lake": S3StorageConfig(bucket=bucket)})()
+    )
+    storage = ctx.storage.command(StorageSpec(name="lake"))
+
+    local = tmp_path / "btc.parquet"
+    _write_events_parquet(local)
+
+    try:
+        await storage.overwrite_stream(
+            "bars/symbol=BTCUSDT/data.parquet",
+            _one_chunk(local.read_bytes()),
+            content_type="application/octet-stream",
+        )
+        # Not Parquet: the query below fails unless the filter prunes this partition unread.
+        await storage.overwrite_stream(
+            "bars/symbol=ETHUSDT/data.parquet",
+            _one_chunk(b"not parquet"),
+            content_type="application/octet-stream",
+        )
+
+    finally:
+        await s3.close()
+
+    cred = S3Credentials(
+        name="lake",
+        inline=S3SecretPayload(
+            access_key_id=S3_ACCESS_KEY,
+            secret_access_key=SecretStr(S3_SECRET_KEY),
+            endpoint=endpoint,
+            url_style="path",
+            use_ssl=False,
+        ),
+    )
+    client = DuckDbClient()
+    hook = DuckDbStartupHook(
+        database=":memory:",
+        object_stores=(cred,),
+        sources={
+            "bars": ParquetSource(f"s3://{bucket}/bars/*/*.parquet", hive_partitioning=True),
+        },
+    )
+
+    try:
+        await hook(_ctx({DuckDbClientDepKey: client}))
+        result = await client.run_query(
+            "SELECT symbol, day, total FROM bars WHERE symbol = 'BTCUSDT' AND total >= 30 "
+            "ORDER BY day"
+        )
+        assert [(r["symbol"], r["day"], r["total"]) for r in result.rows] == [
+            ("BTCUSDT", "c", 30),
+            ("BTCUSDT", "d", 40),
         ]
 
     finally:

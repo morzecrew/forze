@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Storage keys and prefixes accept `=`, so a Hive-partitioned lake (`symbol=BTCUSDT/`) can be written through `ctx.storage`.** `forze_duckdb`'s `ParquetSource(hive_partitioning=True)` reads it back with partition pruning. Keys with a `..` segment or a leading `/` are still refused.
+
 - **An authz decision skips the policy principal read after a fast-path admission of it.** With one `RevocationStates` object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (`ttl` at most). Other subjects still read.
 
 - **`SessionRevocation.check` and `ApiKeyRevocation.fresh` return a `FreshEpoch` when the credential is on its principal's current epoch, `None` otherwise, not the epoch and a bool** (**Breaking**). A custom verifier passes it as `fresh=` to `remember_admitted_session` or `remember_admitted_api_key`, which refuse a bool.
@@ -58,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`propose` no longer logs an ERROR traceback on Postgres for every dry run**, and an `apply` that opens a scope on another client's route is refused (`propose_cross_client`) instead of committing there; `TransactionScopeHandle.independent_routes` lists such scopes.
 
 - **A DuckDB analytics query over a missing object or empty glob raises `not_found` (`duckdb_source_not_found`), not the driver's `HTTPException`,** on every read path. Other store failures are `infrastructure` (`429`: `throttled`), a missing bucket `configuration`, a truncated Parquet file `internal`.
+
+- **A storage `prefix` with a `..` segment is refused with `precondition`**, instead of an upload storing the object at a key that every later read refuses.
+
+- **A storage `list` prefix that ends in `/` lists exactly that folder on S3 and GCS**, as on the mock: `symbol=BTC/` no longer also returns `symbol=BTCUSDT/…`. Without the `/`, the prefix still matches as a plain string.
 
 ### Security
 

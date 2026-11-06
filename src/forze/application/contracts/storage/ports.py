@@ -221,7 +221,9 @@ class StorageQueryPort(Protocol):
 
         :param limit: Maximum number of objects to return.
         :param offset: Offset into the result set.
-        :param prefix: Optional prefix filter.
+        :param prefix: Optional key prefix, matched as a plain string prefix. A trailing
+            ``/`` is a folder boundary: ``lake/symbol=BTC/`` never lists
+            ``lake/symbol=BTCUSDT/…``. A leading ``/`` is ignored.
         :param include_tags: Guarantee tags are populated on results.
         :param missing_ok: Treat a missing bucket as an empty listing.
         :returns: The page, its total count, and whether the container was absent.

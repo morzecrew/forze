@@ -53,6 +53,12 @@ from forze_duckdb import ParquetSource, IcebergSource, DeltaSource
 events = ParquetSource("s3://bucket/events/*.parquet")   # also CsvSource, JsonSource
 ```
 
+For a Hive-partitioned lake (`bars/symbol=BTCUSDT/data.parquet`), pass
+`ParquetSource("s3://bucket/bars/*/*.parquet", hive_partitioning=True)`. Each `key=value`
+segment becomes a column, and a filter on it skips the other partitions' files unread. The
+[storage port](../reference/contracts/stores.md#storage) accepts these keys, so the same
+application can write the lake with `ctx.storage`.
+
 Object-storage credentials render to DuckDB secrets, resolved at startup from the
 wired [secrets backend](vault.md) via a `secret_ref` (or supplied inline for
 local runs):

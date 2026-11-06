@@ -222,6 +222,89 @@ async def check_conditional_overwrite_of_a_missing_object_fails(h: StorageHarnes
     assert missing.value.kind is ExceptionKind.NOT_FOUND
 
 
+async def check_hive_partition_keys_round_trip(h: StorageHarness) -> None:
+    """``key=value`` segments address objects on every backend, as a Parquet lake lays them out.
+
+    DuckDB, Spark and Athena prune files by these segments, so a lake written through the port
+    must keep each key byte for byte: the ``=`` survives the SDK's URL encoding, a ``prefix``
+    listing selects one partition, and copy/move/delete reach the same object.
+    """
+
+    lake = h.key("lake")
+    btc = f"{lake}/symbol=BTCUSDT/data.parquet"
+    eth = f"{lake}/symbol=ETHUSDT/data.parquet"
+    day = f"{lake}/date=2026-11-06/part-0.parquet"
+
+    for key, body in ((btc, b"btc"), (eth, b"eth"), (day, b"day")):
+        stored = await h.cmd.overwrite_stream(
+            key, one_chunk(body), content_type="application/octet-stream"
+        )
+        assert stored.key == key
+
+    assert (await h.query.download(btc)).data == b"btc"
+    assert (await h.query.head(eth)).size == 3
+
+    partition = await h.query.list(limit=10, offset=0, prefix=f"{lake}/symbol=BTCUSDT/")
+    assert [obj.key for obj in partition.objects] == [btc]
+
+    listed = await h.query.list(limit=10, offset=0, prefix=lake)
+    assert [obj.key for obj in listed.objects] == [day, btc, eth]
+
+    # A prefix with ``=`` is valid for a generated key too.
+    minted = await h.cmd.upload(
+        UploadedObject(filename="bars.parquet", data=b"sol", prefix=f"{lake}/symbol=SOLUSDT")
+    )
+    assert minted.key.startswith(f"{lake}/symbol=SOLUSDT/")
+    assert (await h.query.download(minted.key)).data == b"sol"
+
+    copied = f"{lake}/symbol=BTCUSDT/copy.parquet"
+    await h.cmd.copy(btc, copied)
+    moved = f"{lake}/symbol=XRPUSDT/data.parquet"
+    await h.cmd.move(copied, moved)
+    assert (await h.query.download(moved)).data == b"btc"
+
+    for key in (btc, eth, day, minted.key, moved):
+        await h.cmd.delete(key)
+
+    assert (await h.query.list(limit=10, offset=0, prefix=lake)).objects == []
+
+
+# ....................... #
+
+
+async def check_a_trailing_slash_prefix_lists_one_folder(h: StorageHarness) -> None:
+    """``symbol=BTC/`` is a folder; ``symbol=BTC`` is a string prefix, as S3 and GCS read it.
+
+    The shared adapter stripped the trailing ``/`` before listing, so on S3 and GCS one
+    partition's listing also returned every partition whose name it prefixes. The mock kept
+    the ``/``, so a mock-backed test could not see that.
+    """
+
+    lake = h.key("folders")
+    btc = f"{lake}/symbol=BTC/data.parquet"
+    btcusdt = f"{lake}/symbol=BTCUSDT/data.parquet"
+
+    for key in (btc, btcusdt):
+        await h.cmd.overwrite_stream(key, one_chunk(b"x"), content_type="application/octet-stream")
+
+    async def keys(prefix: str) -> list[str]:
+        page = await h.query.list(limit=10, offset=0, prefix=prefix)
+        assert page.total == len(page.objects)
+
+        return [obj.key for obj in page.objects]
+
+    assert await keys(f"{lake}/symbol=BTC/") == [btc]
+    assert await keys(f"{lake}/symbol=BTC") == [btc, btcusdt]
+    # A leading ``/`` is ignored; keys never start with one.
+    assert await keys(f"/{lake}/symbol=BTC/") == [btc]
+
+    for key in (btc, btcusdt):
+        await h.cmd.delete(key)
+
+
+# ....................... #
+
+
 async def check_an_absent_container_is_not_an_empty_one(h: StorageHarness) -> None:
     """A bucket nobody created reads differently from one that was emptied.
 
@@ -264,5 +347,7 @@ STORAGE_BATTERY: tuple[Check, ...] = (
     check_listing_is_ordered_by_key,
     check_unconditional_overwrite_creates_a_missing_object,
     check_conditional_overwrite_of_a_missing_object_fails,
+    check_hive_partition_keys_round_trip,
+    check_a_trailing_slash_prefix_lists_one_folder,
 )
 """Every check. The mock runs them as a unit test; S3 (twice — RustFS and floci) and GCS live."""
