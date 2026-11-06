@@ -114,7 +114,7 @@ def _documented_metric_names() -> list[str]:
 
 _LABEL_BLOCK = re.compile(r"\{[^{}]*\}")
 _GROUPING = re.compile(r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^()]*\)")
-_METRIC_TOKEN = re.compile(r"\bforze_[a-z0-9_]+\b")
+_METRIC_TOKEN = re.compile(r"\b(?:forze|process)_[a-z0-9_]+\b")
 
 
 def _referenced_metrics(expression: str) -> set[str]:

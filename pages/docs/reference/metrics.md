@@ -187,9 +187,12 @@ as the current value would hide the leak it is meant to show, so the instrument 
 
 The OpenTelemetry Prometheus exporter renders these as `process_cpu_time_seconds_total` and
 `process_memory_usage_bytes`, not prometheus_client's `process_cpu_seconds_total` /
-`process_resident_memory_bytes`, so panels built on those need new queries. A default
-`PrometheusMetricReader()` renders the default registry, whose own process collector reports
-that pair beside these; `worker_metrics_reader()` renders a registry without it.
+`process_resident_memory_bytes`, so panels built on those need new queries. Through the
+[Grafana stack](../running-in-prod/grafana-stack.md#metric-names-in-prometheus), with
+suffixes off, they arrive as `process_cpu_time` and `process_memory_usage`, which its data
+planes dashboard queries. A default `PrometheusMetricReader()` renders the default registry,
+whose own process collector reports that pair beside these; `worker_metrics_reader()`
+renders a registry without it.
 
 Each process reports its own series. A pre-fork server scraped through one port answers from
 whichever worker takes the scrape, unless every worker writes a snapshot through

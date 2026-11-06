@@ -45,6 +45,7 @@ from opentelemetry.util._once import Once
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.network import Network
 
+from forze.application.execution import instrument_process
 from forze.base.telemetry import bootstrap_telemetry
 
 # ----------------------- #
@@ -384,24 +385,34 @@ class TestTheNameMappingTheAssetsAssume:
             meter.create_counter("forze.operations", unit="1").add(1)
             meter.create_histogram("forze.operation.duration", unit="ms").record(12.0)
 
+            # Units `s` and `By`, which a suffix would spell out: the process panels' names.
+            instrument_process()
+
             await handle.shutdown(timeout=30.0)
 
         finally:
             _reset_otel_globals()
 
-        names = _series_names(prometheus_url, match='{__name__=~"forze_.*"}')
+        names = _series_names(prometheus_url, match='{__name__=~"(forze|process)_.*"}')
 
         assert names, "nothing reached Prometheus through Alloy at all"
 
         # The exact spelling every shipped panel and alert rule is written against.
         assert "forze_operations" in names
         assert "forze_operation_duration_bucket" in names
+        assert "process_cpu_time" in names
+
+        if Path("/proc/self/statm").exists():  # process.memory.usage is Linux only
+            assert "process_memory_usage" in names
 
         # And the spelling the collector default would have produced. If these ever show
         # up, the assets in this repository match nothing and the unit parity gate cannot
         # tell, because it only compares the assets to the constants in src/.
         assert "forze_operations_total" not in names
         assert not {name for name in names if "milliseconds" in name}, sorted(names)
+        assert not {name for name in names if name.endswith(("_seconds_total", "_bytes"))}, (
+            sorted(names)
+        )
 
     # ....................... #
 

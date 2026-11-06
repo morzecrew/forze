@@ -50,6 +50,30 @@ groups:
             retry under a retry strategy, or requeued — so set the threshold above that
             baseline.
 
+      # Only `failed` against the runs that finished: `cancelled` is somebody pressing
+      # Stop, `timed_out` a capacity signal, and `retrying` a run that has not failed yet.
+      # `for` stays well inside the 15m window, so one failed run of a quiet function
+      # tickets deterministically instead of racing the window's edge.
+      - alert: ForzeDurableRunsFailing
+        expr: |
+          sum by (job, forze_durable_name) (rate(forze_durable_runs{forze_durable_outcome="failed"}[15m]))
+            / clamp_min(
+                sum by (job, forze_durable_name) (
+                  rate(forze_durable_runs{forze_durable_outcome=~"completed|failed"}[15m])
+                ),
+                1e-9)
+            > 0.05
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: over 5% of {{ $labels.forze_durable_name }} runs are failing"
+          description: >-
+            Runs of this durable function end failed: the body raised and the retry
+            strategy, if any, gave up on it. Cancelled, timed-out and retrying runs are
+            excluded by design, so this is not an operator stopping runs or a deadline cap.
+            Open a failed run's trace, or its error in the run store, to see what raised.
+
   - name: forze-job-progress
     interval: 30s
     rules:
@@ -144,6 +168,27 @@ groups:
             pays full connection establishment. Raise max_cached_tenants, or route the
             cold traffic somewhere it cannot evict.
 
+      # Per process, then the fullest one: a sum hides one exhausted pool behind idle ones.
+      # A pool with no cap exports no max, so it never matches.
+      - alert: ForzeConnectionPoolExhausted
+        expr: |
+          max by (job, forze_client) (
+            forze_connection_pool_in_use / forze_connection_pool_max
+          ) >= 1
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: connection pool {{ $labels.forze_client }} is exhausted"
+          description: >-
+            Every connection in the pool has been checked out for ten minutes. Callers
+            queue until they time out (psycopg_pool, pymongo, a redis-py
+            BlockingConnectionPool) or are refused at once (a plain redis-py
+            ConnectionPool). In use that climbed under steady load and never fell back is a
+            leaked connection; otherwise raise the pool's max or find what holds the
+            connections. On Postgres a database that is down looks the same, because the
+            pool's reconnect attempts hold every slot, so check connectivity first.
+
       - alert: ForzeTokenVerificationFailures
         expr: |
           sum by (job, forze_signer) (rate(forze_authn_tokens_verify_failed[5m]))
@@ -162,6 +207,23 @@ groups:
             likelihood: a key rotation where the old key was retired before its tokens
             expired, clock skew between issuer and verifier, or someone presenting forged
             tokens.
+
+      - alert: ForzeRevocationWriteFailures
+        expr: |
+          sum by (job, forze_revocation_states, forze_credential) (
+            increase(forze_authn_revocation_states_write_failures[15m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: revocations are not reaching Redis ({{ $labels.forze_credential }})"
+          description: >-
+            A revocation's write-through to Redis failed every attempt, so the revoked
+            session or API key stays admitted from its cached state for up to the
+            revocation states' ttl. The window closes on its own; the alert is that it
+            opened. Check Redis reachability from this service, and treat a revocation made
+            during the window as not yet in force.
 
   - name: forze-realtime
     interval: 30s
@@ -184,6 +246,22 @@ groups:
             down — nothing in python-socketio raises when the Redis listener dies, which is
             why this gauge exists. A value of -1 means no probe has *ever* succeeded, which
             is a wiring problem instead.
+
+      - alert: ForzeRealtimeEmitFailing
+        expr: |
+          sum by (job, forze_realtime_channel) (rate(forze_realtime_gateway_emit_failed[10m])) > 0
+            and sum by (job, forze_realtime_channel) (rate(forze_realtime_gateway_emitted[10m])) == 0
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.job }}: realtime emits on {{ $labels.forze_realtime_channel }} all fail"
+          description: >-
+            Every sio.emit in the window raised or timed out, and none was delivered.
+            Socket.IO, or its Redis backplane, stopped taking frames. A durable signal is
+            left pending and redelivered until the delivery ceiling counts it poisoned; an
+            ephemeral one is lost. Check the backplane freshness panel and the Redis the
+            manager uses.
 
       - alert: ForzeRealtimeDeliveriesDropped
         expr: |
