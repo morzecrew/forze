@@ -404,7 +404,9 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
   stream signed in as its principal, with its own `device_id` and the `topics` you name. The
   app must grant the topics. A WebSocket carries the credential on its upgrade request, and
   the route's resolver reads it and the `device_id` from there. Streams open in batches of
-  `batch`.
+  `batch`. The kit never acks, so no cursor moves and nothing is trimmed, and every first open
+  replays the principal's retained mailbox, up to 1,000 entries. The first write waits until
+  no frame has come for a quarter of a second, at most `timeout_s`, so that replay is over.
 - **Writes** run for `duration_s` as open-model arrivals at `rate`: each picks one of
   `writers` (every principal by default) by weight, then a scenario from its mix. The write
   guard applies as it does to a ramp.
@@ -425,7 +427,9 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
   `duplicates`, which a durable signal can produce through the mailbox and the live leg. A key
   a stream has not received `timeout_s` after the write's answer is a `gap` when the stream
   was down at the write's send, and `missing` otherwise. If that stream receives the key
-  later still, it counts once as `late`; any other frame for a closed key counts nowhere.
+  later still, within ten times `timeout_s` of that, it counts once as `late`; any other
+  frame for a closed key counts nowhere. Every count of a write, `late` and `replayed`
+  included, goes in the row of the phase that sent it.
 - **The storm.** With `storm=True` (the default), every stream drops at once after the steady
   phase and reopens in one batch, each sending the last durable id it saw: `Last-Event-ID` on
   SSE, the `last_event_id` query parameter on a WebSocket. Writes run on for another
@@ -435,17 +439,28 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
   `resume: "none"`.
 - **Draining is a reconnect, never an error.** A draining replica answers a new SSE stream
   200 with a `retry:` and `X-Error-Code: realtime_draining`, and closes a new WebSocket with
-  1012. The stream retries after the server's `retry:` (one second on a WebSocket) and counts
-  it under `draining`. An open stream that ends, closed by the server or a drain step or cut
-  by the network, reopens with its resume and counts under `ended`. Another status than 200 or an
-  answer that is not `text/event-stream`, a WebSocket closed with 1008 before it answered the
-  kit's first ping, or an upgrade answered with another status than 101 is `refused`, and
-  that stream stays closed. When every stream is refused, the run stops before its first
-  write with `stopped.reason: "no_stream"`.
-- **The kit never acks.** No cursor moves and nothing is trimmed. So every first open, and a
-  reopen with no id, replays from the stored cursor: the principal's retained mailbox, up to
-  1,000 entries. The first opens' replay comes before the first write, and the kit lets it
-  go.
+  1012. The stream retries and counts it under `draining`. An open stream that ends, closed by
+  the server or a drain step, cut by the network, or silent for `idle_s`, reopens with its
+  resume and counts under `ended`.
+- **Errors are retried; a 4xx refuses.** A transport failure, a 5xx (a balancer's 502 or 503
+  passes), a 101 that does not complete the WebSocket handshake, or a socket closed with
+  another code than 1008 or 1012 before it answered the kit's first ping counts under
+  `errors`, and the stream retries. Any other
+  status than 200, an answer that is not `text/event-stream`, or a WebSocket closed with 1008
+  before that ping is `refused`, and that stream stays closed. When no stream has opened
+  `timeout_s` after the last batch, every one refused or still failing, the run stops before
+  its first write with `stopped.reason: "no_stream"`.
+- **Retries spread out.** A stream waits the server's `retry:`, or one second, doubled for
+  each failure in a row up to 30 seconds, then jittered by half either way, so the streams do
+  not return in lockstep; never less than 50 ms.
+- **A silent stream is cut.** `idle_s` (60 seconds by default) bounds the wait for a byte.
+  Keep it above the server's heartbeat: forze's SSE route sends a keepalive comment every 15
+  seconds by default, and uvicorn pings a WebSocket every 20. Set `idle_s=None` for a server
+  that sends neither.
+- **The WebSocket client is strict.** It checks the handshake's `Sec-WebSocket-Accept`,
+  echoes the server's close, and closes on a protocol violation: 1002 for a masked frame,
+  reserved bits or a malformed control frame, 1007 for text that is not UTF-8, 1009 for a
+  message over 16 MiB.
 
 Each phase, `steady` and then `storm`, writes one row with `"kind": "phase"`. It carries the
 writes' numbers as a step row does (`calls`, `goodput_rps`, `ms`, `outcomes`, `client`, …)
@@ -453,14 +468,15 @@ plus:
 
 | Field | Meaning |
 | --- | --- |
-| `streams` | `subscribers`; `open` at the phase's end; `opened`, with `open_ms`; `refused`, `errors` (transport failures, retried), `draining`, `ended` |
+| `streams` | `subscribers`; `open` at the phase's end; `opened`, with `open_ms`; `refused`, `errors` (retried), `draining`, `ended` |
 | `streams` (storm) | `back` and `back_in_s`, the time until every stream was back (`null` while one is away); `resume`, `last_event_id` or `none`; `resumed`, the streams that sent an id |
 | `delivery` | `expected`, `delivered` and their `share`; `duplicates`, `missing`, `gaps`, `late`; `replayed`, frames a reopened stream received for writes sent before it reopened |
 | `delivery` latency | `send_ms`, `answer_ms`, and `answer_negative` (`count`, `share`, `min_ms`) |
 
 Each stream is read by its own task. On SSE a frame's JSON is decoded only when `match`
-reads `data`; a WebSocket frame is decoded on arrival, since its event name is inside. A stream that reads slower than its frames arrive fills its 256-slot queue on the
-server, and the live leg drops what does not fit. So a `share` below 1 is a server finding
+reads `data`; a WebSocket frame is decoded on arrival, since its event name is inside. A
+stream that reads slower than its frames arrive fills its 256-slot queue on the server, and
+the live leg drops what does not fit. So a `share` below 1 is a server finding
 when `client.saturated` is false, and the client's own limit when it is true.
 
 Realtime runs from Python only: `forze load run` has no realtime model, since `match` and

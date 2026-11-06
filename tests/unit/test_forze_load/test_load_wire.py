@@ -10,7 +10,15 @@ import pytest
 
 from forze_load import Frame
 from forze_load import _wire as wire
-from forze_load._wire import SseParser, WebSocket, WsRefused, sse_lines, ws_connect
+from forze_load._wire import (
+    SseParser,
+    WebSocket,
+    WsHandshakeError,
+    WsRefused,
+    accept_for,
+    sse_lines,
+    ws_connect,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -51,6 +59,21 @@ class TestEventStreamLines:
         with pytest.raises(httpx.RemoteProtocolError):
             await _lines(b"data: 0123456789")
 
+    async def test_one_leading_byte_order_mark_is_dropped_even_split(self) -> None:
+        assert await _lines(b"\xef\xbb\xbfdata: x\n") == ["data: x"]
+        assert await _lines(b"\xef", b"\xbb\xbfdata: y\n") == ["data: y"]
+        assert await _lines(b"data: \xef\xbb\xbf\n") == ["data: \ufeff"]  # only a leading one
+
+    async def test_a_stream_silent_for_idle_s_times_out(self) -> None:
+        async def silent() -> AsyncIterator[bytes]:
+            yield b"data: x\n"
+            await asyncio.sleep(10)
+            yield b""
+
+        with pytest.raises(httpx.ReadTimeout):
+            async for _line in sse_lines(silent(), idle_s=0.05):
+                pass
+
     async def test_no_other_character_ends_a_line(self) -> None:
         # `str.splitlines` would split on U+2028; the event-stream format does not.
         assert await _lines("data: a b\n".encode()) == ["data: a b"]
@@ -86,6 +109,16 @@ class TestEventStreamFrames:
         _frames("retry: 1500\n\nretry: soon\n\nretry: \u00b2\n", parser)
 
         assert parser.retry_s == 1.5
+
+    def test_an_event_past_the_limit_breaks_the_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(wire, "_MAX_FRAME", 8)
+        parser = SseParser()
+        parser.feed("data: 1234")
+
+        with pytest.raises(httpx.RemoteProtocolError):
+            parser.feed("data: 5678")
 
     def test_an_id_with_a_nul_is_ignored(self) -> None:
         parser = SseParser()
@@ -220,21 +253,55 @@ class TestWebSocket:
         broken.read_error = RuntimeError("reset")
         assert await WebSocket(broken).receive() == ("close", 1006)
 
-    async def test_extended_lengths_and_a_masked_server_frame_are_read(self) -> None:
+    async def test_extended_lengths_are_read(self) -> None:
         medium, large = b"m" * 300, b"L" * 70_000
-        stream = _Stream(
-            _server_frame(0x1, medium), _server_frame(0x1, large, mask=b"\x01\x02\x03\x04")
-        )
-        ws = WebSocket(stream)
+        ws = WebSocket(_Stream(_server_frame(0x1, medium), _server_frame(0x1, large)))
 
         assert await ws.receive() == ("text", medium.decode())
         assert await ws.receive() == ("text", large.decode())
 
-    async def test_a_frame_past_the_limit_or_a_reserved_opcode_ends_the_socket(self) -> None:
-        huge = bytes([0x81, 127]) + (1 << 40).to_bytes(8)
+    @pytest.mark.parametrize(
+        ("frame", "code"),
+        [
+            (_server_frame(0x1, b"x", mask=b"\x01\x02\x03\x04"), 1002),  # a server never masks
+            (bytes([0x81 | 0x40, 1]) + b"x", 1002),  # a reserved bit, with no extension agreed
+            (_server_frame(0x3, b""), 1002),  # a reserved opcode
+            (_server_frame(0x9, b"p" * 126), 1002),  # a control frame over 125 bytes
+            (_server_frame(0x9, b"p", fin=False), 1002),  # a fragmented control frame
+            (_server_frame(0x1, b"\xff\xfe"), 1007),  # text that is not UTF-8
+            (bytes([0x81, 127]) + (1 << 40).to_bytes(8), 1009),  # a frame past the limit
+        ],
+        ids=["masked", "rsv", "opcode", "long-ping", "split-ping", "utf8", "huge"],
+    )
+    async def test_a_violation_closes_with_its_code_and_says_so(
+        self, frame: bytes, code: int
+    ) -> None:
+        stream = _Stream(frame)
 
-        assert await WebSocket(_Stream(huge)).receive() == ("close", 1006)
-        assert await WebSocket(_Stream(_server_frame(0x3, b""))).receive() == ("close", 1002)
+        assert await WebSocket(stream).receive() == ("close", code)
+        assert _client_payload(stream.sent[-1]) == (0x8, code.to_bytes(2))
+
+    async def test_a_message_past_the_limit_closes_with_1009(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(wire, "_MAX_FRAME", 8)
+        stream = _Stream(_server_frame(0x1, b"12345", fin=False), _server_frame(0x0, b"6789"))
+
+        assert await WebSocket(stream).receive() == ("close", 1009)
+
+    async def test_the_server_s_close_is_echoed(self) -> None:
+        stream = _Stream(_server_frame(0x8, (1012).to_bytes(2) + b"draining"))
+
+        assert await WebSocket(stream).receive() == ("close", 1012)
+        assert _client_payload(stream.sent[-1]) == (0x8, (1012).to_bytes(2))
+
+    async def test_a_socket_silent_for_idle_s_reads_as_closed(self) -> None:
+        class _Silent(_Stream):
+            async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+                await asyncio.sleep(10)  # then a frame: only the idle timer reads it as closed
+                return _server_frame(0x1, b"late")
+
+        assert await WebSocket(_Silent(), idle_s=0.05).receive() == ("close", 1006)
 
     async def test_a_pong_to_a_broken_connection_is_not_an_error(self) -> None:
         stream = _Stream(_server_frame(0x9, b""))
@@ -250,8 +317,13 @@ class TestWsConnect:
 
         async def handler(request: httpx.Request) -> httpx.Response:
             seen.append(request)
+            headers = {
+                "upgrade": "websocket",
+                "connection": "keep-alive, Upgrade",
+                "sec-websocket-accept": accept_for(request.headers["sec-websocket-key"]),
+            }
 
-            return httpx.Response(101, extensions={"network_stream": stream})
+            return httpx.Response(101, headers=headers, extensions={"network_stream": stream})
 
         async with (
             httpx.AsyncClient(
@@ -280,3 +352,34 @@ class TestWsConnect:
                     await asyncio.sleep(0)
 
         assert refused.value.status == 403
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {},
+            {"upgrade": "websocket", "connection": "Upgrade", "sec-websocket-accept": "wrong"},
+            {"upgrade": "h2c", "connection": "Upgrade"},
+        ],
+        ids=["none", "wrong-accept", "wrong-upgrade"],
+    )
+    async def test_a_101_that_does_not_complete_the_handshake_is_refused(
+        self, headers: dict[str, str]
+    ) -> None:
+        stream = _Stream()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if "sec-websocket-accept" not in headers and headers:
+                headers["sec-websocket-accept"] = accept_for(request.headers["sec-websocket-key"])
+
+            return httpx.Response(101, headers=headers, extensions={"network_stream": stream})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://t"
+        ) as client:
+            with pytest.raises(WsHandshakeError):
+                async with ws_connect(client, "/rt", params={}, headers={}):
+                    await asyncio.sleep(0)
+
+    def test_the_accept_is_the_rfc_s_example(self) -> None:
+        # RFC 6455 §1.3's worked example.
+        assert accept_for("dGhlIHNhbXBsZSBub25jZQ==") == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="

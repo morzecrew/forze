@@ -22,12 +22,15 @@ import httpx
 
 from forze.base.exceptions import exc
 
+from ._seams import seeded_random
 from ._target import no_cookies, require_path, target_guard
-from ._wire import Frame, SseParser, WsRefused, sse_lines, ws_connect
+from ._wire import Frame, SseParser, WsHandshakeError, WsRefused, sse_lines, ws_connect
 from .engine import _assignments  # pyright: ignore[reportPrivateUsage]
 from .stats import StepRecorder, _Series  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
+    import random
+
     from .engine import _Run  # pyright: ignore[reportPrivateUsage]
     from .plan import LoadPlan, Principal
     from .report import RunWriter
@@ -55,10 +58,20 @@ RETRY_S = 1.0
 _POLL_S = 0.01
 
 _HOLD_S = 1.0
+"""Seconds past the request timeout a frame waits for its write's answer before it is let go."""
 
 _MIN_RETRY_S = 0.05
 """The shortest wait before a reopen, whatever ``retry:`` says: no stream reopens in a hot loop."""
-"""Seconds past the request timeout a frame waits for its write's answer before it is let go."""
+
+_MAX_BACKOFF_S = 30.0
+"""The longest base wait between reopens of a stream that keeps failing, before jitter."""
+
+_QUIET_S = 0.25
+"""Seconds without a frame that end the wait for the first opens' replay, before any write."""
+
+_KEEP_CLOSED = 10
+"""Closed keys are kept this many ``timeout_s`` after they close, so a late frame can be told
+from other traffic; a frame for a key let go after that counts nowhere, as other traffic's."""
 
 type Key = Hashable
 type Match = Callable[[Frame], Key | None]
@@ -138,6 +151,11 @@ class Realtime:
     batch: int = 50
     """Streams opened at once at the start."""
 
+    idle_s: float | None = 60.0
+    """Seconds without a byte after which a stream counts as cut, and is reopened. Keep it
+    above the server's heartbeat: forze's SSE keepalive comment (15 s by default) or the ASGI
+    server's WebSocket ping (uvicorn: 20 s). ``None`` for a server that sends neither."""
+
     def __attrs_post_init__(self) -> None:
         if self.transport not in ("sse", "ws"):
             raise _invalid("Realtime transport must be 'sse' or 'ws'")
@@ -150,8 +168,12 @@ class Realtime:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise _invalid(f"Realtime {name} must be a whole number of at least 1")
 
-        for name in ("rate", "duration_s", "timeout_s"):
-            if not (math.isfinite(getattr(self, name)) and getattr(self, name) > 0):
+        for name in ("rate", "duration_s", "timeout_s", "idle_s"):
+            value = getattr(self, name)
+
+            if (value is not None or name != "idle_s") and not (
+                isinstance(value, int | float) and math.isfinite(value) and value > 0
+            ):
                 raise _invalid(f"Realtime {name} must be a positive, finite number")
 
     def check(self, plan: LoadPlan) -> None:
@@ -175,8 +197,9 @@ class Realtime:
 
         async with httpx.AsyncClient(
             base_url=plan.base_url,
-            # Each stream holds its connection: no pool limit, no keep-alive, no read timeout.
-            timeout=httpx.Timeout(plan.timeout_s, read=None),
+            # Each stream holds its connection: no pool limit, no keep-alive, and a read waits
+            # up to `idle_s`, so a silent half-open stream is cut rather than kept "up".
+            timeout=httpx.Timeout(plan.timeout_s, read=self.idle_s),
             limits=httpx.Limits(max_connections=None, max_keepalive_connections=0),
             transport=transport,
             cookies=no_cookies(),
@@ -240,6 +263,10 @@ class _Subscriber:
     refused: bool = False
     settled: asyncio.Event = attrs.field(factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
+    failures: int = 0
+    """Failed attempts since its last open: the reopen backoff doubles with each."""
+
+    errored: bool = False
 
     def up_at(self, moment: float) -> bool:
         return any(opened <= moment < closed for opened, closed in self.ups)
@@ -267,6 +294,10 @@ class _RealtimeRun:
     state: _Run
     client: httpx.AsyncClient
     subscribers: list[_Subscriber] = attrs.field(init=False)
+    rng: random.Random = attrs.field(init=False)
+    """Jitters reopens; its own stream, so it moves neither picks nor arrivals."""
+
+    last_frame_at: float = 0.0
     phases: list[_Phase] = attrs.field(factory=lambda: list[_Phase]())
     phase: _Phase = attrs.field(init=False)
     writes: dict[Key, _Write] = attrs.field(factory=lambda: dict[Key, _Write]())
@@ -277,9 +308,12 @@ class _RealtimeRun:
     )
     """Frames whose write has not answered yet: key to (first arrival, sub to [at, repeats])."""
 
-    finished: dict[Key, int] = attrs.field(factory=lambda: dict[Key, int]())
-    """Closed keys, each with the subscribers it never reached: a frame for one of them is
-    late; any other frame for a closed key counts nowhere."""
+    finished: dict[Key, tuple[float, _Phase, int]] = attrs.field(
+        factory=lambda: dict[Key, tuple[float, _Phase, int]]()
+    )
+    """Closed keys, in the order they closed: when, the write's phase, and the subscribers it
+    never reached. A frame for one of those is late; any other frame for a closed key counts
+    nowhere."""
 
     outstanding: int = 0
     opened: int = 0
@@ -303,6 +337,8 @@ class _RealtimeRun:
                 self.by_principal.get(sub.principal, 0) | 1 << sub.index
             )
 
+        self.rng = seeded_random(self.state.plan.seed, "reconnects")
+
         self.phase = self._phase("steady")
 
     # ....................... #
@@ -315,6 +351,15 @@ class _RealtimeRun:
 
         try:
             await self._open()
+            # A batch stops waiting for streams that only fail; the run gives them, together,
+            # one `timeout_s` more to open before it stops.
+            await self._until(
+                lambda: (
+                    any(sub.ups for sub in self.subscribers)
+                    or all(sub.refused for sub in self.subscribers)
+                ),
+                time.perf_counter() + self.spec.timeout_s,
+            )
 
             if not any(sub.ups for sub in self.subscribers):
                 self._start(self.phase)
@@ -322,6 +367,7 @@ class _RealtimeRun:
                 stopped = {"phase": "steady", "reason": "no_stream"}
 
             else:
+                await self._quiet()
                 state.on_response = self._answered
                 self.writing = True
                 self._start(self.phase)
@@ -444,6 +490,18 @@ class _RealtimeRun:
                 time.perf_counter() + self.spec.timeout_s,
             )
 
+    async def _quiet(self) -> None:
+        """Let the first opens' replay pass before the first write: the kit never acks, so each
+        first open replays the retained mailbox. Waits until no frame has come for
+        :data:`_QUIET_S`, at most ``timeout_s``."""
+
+        start = time.perf_counter()
+
+        await self._until(
+            lambda: time.perf_counter() - max(self.last_frame_at, start) >= _QUIET_S,
+            start + self.spec.timeout_s,
+        )
+
     async def _storm(self, phase: _Phase) -> None:
         """Drop every stream at once, then reopen them all in one batch."""
 
@@ -479,10 +537,19 @@ class _RealtimeRun:
                     return
 
                 last_id = sub.last_id if self.spec.resume else None
-                await asyncio.sleep(max(delay, _MIN_RETRY_S))
+                await asyncio.sleep(self._delay(sub, delay))
 
         except Exception as error:  # a plan's `match` bug, or a credential that expired
             self.state.fail(error)
+
+    def _delay(self, sub: _Subscriber, base: float) -> float:
+        """The wait before *sub* reopens: *base* (the server's ``retry:``, or
+        :data:`RETRY_S`), doubled for each failure in a row up to :data:`_MAX_BACKOFF_S`, then
+        jittered by half either way so the streams do not come back in lockstep."""
+
+        backoff = min(base * 2.0 ** max(sub.failures - 1, 0), _MAX_BACKOFF_S)
+
+        return max(backoff * self.rng.uniform(0.5, 1.5), _MIN_RETRY_S)
 
     async def _stream(self, sub: _Subscriber, last_id: str | None) -> float | None:
         """One connection: the seconds to wait before reopening, or ``None`` if refused."""
@@ -502,7 +569,7 @@ class _RealtimeRun:
             return await self._ws(sub, started, headers, params, last_id)
 
         except httpx.TransportError:  # a refused connection, a reset, a timeout
-            self.phase.errors += 1
+            self._error(sub)
 
             return RETRY_S
 
@@ -529,12 +596,17 @@ class _RealtimeRun:
             # with JSON would otherwise be reopened forever.
             media_type = response.headers.get("content-type", "").partition(";")[0].strip()
 
+            if response.status_code >= 500:  # a balancer's 502 or 503 is passing: retried
+                self._error(sub)
+
+                return RETRY_S
+
             if response.status_code != 200 or media_type != "text/event-stream":
                 self._refused(sub)
 
                 return None
 
-            lines = sse_lines(response.aiter_bytes())
+            lines = sse_lines(response.aiter_bytes(), idle_s=self.spec.idle_s)
 
             if response.headers.get(ERROR_CODE_HEADER) == DRAINING_CODE:
                 self.phase.draining += 1
@@ -571,7 +643,7 @@ class _RealtimeRun:
 
         try:
             async with ws_connect(
-                self.client, self.spec.path, params=params, headers=headers
+                self.client, self.spec.path, params=params, headers=headers, idle_s=self.spec.idle_s
             ) as ws:
                 upgraded = time.perf_counter()
                 # forze accepts a refused or draining socket before closing it, so the 101
@@ -593,10 +665,20 @@ class _RealtimeRun:
                     if event[0] == "text" and (frame := _ws_frame(event[1])) is not None:
                         self._arrive(sub, frame)
 
-        except WsRefused:
-            self._refused(sub)
+        except WsRefused as refused:
+            if refused.status < 500:
+                self._refused(sub)
 
-            return None
+                return None
+
+            self._error(sub)  # a balancer's 502 or 503 is passing: retried
+
+            return RETRY_S
+
+        except WsHandshakeError:
+            self._error(sub)
+
+            return RETRY_S
 
         if confirmed:
             self.phase.ended += 1
@@ -610,9 +692,14 @@ class _RealtimeRun:
             return None
 
         else:
-            self.phase.errors += 1
+            self._error(sub)
 
         return RETRY_S
+
+    def _error(self, sub: _Subscriber) -> None:
+        self.phase.errors += 1
+        sub.failures += 1
+        sub.errored = True
 
     def _opened(self, sub: _Subscriber, started: float, opened: float) -> None:
         if not sub.ups:
@@ -622,6 +709,7 @@ class _RealtimeRun:
                 self.joined.append((opened, sub.index))
 
         sub.ups.append([opened, math.inf])
+        sub.failures = 0
         sub.settled.set()
         self.phase.opened += 1
         self.phase.open_ms.add("ok", (opened - started) * 1000)
@@ -680,6 +768,9 @@ class _RealtimeRun:
         answers."""
 
         at = time.perf_counter()
+        self.last_frame_at = at
+        # Writes close as later ones answer: with none answering, a frame must close them itself.
+        self._sweep(at)
 
         if frame.id is not None:
             sub.last_id = frame.id
@@ -694,15 +785,16 @@ class _RealtimeRun:
         bit = 1 << sub.index
 
         if write is None:
-            unseen = self.finished.get(key)
+            closed = self.finished.get(key)
 
             # Before the first write a frame can only be a replay of earlier traffic.
-            if unseen is None and self.writing:
+            if closed is None and self.writing:
                 self._hold(key, sub.index, at)
 
-            elif unseen is not None and unseen & bit:
-                self.phase.late += 1
-                self.finished[key] = unseen & ~bit
+            elif closed is not None and closed[2] & bit:
+                closed_at, phase, unseen = closed
+                phase.late += 1  # in the write's phase, as its `missing` and `gaps` are
+                self.finished[key] = (closed_at, phase, unseen & ~bit)
 
             return
 
@@ -710,7 +802,7 @@ class _RealtimeRun:
             return
 
         if len(sub.ups) > 1 and write.sent < sub.ups[-1][0]:
-            self.phase.replayed += 1  # written before this reopened stream: the resume sent it
+            write.phase.replayed += 1  # written before this reopened stream: the resume sent it
 
         if write.seen & bit:
             write.phase.duplicates += 1
@@ -758,10 +850,11 @@ class _RealtimeRun:
             key, write = next(iter(self.writes.items()))
 
             if write.answered + self.spec.timeout_s > now:
-                return
+                break
 
             del self.writes[key]
-            self.finished[key] = pending = write.expected & ~write.seen
+            pending = write.expected & ~write.seen
+            self.finished[key] = (now, write.phase, pending)
 
             while pending:
                 lowest = pending & -pending
@@ -774,6 +867,11 @@ class _RealtimeRun:
 
                 else:
                     write.phase.gaps += 1
+
+        keep = _KEEP_CLOSED * self.spec.timeout_s
+
+        while self.finished and next(iter(self.finished.values()))[0] + keep <= now:
+            del self.finished[next(iter(self.finished))]
 
     async def _settle(self) -> None:
         """Wait until every expected delivery arrived, or its time ran out."""
@@ -839,7 +937,8 @@ class _RealtimeRun:
 
 
 def _all_settled(group: Sequence[_Subscriber]) -> bool:
-    return all(sub.settled.is_set() for sub in group)
+    # A stream that only fails keeps retrying, but no longer holds up the opening.
+    return all(sub.settled.is_set() or sub.errored for sub in group)
 
 
 def _ws_frame(text: str) -> Frame | None:

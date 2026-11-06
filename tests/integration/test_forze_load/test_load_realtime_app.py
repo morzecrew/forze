@@ -3,8 +3,9 @@
 The app serves ``attach_realtime_sse_route`` (durable, and live-only) and
 ``attach_realtime_ws_route`` on one hub and one in-memory mailbox, under uvicorn in a thread.
 Its ``POST /notify`` does what the gateway and the tail do for a durable principal signal:
-store it in the addressee's mailbox, then publish it to the hub. ``POST /_drain`` and
-``/_undrain`` flip the hub's drain the way the drain step does, ending open streams.
+store it in the addressee's mailbox, then publish it to the hub. ``POST /_drain?after=N`` turns
+the hub's drain on the way the drain step does, ending open streams, and the app turns it off
+again by itself once it has given N draining answers.
 """
 
 from __future__ import annotations
@@ -54,6 +55,29 @@ _PRINCIPALS = {
 # ----------------------- #
 
 
+class _UndrainAfter:
+    """Counts draining answers, SSE's header or WebSocket's 1012, and ends the drain after N."""
+
+    def __init__(self, app: ASGIApp, *, draining: dict[str, Any]) -> None:
+        self.app = app
+        self.draining = draining
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        async def counting(message: Any) -> None:
+            headers = dict(message.get("headers", []))
+            told = headers.get(b"x-error-code") == b"realtime_draining" or (
+                message["type"] == "websocket.close" and message.get("code") == 1012
+            )
+
+            if self.draining["on"] and told:
+                self.draining["seen"] += 1
+                self.draining["on"] = self.draining["seen"] < self.draining["after"]
+
+            await send(message)
+
+        await self.app(scope, receive, counting)
+
+
 class _BindPrincipal:
     """Stands in for the security middleware: ``X-User`` names the principal."""
 
@@ -89,7 +113,7 @@ async def _resolve(connect: WsConnect) -> WsConnection:
 def _app() -> FastAPI:
     ctx = ExecutionContext(deps=DepsRegistry.from_modules(MockDepsModule()).freeze().resolve())
     hub = RealtimeSseHub()
-    draining = {"on": False}
+    draining: dict[str, Any] = {"on": False, "seen": 0, "after": 0}
     hub.follow_drain(lambda: draining["on"])
     mailbox = InMemoryRealtimeMailbox()
     cursors = InMemoryMailboxCursors()
@@ -128,20 +152,17 @@ def _app() -> FastAPI:
         return {"key": key, "to": body["to"]}
 
     @router.post("/_drain")
-    async def drain() -> None:
-        draining["on"] = True
+    async def drain(after: int) -> None:
+        draining.update(on=True, seen=0, after=after)
 
         for subscription in hub.subscriptions:
             subscription.end()
-
-    @router.post("/_undrain")
-    async def undrain() -> None:
-        draining["on"] = False
 
     app = FastAPI()
     app.include_router(router)
     register_exception_handlers(app)
     app.add_middleware(_BindPrincipal, ctx=ctx)  # type: ignore[arg-type]
+    app.add_middleware(_UndrainAfter, draining=draining)  # type: ignore[arg-type]
 
     return app
 
@@ -265,22 +286,15 @@ async def test_a_drain_is_a_reconnect_never_an_error(
     served: _Served, transport: str, path: str
 ) -> None:
     async with httpx.AsyncClient(base_url=served.base_url) as control:
-        await control.post("/_drain")
-        undrain = asyncio.get_running_loop().call_later(
-            0.5, lambda: asyncio.ensure_future(control.post("/_undrain"))
-        )
+        await control.post("/_drain", params={"after": 2})
 
-        try:
-            result = await run(
-                _plan(served.base_url),
-                _realtime(transport, path, storm=False, timeout_s=5.0, subscribers=2),
-            )
-
-        finally:
-            undrain.cancel()
+    result = await run(
+        _plan(served.base_url),
+        _realtime(transport, path, storm=False, timeout_s=5.0, subscribers=2),
+    )
 
     streams = result.rows[0]["streams"]
-    assert streams["draining"] >= 2  # each stream was told to retry, then opened
+    assert streams["draining"] == 2  # each stream was told to retry once, then opened
     assert streams["opened"] == 2
     assert streams["refused"] == streams["errors"] == 0
     assert result.rows[0]["delivery"]["delivered"] == result.rows[0]["delivery"]["expected"]

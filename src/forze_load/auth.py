@@ -183,15 +183,21 @@ class PasswordSession:
 
     async def headers(self, client: httpx.AsyncClient) -> Mapping[str, str]:
         if self._access is None or self._due():
-            async with self._lock:
-                # Re-checked under the lock: the worker ahead of this one may have renewed.
-                if self._access is None:
-                    await self._sign_in(client)
-
-                elif self._due():
-                    await self._renew(client)
+            # Shielded: a caller cancelled mid-refresh, by a storm's drop or a step's end, must
+            # not abandon a refresh the server may already have rotated. The next one would
+            # present the old token, and forze revokes the whole family on reuse.
+            await asyncio.shield(self._update(client))
 
         return {"Authorization": f"Bearer {self._access}"}
+
+    async def _update(self, client: httpx.AsyncClient) -> None:
+        async with self._lock:
+            # Re-checked under the lock: the worker ahead of this one may have renewed.
+            if self._access is None:
+                await self._sign_in(client)
+
+            elif self._due():
+                await self._renew(client)
 
     def _due(self) -> bool:
         now = monotonic()

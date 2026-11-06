@@ -134,6 +134,39 @@ class TestPasswordSession:
 
         assert server.logins == 2
 
+    async def test_a_refresh_outlives_a_caller_cancelled_mid_flight(
+        self, password: str, clock: _Clock
+    ) -> None:
+        server = _AuthServer(lifetime=10, password=password)
+        rotated, release = asyncio.Event(), asyncio.Event()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            response = server.handler(request)  # a refresh rotates the token here
+
+            if request.url.path != "/login":
+                rotated.set()
+                await release.wait()
+
+            return response
+
+        session = password_login("ada", password_env="LOAD_PW").session()
+
+        async with _client(handler) as client:
+            await session.headers(client)
+            clock.now += 9.5
+            caller = asyncio.create_task(session.headers(client))
+            await rotated.wait()
+            caller.cancel()  # a storm's drop, mid-refresh
+            release.set()
+            await asyncio.gather(caller, return_exceptions=True)
+            await asyncio.sleep(0.01)  # the shielded refresh finishes and keeps the new token
+            clock.now += 9.5
+            await session.headers(client)
+
+        # The second refresh presented the rotated token: no reuse, no new sign-in.
+        assert server.refreshes == 2
+        assert server.logins == 1
+
     async def test_a_revoked_family_signs_in_again(self, password: str, clock: _Clock) -> None:
         server = _AuthServer(lifetime=10, password=password)
         session = password_login("ada", password_env="LOAD_PW").session()

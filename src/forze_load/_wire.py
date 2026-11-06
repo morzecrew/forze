@@ -10,8 +10,10 @@ never sends a message, so it never acks or moves a cursor.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import re
 from collections.abc import AsyncIterator, Mapping
@@ -27,9 +29,13 @@ from forze.base.primitives import secure_random_bytes
 _NEWLINE = re.compile(rb"\r\n|\r|\n")
 _UNREAD: Any = object()
 
-_TEXT, _PING, _PONG = 0x1, 0x9, 0xA
+_TEXT, _CLOSE, _PING, _PONG = 0x1, 0x8, 0x9, 0xA
 _MAX_FRAME = 16 * 1024 * 1024
-"""The largest frame read; past it the stream is treated as broken, not buffered."""
+"""The largest line, event or message read; past it the stream is treated as broken."""
+
+_BOM = b"\xef\xbb\xbf"
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+"""RFC 6455 §1.3: the server proves it read the key by hashing it with this."""
 
 NO_STATUS = 1005
 """The close code RFC 6455 reserves for a close frame that carries none."""
@@ -78,14 +84,41 @@ class Frame:
 # ....................... #
 
 
-async def sse_lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
+async def sse_lines(
+    chunks: AsyncIterator[bytes], *, idle_s: float | None = None
+) -> AsyncIterator[str]:
     """The lines of an event stream: split on CR, LF or CRLF, a CRLF split across chunks
-    included. Unlike ``str.splitlines``, no other character ends a line."""
+    included, after one leading byte-order mark. Unlike ``str.splitlines``, no other character
+    ends a line.
+
+    :raises httpx.ReadTimeout: no byte came for *idle_s* seconds.
+    :raises httpx.RemoteProtocolError: a line ran past :data:`_MAX_FRAME`.
+    """
 
     buffer = b""
     after_cr = False
+    started = False
+    iterator = aiter(chunks)
 
-    async for chunk in chunks:
+    while True:
+        try:
+            async with asyncio.timeout(idle_s):
+                chunk = await anext(iterator)
+
+        except StopAsyncIteration:
+            return
+
+        except TimeoutError as error:
+            raise httpx.ReadTimeout(f"No byte for {idle_s} s") from error
+
+        if not started:  # the format ignores one leading BOM, split across chunks or not
+            buffer += chunk
+
+            if len(buffer) < len(_BOM) and _BOM.startswith(buffer):
+                continue
+
+            chunk, buffer, started = buffer.removeprefix(_BOM), b"", True
+
         if after_cr and chunk.startswith(b"\n"):
             chunk = chunk[1:]  # the LF of a CRLF whose CR ended the previous chunk
 
@@ -112,9 +145,13 @@ class SseParser:
     _event: str | None = None
     _id: str | None = None
     _data: list[str] = attrs.field(factory=lambda: list[str]())
+    _size: int = 0
 
     def feed(self, line: str) -> Frame | None:
-        """Take one line; return the frame a blank line completes, if it carried data."""
+        """Take one line; return the frame a blank line completes, if it carried data.
+
+        :raises httpx.RemoteProtocolError: an event's data ran past :data:`_MAX_FRAME`.
+        """
 
         if not line:
             frame = (
@@ -122,7 +159,7 @@ class SseParser:
                 if self._data
                 else None
             )
-            self._event, self._id, self._data = None, None, []
+            self._event, self._id, self._data, self._size = None, None, [], 0
 
             return frame
 
@@ -134,6 +171,11 @@ class SseParser:
 
         match name:
             case "data":
+                self._size += len(value) + 1
+
+                if self._size > _MAX_FRAME:
+                    raise httpx.RemoteProtocolError("An event's data ran past the 16 MiB limit")
+
                 self._data.append(value)
 
             case "event":
@@ -171,19 +213,39 @@ class WsRefused(Exception):
         self.status = status
 
 
+class WsHandshakeError(Exception):
+    """A 101 whose headers do not complete the handshake (RFC 6455 §4.1)."""
+
+
+class _Violation(Exception):
+    """The server broke the protocol; the client closes with :attr:`code`."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 type WsEvent = (
     tuple[Literal["text"], str] | tuple[Literal["pong"], None] | tuple[Literal["close"], int]
 )
 
 
 class WebSocket:
-    """The read side of an upgraded connection, answering the server's pings."""
+    """The read side of an upgraded connection, answering the server's pings.
 
-    def __init__(self, stream: _Stream) -> None:
+    A protocol violation closes the socket with its code, the close echoed to the server:
+    1002 for a masked frame, reserved bits, a reserved opcode or a control frame that is
+    fragmented or over 125 bytes; 1007 for text that is not UTF-8; 1009 for a frame or a
+    message past :data:`_MAX_FRAME`. No byte for *idle_s* seconds reads as 1006.
+    """
+
+    def __init__(self, stream: _Stream, *, idle_s: float | None = None) -> None:
         self._stream = stream
+        self._idle_s = idle_s
         self._buffer = b""
         # A message's fragments, kept across calls: a pong can arrive between two of them.
         self._message: list[bytes] = []
+        self._size = 0
         self._kind = _TEXT
 
     async def ping(self) -> None:
@@ -197,29 +259,50 @@ class WebSocket:
         A connection that ends without a close frame reads as an abnormal close, 1006.
         """
 
-        while True:
-            try:
-                fin, opcode, payload = await self._frame()
+        try:
+            return await self._receive()
 
-            except EOFError:
-                return "close", 1006
+        except EOFError:
+            return "close", 1006
+
+        except _Violation as violation:
+            await self._send(_CLOSE, violation.code.to_bytes(2))
+
+            return "close", violation.code
+
+    async def _receive(self) -> WsEvent:
+        while True:
+            fin, opcode, payload = await self._frame()
+
+            if opcode >= _CLOSE and (not fin or len(payload) > 125):
+                raise _Violation(1002)  # a control frame is whole and short (§5.5)
 
             match opcode:
                 case 0x0 | 0x1 | 0x2:  # a message, or a fragment of one
                     self._kind = opcode or self._kind
                     self._message.append(payload)
+                    self._size += len(payload)
+
+                    if self._size > _MAX_FRAME:
+                        raise _Violation(1009)
 
                     if not fin:
                         continue
 
-                    data, self._message = b"".join(self._message), []
+                    data, self._message, self._size = b"".join(self._message), [], 0
 
-                    if (
-                        self._kind == _TEXT
-                    ):  # forze's protocol is JSON text; a binary one is skipped
-                        return "text", data.decode("utf-8", "replace")
+                    if self._kind != _TEXT:  # forze's protocol is JSON text: binary is skipped
+                        continue
+
+                    try:
+                        return "text", data.decode("utf-8")
+
+                    except UnicodeDecodeError:
+                        raise _Violation(1007) from None
 
                 case 0x8:
+                    await self._send(_CLOSE, payload[:2])  # echoed, as §5.5.1 asks
+
                     return "close", int.from_bytes(payload[:2]) if len(payload) >= 2 else NO_STATUS
 
                 case 0x9:
@@ -228,13 +311,17 @@ class WebSocket:
                 case 0xA:
                     return "pong", None
 
-                case _:  # a reserved opcode: the server broke the protocol
-                    return "close", 1002
+                case _:
+                    raise _Violation(1002)
 
     async def _frame(self) -> tuple[bool, int, bytes]:
         head = await self._exactly(2)
         fin, opcode = bool(head[0] & 0x80), head[0] & 0x0F
-        masked, length = bool(head[1] & 0x80), head[1] & 0x7F
+        length = head[1] & 0x7F
+
+        # No extension was negotiated, so no reserved bit; a server never masks (§5.1).
+        if head[0] & 0x70 or head[1] & 0x80:
+            raise _Violation(1002)
 
         if length == 126:
             length = int.from_bytes(await self._exactly(2))
@@ -243,19 +330,18 @@ class WebSocket:
             length = int.from_bytes(await self._exactly(8))
 
         if length > _MAX_FRAME:
-            raise EOFError
+            raise _Violation(1009)
 
-        mask = await self._exactly(4) if masked else b""
-        payload = await self._exactly(length)
-
-        return fin, opcode, _unmask(payload, mask) if masked else payload
+        return fin, opcode, await self._exactly(length)
 
     async def _exactly(self, n: int) -> bytes:
         while len(self._buffer) < n:
             try:
-                chunk = await self._stream.read(65536)
+                async with asyncio.timeout(self._idle_s):
+                    chunk = await self._stream.read(65536)
 
-            # httpcore's network errors are not httpx's: a broken connection reads as closed.
+            # httpcore's network errors are not httpx's: a broken connection, or one silent for
+            # `idle_s`, reads as closed.
             except Exception as error:
                 raise EOFError from error
 
@@ -282,6 +368,25 @@ def _unmask(payload: bytes, mask: bytes) -> bytes:
     return bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
 
 
+def accept_for(key: str) -> str:
+    """The ``Sec-WebSocket-Accept`` a server answers *key* with (RFC 6455 §4.2.2)."""
+
+    # SHA-1 is what the RFC mandates here: a proof the server read the key, not a secret.
+    digest = hashlib.sha1((key + _WS_GUID).encode(), usedforsecurity=False).digest()
+
+    return base64.b64encode(digest).decode()
+
+
+def _accepted(headers: httpx.Headers, key: str) -> bool:
+    connection = {token.strip().lower() for token in headers.get("connection", "").split(",")}
+
+    return (
+        headers.get("upgrade", "").lower() == "websocket"
+        and "upgrade" in connection
+        and headers.get("sec-websocket-accept") == accept_for(key)
+    )
+
+
 @contextlib.asynccontextmanager
 async def ws_connect(
     client: httpx.AsyncClient,
@@ -289,28 +394,35 @@ async def ws_connect(
     *,
     params: Mapping[str, str],
     headers: Mapping[str, str],
+    idle_s: float | None = None,
 ) -> AsyncIterator[WebSocket]:
     """Open a WebSocket at *path* through *client*'s HTTP/1.1 upgrade.
 
     :raises WsRefused: the server answered the upgrade with another status than 101.
+    :raises WsHandshakeError: a 101 without ``Upgrade: websocket``, ``Connection: upgrade``
+        or the ``Sec-WebSocket-Accept`` the key calls for.
     """
 
+    key = base64.b64encode(secure_random_bytes(16)).decode()
     upgrade = {
         **headers,
         "Connection": "Upgrade",
         "Upgrade": "websocket",
         "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Key": base64.b64encode(secure_random_bytes(16)).decode(),
+        "Sec-WebSocket-Key": key,
     }
 
     async with client.stream("GET", path, params=params, headers=upgrade) as response:
         if response.status_code != 101:
             raise WsRefused(response.status_code)
 
+        if not _accepted(response.headers, key):
+            raise WsHandshakeError("The 101 does not complete the WebSocket handshake")
+
         stream: _Stream = response.extensions["network_stream"]
 
         try:
-            yield WebSocket(stream)
+            yield WebSocket(stream, idle_s=idle_s)
 
         finally:
             await stream.aclose()

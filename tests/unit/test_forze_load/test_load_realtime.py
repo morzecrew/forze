@@ -24,7 +24,8 @@ import pytest
 from forze.base.exceptions import CoreException
 from forze_load import Call, Frame, LoadPlan, Principal, Realtime, Scenario, read_run, run, sample
 from forze_load import realtime as realtime_module
-from forze_load.realtime import _RealtimeRun
+from forze_load._wire import accept_for
+from forze_load.realtime import _RealtimeRun, _Write
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +71,20 @@ class _Fake:
     """Break every open stream's connection mid-read when this write arrives."""
 
     upgrade_status: int = 101
+    status_first: list[int] = attrs.field(factory=list)
+    """Statuses the next opens are answered with instead of a stream."""
+
+    bad_handshake: bool = False
+    """A WebSocket 101 without the handshake's headers."""
+
+    welcome: bool = True
+    """Each stream starts with a frame no write caused."""
+
+    history: int = 0
+    """A first open with no id replays this many frames of earlier traffic, one every 20 ms."""
+
+    first_write_at: float | None = None
+    last_history_at: float = 0.0
     close_first: list[int] = attrs.field(factory=list)
     """WebSocket close codes the next opens get before anything else."""
 
@@ -106,6 +121,7 @@ class _Fake:
 
     async def _notify(self, request: httpx.Request) -> httpx.Response:
         self.writes += 1
+        self.first_write_at = self.first_write_at or time.perf_counter()
 
         if self.writes == self.end_after:
             self.end_all()
@@ -156,7 +172,15 @@ class _Fake:
         else:
             deliver()
 
-        await asyncio.sleep(self.answer_after_s)
+        if self.answer_after_s:
+            # The answer waits until every target has read its frame: the frame surely wins.
+            for _ in range(1000):
+                if all(c.queue.empty() for c in targets if not c.closed):
+                    break
+
+                await asyncio.sleep(0.001)
+
+            await asyncio.sleep(self.answer_after_s)
 
         return httpx.Response(200, json={"key": key, "to": to})
 
@@ -175,8 +199,11 @@ class _Fake:
         )
         conn = _Conn(principal, request.url.params["device_id"], resumed_from)
 
+        if self.status_first:
+            return httpx.Response(self.status_first.pop(0))
+
         if self.kind == "ws":
-            return self._ws(conn)
+            return self._ws(conn, request)
 
         if self.refuse:
             return httpx.Response(401)
@@ -190,33 +217,51 @@ class _Fake:
 
             return httpx.Response(200, headers=headers, content=b"retry: 20\n\n")
 
-        conn.queue.put_nowait(b"event: welcome\ndata: {}\n\n")  # a frame no write caused
+        if self.welcome:
+            conn.queue.put_nowait(b"event: welcome\ndata: {}\n\n")  # a frame no write caused
+
         self._replay(conn)
 
         return httpx.Response(200, headers=_EVENT_STREAM, content=self._body(conn))
 
-    def _ws(self, conn: _Conn) -> httpx.Response:
+    def _ws(self, conn: _Conn, request: httpx.Request) -> httpx.Response:
         if self.upgrade_status != 101:
             return httpx.Response(self.upgrade_status)
+
+        handshake = {
+            "upgrade": "websocket",
+            "connection": "Upgrade",
+            "sec-websocket-accept": accept_for(request.headers["sec-websocket-key"]),
+        }
 
         if self.refuse or self.draining or self.close_first:
             self.draining = max(self.draining - 1, 0)
             code = 1008 if self.refuse else self.close_first.pop(0) if self.close_first else 1012
             conn.queue.put_nowait(bytes([0x88, 2]) + code.to_bytes(2))
 
-        else:
+        elif self.welcome:
             # Two texts that are not frames of the protocol, then a frame no write caused.
             for text in ("not json", '{"type": "error"}', '{"event": "welcome", "data": {}}'):
                 conn.queue.put_nowait(_ws_text(text))
 
             self._replay(conn)
 
-        return httpx.Response(101, extensions={"network_stream": _FakeStream(conn, self)})
+        else:
+            self._replay(conn)
+
+        return httpx.Response(
+            101,
+            headers={} if self.bad_handshake else handshake,
+            extensions={"network_stream": _FakeStream(conn, self)},
+        )
 
     def _replay(self, conn: _Conn) -> None:
         self.conns.append(conn)
 
         if conn.resumed_from is None:
+            if self.history and len(self.conns) == 1:
+                self._trickle(conn)
+
             return
 
         ids = [event_id for event_id, _, _ in self.mailbox]
@@ -226,6 +271,20 @@ class _Fake:
             if principal == conn.principal:
                 conn.delivered.append(event_id)
                 conn.queue.put_nowait(frame)
+
+    def _trickle(self, conn: _Conn) -> None:
+        """Earlier traffic, which a first open replays because the kit never acks."""
+
+        loop = asyncio.get_running_loop()
+
+        def put(n: int) -> None:
+            envelope = json.dumps({"id": f"old-{n}", "data": {"key": f"old-{n}"}})
+            frame = f"id: old-{n}\nevent: notified\ndata: {envelope}\n\n".encode()
+            conn.queue.put_nowait(frame)
+            self.last_history_at = time.perf_counter()
+
+        for n in range(self.history):
+            loop.call_later(0.02 * n, put, n)
 
     async def _body(self, conn: _Conn) -> AsyncIterator[bytes]:
         try:
@@ -352,6 +411,20 @@ def _realtime(kind: str = "sse", **kw: Any) -> Realtime:
     return Realtime(transport=kind, path="/rt", **options)  # type: ignore[arg-type]
 
 
+def _direct(**kw: Any) -> _RealtimeRun:
+    """A realtime run built without a server, to drive its accounting directly."""
+
+    spec = _realtime(**{"audience": None, **kw})
+    rt = _RealtimeRun(spec=spec, state=SimpleNamespace(plan=_plan()), client=None)  # type: ignore[arg-type]
+    rt.writing = True
+
+    return rt
+
+
+def _frame(key: str) -> Frame:
+    return Frame(event="notified", id=None, text=json.dumps({"data": {"key": key}}))
+
+
 async def _run(fake: _Fake, profile: Realtime, **kw: Any) -> Any:
     return await run(
         _plan(**kw.pop("plan", {})), profile, transport=httpx.MockTransport(fake.handle), **kw
@@ -422,12 +495,9 @@ class TestMatching:
         assert delivery["expected"] == delivery["delivered"] == 2 * fake.writes
         assert delivery["duplicates"] == delivery["missing"] == 0
 
-    async def test_frames_of_other_traffic_are_let_go(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(realtime_module, "_HOLD_S", 0.0)
+    async def test_frames_of_other_traffic_count_nowhere(self) -> None:
         fake = _Fake(foreign=True)
-        result = await _run(fake, _realtime(), plan={"timeout_s": 0.02})
+        result = await _run(fake, _realtime(), plan={"timeout_s": 0.5})
 
         delivery = result.rows[0]["delivery"]
         assert delivery["delivered"] == delivery["expected"] > 0
@@ -436,9 +506,9 @@ class TestMatching:
     async def test_a_stream_that_first_opens_after_a_write_is_sent_is_not_expected_for_it(
         self,
     ) -> None:
-        # The open phase waits 0.1 s for the batch; ada's first stream opens later, with
-        # writes to ada in flight, and misses the frames of the writes sent before it opened.
-        fake = _Fake(slow_device="forze-load-0", slow_open_s=0.2, answer_after_s=0.15)
+        # The batch and the replay's quiet wait 0.1 s each; ada's first stream opens after
+        # that, with writes to ada in flight, and misses the frames of those sent before it.
+        fake = _Fake(slow_device="forze-load-0", slow_open_s=0.35, answer_after_s=0.15)
         result = await _run(fake, _realtime(timeout_s=0.1, duration_s=0.3), plan={"send": _to_ada})
 
         (row,) = result.rows
@@ -493,21 +563,63 @@ class TestMatching:
         assert rt.early["b"][1][0] == [1.2, 1]  # first arrival, one repeat
 
     def test_a_late_frame_counts_once_and_only_at_a_stream_that_missed_it(self) -> None:
-        state = SimpleNamespace(plan=_plan())
-        rt = _RealtimeRun(spec=_realtime(subscribers=2), state=state, client=None)  # type: ignore[arg-type]
-        rt.finished["key-1"] = 1 << 0  # closed: stream 0 never got it, stream 1 did
-        frame = Frame(event="notified", id=None, text='{"data": {"key": "key-1"}}')
+        rt = _direct(subscribers=2)
+        # Closed: stream 0 never got it, stream 1 did.
+        rt.finished["key-1"] = (time.perf_counter(), rt.phase, 1 << 0)
 
-        rt._arrive(rt.subscribers[0], frame)
-        rt._arrive(rt.subscribers[0], frame)  # its duplicate
-        rt._arrive(rt.subscribers[1], frame)  # a re-send to a stream that had it
+        rt._arrive(rt.subscribers[0], _frame("key-1"))
+        rt._arrive(rt.subscribers[0], _frame("key-1"))  # its duplicate
+        rt._arrive(rt.subscribers[1], _frame("key-1"))  # a re-send to a stream that had it
 
         assert rt.phase.late == 1
-        assert rt.finished["key-1"] == 0
+        assert rt.finished["key-1"][2] == 0
+
+    def test_a_frame_closes_overdue_writes_when_no_answer_does(self) -> None:
+        rt = _direct(subscribers=1, timeout_s=0.25)
+        sub = rt.subscribers[0]
+        now = time.perf_counter()
+        sub.ups.append([now - 100, float("inf")])
+        rt.opened = 1
+        # Answered 20 s ago; no later answer came to close it.
+        rt._answered(
+            rt.phase.recorder, httpx.Response(200, json={"key": "k"}), now - 20.1, now - 20
+        )
+
+        rt._arrive(sub, _frame("k"))
+
+        assert (rt.phase.delivered, rt.phase.missing, rt.phase.late) == (0, 1, 1)
+
+    def test_late_and_replayed_count_in_the_write_s_phase(self) -> None:
+        rt = _direct(subscribers=1)
+        steady = rt.phase
+        rt.phase = storm = rt._phase("storm")
+        sub = rt.subscribers[0]
+        now = time.perf_counter()
+        sub.ups.extend([[now - 10, now - 5], [now - 1, float("inf")]])  # reopened 1 s ago
+        rt.finished["closed"] = (now, steady, 1)
+        rt.writes["open"] = _Write(phase=steady, sent=now - 2, answered=now - 0.1, expected=1)
+
+        rt._arrive(sub, _frame("closed"))
+        rt._arrive(sub, _frame("open"))
+
+        assert (steady.late, steady.replayed, steady.delivered) == (1, 1, 1)
+        assert (storm.late, storm.replayed) == (0, 0)
+
+    def test_closed_keys_are_let_go_ten_timeouts_after_they_close(self) -> None:
+        rt = _direct(timeout_s=0.5)
+        now = time.perf_counter()
+        rt.finished["old"] = (now - 5.1, rt.phase, 1)
+        rt.finished["recent"] = (now - 4.0, rt.phase, 1)
+
+        rt._sweep(now)
+
+        assert list(rt.finished) == ["recent"]
+        rt._arrive(rt.subscribers[0], _frame("old"))  # let go: counts nowhere, as other traffic
+        assert rt.phase.late == 0
 
     def test_a_frame_before_the_first_write_is_not_held(self) -> None:
-        state = SimpleNamespace(plan=_plan())
-        rt = _RealtimeRun(spec=_realtime(subscribers=1), state=state, client=None)  # type: ignore[arg-type]
+        rt = _direct(subscribers=1)
+        rt.writing = False
         frame = Frame(event="notified", id="event-0", text='{"data": {"key": "old"}}')
 
         rt._arrive(rt.subscribers[0], frame)
@@ -676,6 +788,54 @@ class TestReconnects:
         assert streams["opened"] == 1
         assert streams["refused"] == streams["draining"] == 0
 
+    @pytest.mark.parametrize(
+        ("kind", "status", "errors", "refused"),
+        [("sse", 503, 1, 0), ("ws", 502, 1, 0), ("sse", 404, 0, 1), ("ws", 403, 0, 1)],
+    )
+    async def test_a_5xx_is_retried_and_a_4xx_refuses(
+        self, kind: str, status: int, errors: int, refused: int
+    ) -> None:
+        fake = _Fake(kind=kind, status_first=[status])
+        result = await _run(fake, _realtime(kind))
+
+        streams = result.rows[0]["streams"]
+        assert (streams["errors"], streams["refused"]) == (errors, refused)
+        assert streams["opened"] == 4 - refused
+
+    async def test_a_101_that_does_not_complete_the_handshake_is_an_error(self) -> None:
+        fake = _Fake(kind="ws", bad_handshake=True)
+        result = await _run(fake, _realtime("ws", subscribers=1, timeout_s=0.2))
+
+        streams = result.rows[0]["streams"]
+        assert result.summary["stopped"]["reason"] == "no_stream"
+        assert streams["errors"] >= 1
+        assert streams["refused"] == streams["opened"] == 0
+
+    async def test_streams_that_only_fail_do_not_hold_up_each_batch(self) -> None:
+        async def down(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused")
+
+        started = time.perf_counter()
+        result = await run(
+            _plan(),
+            _realtime(subscribers=3, batch=1, timeout_s=0.5),
+            transport=httpx.MockTransport(down),
+        )
+
+        # One timeout for the whole opening, not one per batch of a single stream.
+        assert time.perf_counter() - started < 1.2
+        assert result.summary["stopped"]["reason"] == "no_stream"
+        assert result.rows[0]["streams"]["errors"] >= 3
+
+    @pytest.mark.parametrize("kind", ["sse", "ws"])
+    async def test_a_silent_stream_is_cut_after_idle_s_and_reopened(self, kind: str) -> None:
+        fake = _Fake(kind=kind, emit=False, welcome=False)
+        result = await _run(fake, _realtime(kind, idle_s=0.1, duration_s=0.3))
+
+        streams = result.rows[0]["streams"]
+        assert streams["ended"] >= 4
+        assert streams["errors"] == streams["refused"] == 0
+
     async def test_a_transport_error_on_open_is_retried(self) -> None:
         fake = _Fake()
         failures = iter([True, False])
@@ -693,7 +853,45 @@ class TestReconnects:
         assert streams["opened"] == 1
 
 
+class TestReopenDelay:
+    def test_the_wait_is_jittered_around_its_base(self) -> None:
+        rt = _direct()
+        delays = [rt._delay(rt.subscribers[0], 1.0) for _ in range(200)]
+
+        assert all(0.5 <= delay <= 1.5 for delay in delays)
+        assert len({round(delay, 3) for delay in delays}) > 100  # not in lockstep
+
+    def test_failures_in_a_row_double_the_base_up_to_a_cap(self) -> None:
+        rt = _direct()
+        sub = rt.subscribers[0]
+        bases = []
+
+        for failures in (1, 2, 3, 10):
+            sub.failures = failures
+            bases.append(max(rt._delay(sub, 1.0) for _ in range(200)))
+
+        assert bases[0] <= 1.5 < bases[1] <= 3.0 < bases[2] <= 6.0
+        assert bases[3] <= 45.0  # 30 s at most, before jitter
+
+    def test_an_open_resets_the_backoff(self) -> None:
+        rt = _direct()
+        sub = rt.subscribers[0]
+        sub.failures = 5
+        rt._opened(sub, 0.0, 0.1)
+
+        assert sub.failures == 0
+        assert rt._delay(sub, 1.0) <= 1.5
+
+
 class TestTheRun:
+    async def test_the_first_writes_wait_for_the_first_opens_replay(self) -> None:
+        fake = _Fake(history=8)
+        await _run(fake, _realtime(subscribers=2, timeout_s=1.0))  # the wait is capped by it
+
+        assert fake.first_write_at is not None
+        # The replay trickled in for 0.14 s; the writes began a quiet 0.25 s after it ended.
+        assert fake.first_write_at - fake.last_history_at >= 0.2
+
     async def test_the_file_records_the_profile_s_numbers_and_never_a_key_or_id(
         self, tmp_path: Path
     ) -> None:
