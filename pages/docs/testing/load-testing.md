@@ -480,8 +480,8 @@ the live leg drops what does not fit. So a `share` below 1 is a server finding
 when `client.saturated` is false, and the client's own limit when it is true.
 
 Realtime runs from Python only: `forze load run` has no realtime model, since `match` and
-`key_of` are code. `forze load compare` reads step rows and skips phase rows. The meta line
-records the profile's numbers, not its path, topics or callables.
+`key_of` are code. `forze load compare` reads step and window rows, and skips phase rows. The
+meta line records the profile's numbers, not its path, topics or callables.
 
 ## Writes and shared environments
 

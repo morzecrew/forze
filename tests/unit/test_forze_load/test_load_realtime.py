@@ -896,15 +896,20 @@ class TestTheRun:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "rt.jsonl"
-        await _run(_Fake(), _realtime(storm=True, topics=("orders",)), out=out)
+        announced: list[Any] = []
+        await _run(
+            _Fake(), _realtime(storm=True, topics=("orders",)), out=out, on_meta=announced.append
+        )
 
         text = out.read_text()
         meta = json.loads(text.splitlines()[0])
         assert meta["model"] == "realtime"
+        assert announced == [meta]  # `run`'s meta hook serves a realtime run as it does a soak
+        assert "server" not in meta  # only a soak scrapes `/metrics`
         assert meta["profile"]["transport"] == "sse"
         assert {"match", "key_of", "audience", "path", "topics"}.isdisjoint(meta["profile"])
         assert "key-1" not in text and "event-1" not in text
-        assert read_run(out).rows == []  # `compare` reads steps; a realtime run has phases
+        assert read_run(out).rows == []  # `compare` reads steps and windows, not phases
         summary = json.loads(text.splitlines()[-1])
         assert summary["knee"] is None and summary["note"] is None
 
