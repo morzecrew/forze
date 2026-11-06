@@ -610,6 +610,17 @@ class TestDocumentShapes:
         else:
             assert (await _run(app, _plan(_GET))).rows[0]["outcomes"]["ok"] > 0
 
+    async def test_one_template_with_no_default_matches_only_itself(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["servers"] = [{"url": "{scheme}://127.0.0.1:9"}]
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "{scheme}://127.0.0.1:9"}]
+        doc["paths"]["/orders/{id}"]["get"]["servers"] = [{"url": "{other}://127.0.0.1:9"}]
+        app = _App({"ada": ["p1"]}, doc)
+
+        assert (await _run(app, _plan(_GET))).rows[0]["outcomes"]["ok"] > 0
+        orders = Scenario.op("orders.get", path={"id": "o1"})
+        assert await _refused(app, _plan(orders)) == "load_plan_invalid"
+
     @pytest.mark.parametrize("level", ["document", "operation"])
     async def test_a_server_entry_without_a_url_is_refused(self, level) -> None:
         doc = json.loads(json.dumps(_DOC))
