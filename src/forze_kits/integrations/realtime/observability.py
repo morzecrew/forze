@@ -56,6 +56,17 @@ class _MailboxTotals:
     trimmed: int = 0
     overflowed: int = 0
 
+    def add(
+        self, *, stored: int = 0, replayed: int = 0, trimmed: int = 0, overflowed: int = 0
+    ) -> None:
+        """Add to the counts under the registry lock: event loops on other threads share them."""
+
+        with _LOCK:
+            self.stored += stored
+            self.replayed += replayed
+            self.trimmed += trimmed
+            self.overflowed += overflowed
+
 
 @final
 @attrs.define(slots=True)
@@ -65,12 +76,19 @@ class _CursorTotals:
     spec: str
     acked: int = 0
 
+    def add(self, *, acked: int) -> None:
+        """Add to the count under the registry lock: event loops on other threads share it."""
+
+        with _LOCK:
+            self.acked += acked
+
 
 # ....................... #
 
 _LOCK = threading.Lock()
-"""Guards the registries below: written at build and instrument time, read by scrapes and
-replays on any thread. The counts themselves are ints mutated on the event loop."""
+"""Guards the registries below and every count in them: one spec's record is shared by the
+event loops of every thread, and read by scrapes on any thread. Never held across an await
+or an SDK call. Uncontended, an update costs about 150 ns, against a store round trip."""
 
 _MAILBOX_TOTALS: dict[str, _MailboxTotals] = {}
 _CURSOR_TOTALS: dict[str, _CursorTotals] = {}
@@ -112,9 +130,7 @@ def _counter[T: (_MailboxTotals, _CursorTotals)](
 ) -> ChannelInstrument[dict[str, T]]:
     def read(registry: dict[str, T]) -> ChannelReading:
         with _LOCK:
-            totals = list(registry.values())
-
-        return [(pick(one), {_SPEC_LABEL: one.spec}) for one in totals]
+            return [(pick(one), {_SPEC_LABEL: one.spec}) for one in registry.values()]
 
     return ChannelInstrument(name, "counter", read, description)
 

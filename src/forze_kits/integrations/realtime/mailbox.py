@@ -338,7 +338,7 @@ class DocumentRealtimeMailbox:
             raise
 
         self._stored += 1  # count only a real insert, honouring the "written" contract
-        self._totals.stored += 1
+        self._totals.add(stored=1)
 
     # ....................... #
 
@@ -387,7 +387,7 @@ class DocumentRealtimeMailbox:
         floor_hlc = int(floor_row["hlc"])
         floor_id = UUID(str(floor_row["id"]))
         self._overflowed += 1
-        self._totals.overflowed += 1
+        self._totals.add(overflowed=1)
         logger.warning(
             "Realtime mailbox replay overflowed the retention cap; the oldest backlog was skipped",
             principal=principal,
@@ -414,7 +414,7 @@ class DocumentRealtimeMailbox:
         )
 
         self._replayed += len(page.hits)
-        self._totals.replayed += len(page.hits)
+        self._totals.add(replayed=len(page.hits))
 
         return [
             MailboxEntry(
@@ -463,7 +463,7 @@ class DocumentRealtimeMailbox:
 
             for row in page.hits:
                 self._replayed += 1
-                self._totals.replayed += 1
+                self._totals.add(replayed=1)
                 yield MailboxEntry(
                     event_id=row.event_id,
                     hlc=HlcTimestamp.unpack(row.hlc),
@@ -512,7 +512,7 @@ class DocumentRealtimeMailbox:
 
             await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
-            self._totals.trimmed += len(stale.hits)
+            self._totals.add(trimmed=len(stale.hits))
 
     # ....................... #
 
@@ -542,7 +542,7 @@ class DocumentRealtimeMailbox:
 
             await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
-            self._totals.trimmed += len(stale.hits)
+            self._totals.add(trimmed=len(stale.hits))
             deleted += len(stale.hits)
 
 
@@ -634,7 +634,7 @@ class DocumentMailboxCursors:
                     raise
 
                 self._acked += 1
-                self._totals.acked += 1
+                self._totals.add(acked=1)
                 return
 
             if target <= row.hlc:
@@ -650,7 +650,7 @@ class DocumentMailboxCursors:
                 raise
 
             self._acked += 1
-            self._totals.acked += 1
+            self._totals.add(acked=1)
             return
 
         raise exc.internal(

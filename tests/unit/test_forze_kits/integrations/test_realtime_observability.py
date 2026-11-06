@@ -11,6 +11,8 @@ shares would carry that test's counts.
 from __future__ import annotations
 
 import gc
+import sys
+import threading
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -39,6 +41,10 @@ from forze_kits.integrations.realtime import (
     instrument_realtime_mailbox,
     realtime_cursor_spec,
     realtime_mailbox_spec,
+)
+from forze_kits.integrations.realtime.observability import (
+    _LOCK,  # pyright: ignore[reportPrivateUsage]
+    mailbox_totals,
 )
 from forze_mock import MockDepsModule
 from tests.support.realtime_retention import UNSWEPT
@@ -233,3 +239,50 @@ async def test_nothing_is_registered_without_the_call(monkeypatch: pytest.Monkey
 
     finally:
         _forze_meter.cache_clear()
+
+
+def test_event_loops_on_several_threads_lose_no_count() -> None:
+    # One spec's record is shared by every thread's event loop. A GIL build switches threads
+    # only at calls and backward jumps, so an unguarded += loses nothing there; a
+    # free-threaded build drops increments, which this exact total catches.
+    totals = mailbox_totals(f"threads-{uuid4().hex[:8]}")
+    threads, per_thread = 8, 20_000
+    start = threading.Barrier(threads)
+
+    def hammer() -> None:
+        start.wait()
+
+        for _ in range(per_thread):
+            totals.add(stored=1)
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # switch threads as often as the interpreter allows
+
+    try:
+        workers = [threading.Thread(target=hammer) for _ in range(threads)]
+
+        for worker in workers:
+            worker.start()
+
+        for worker in workers:
+            worker.join()
+
+    finally:
+        sys.setswitchinterval(interval)
+
+    assert totals.stored == threads * per_thread
+
+
+def test_an_update_waits_for_the_lock_a_scrape_holds() -> None:
+    # Deterministic on any build: the update takes the lock the scrape snapshot takes.
+    totals = mailbox_totals(f"locked-{uuid4().hex[:8]}")
+    writer = threading.Thread(target=lambda: totals.add(stored=1))
+
+    with _LOCK:
+        writer.start()
+        writer.join(timeout=0.05)
+        assert writer.is_alive()
+        assert totals.stored == 0
+
+    writer.join()
+    assert totals.stored == 1
