@@ -947,6 +947,24 @@ async def test_a_bool_fresh_is_refused_at_the_call(which: str, fresh: bool) -> N
     assert "FreshEpoch" in caught.value.summary
 
 
+async def test_a_fresh_whose_repr_fails_is_still_a_configuration_error() -> None:
+    class Unprintable:
+        def __repr__(self) -> str:
+            raise RuntimeError("repr is broken")
+
+    async def request() -> None:
+        remember_admitted_api_key(
+            AdmittedApiKey(principal_id=uuid4(), digest="d"),
+            fresh=Unprintable(),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert "Unprintable" in caught.value.summary
+
+
 @pytest.mark.parametrize("which", ["session", "api key"])
 @pytest.mark.parametrize("vouches", [True, False])
 async def test_an_epoch_or_none_fresh_is_remembered(which: str, vouches: bool) -> None:
@@ -963,7 +981,9 @@ async def test_an_epoch_or_none_fresh_is_remembered(which: str, vouches: bool) -
             )
             remember_admitted_session(admitted, fresh=fresh)
         else:
-            remember_admitted_api_key(AdmittedApiKey(principal_id=principal, digest="d"), fresh=fresh)
+            remember_admitted_api_key(
+                AdmittedApiKey(principal_id=principal, digest="d"), fresh=fresh
+            )
 
         assert admitted_just_now(principal) is fresh
 
