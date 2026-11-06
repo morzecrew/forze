@@ -7638,6 +7638,7 @@ two transports:</p>
     <span class="n">attach_realtime_sse_route</span><span class="p">,</span>
     <span class="n">realtime_sse_tail_lifecycle_step</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_realtime_mailbox</span>
 
 <span class="n">hub</span> <span class="o">=</span> <span class="n">RealtimeSseHub</span><span class="p">()</span>
 <span class="n">attach_realtime_sse_route</span><span class="p">(</span>
@@ -7653,8 +7654,11 @@ two transports:</p>
 <span class="p">)</span>
 <span class="c1"># register alongside the app's lifecycle steps: one supervised tail loop per node</span>
 <span class="n">step</span> <span class="o">=</span> <span class="n">realtime_sse_tail_lifecycle_step</span><span class="p">(</span><span class="n">hub</span><span class="p">,</span> <span class="n">stream_spec</span><span class="o">=</span><span class="n">realtime_stream_spec</span><span class="p">())</span>
+<span class="c1"># once at assembly: exports the mailbox metrics of every mailbox built in the process</span>
+<span class="n">instrument_realtime_mailbox</span><span class="p">()</span>
 </code></pre></div>
-<p>This factory builds a new mailbox on every connect, so it records no mailbox metrics: see
+<p>The factory builds a new mailbox on every connect. The mailbox metrics are counted per spec
+rather than per instance, so every connect's replay and ack still counts: see
 <a href="../../reference/metrics/#realtime-mailbox">the metric catalog</a>.</p>
 <p>The live leg reads the realtime stream with a plain (non-group) tail — broadcast
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
@@ -7772,9 +7776,6 @@ tenancy rules, the dedup mark and the store-before-ack order are identical:</p>
     <span class="n">realtime_mailbox_writer_lifecycle_step</span><span class="p">(</span><span class="n">writer</span><span class="p">),</span>
 <span class="p">]</span>
 </code></pre></div>
-<p>The writer builds its mailbox inside its own step, where <code>instrument_realtime_mailbox</code> cannot
-reach it, so it records no mailbox metrics: see
-<a href="../../reference/metrics/#realtime-mailbox">the metric catalog</a>.</p>
 <ul>
 <li><strong>Create its group at <code>0</code>.</strong> The group-ensure step defaults to <code>start_id="$"</code>, which suits
   the gateway: a new group should not emit an old backlog live. A writer whose group is

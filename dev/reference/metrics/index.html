@@ -7771,7 +7771,10 @@ neither. <strong>What to watch:</strong> a <code>dropped</code> rate means some
 client reads slower than signals arrive. With a mailbox wired, its durable signals arrive on
 its next reconnect; ephemeral ones are gone.</p>
 <h2 id="realtime-mailbox">Realtime mailbox<a class="headerlink" href="#realtime-mailbox" title="Permanent link">&para;</a></h2>
-<p><code>instrument_realtime_mailbox(mailbox, cursors)</code>. Labelled <code>forze.realtime.channel</code>.</p>
+<p><code>instrument_realtime_mailbox()</code> — reads a process-wide count per mailbox and cursor spec, so
+it covers every mailbox built in the process: a per-connect <code>mailbox_factory</code>, the Socket.IO
+gateway, <code>RealtimeMailboxWriter</code> and the retention sweep. Labelled <code>forze.document</code>, the
+spec's name: the mailbox spec's, or the cursor spec's for <code>acked</code>.</p>
 <table>
 <thead>
 <tr>
@@ -7827,10 +7830,13 @@ size: no gauge counts mailbox rows, since that takes a store query a scrape must
 <p><code>replay_size</code> counts the unacked backlog, not the frames sent. A resume with a last-seen id
 (<abbr title="Server-Side Encryption">SSE</abbr> <code>Last-Event-ID</code>, WebSocket <code>last_event_id</code>) skips the entries delivered before the
 tear, and they still count. A replay the client leaves, or the store fails, records nothing.
-The counters and the replay hook live on the mailbox passed to <code>instrument_realtime_mailbox</code>:
-instrument the instance your <code>mailbox_factory</code> returns. A factory that builds a new mailbox
-per connect records nothing, and neither does the mailbox the gateway or
-<code>RealtimeMailboxWriter</code> builds inside its own step.</p>
+Only a drain through <code>iter_backlog</code> records, as every forze transport does: a custom transport
+that drains <code>iter_replay</code> itself counts <code>replayed</code> but records no <code>replay_size</code>.
+The counters are process totals, so the first scrape after the call includes what came before
+it; <code>replay_size</code> records only the replays that finish after it.</p>
+<p><code>trimmed</code> counts the ids a trim or sweep handed to the document port's <code>kill_many</code>, once it
+returns. The shipped adapters raise unless every id was deleted, so a custom port that accepts
+absent ids can over-count, and only when two cleanups delete the same rows at once.</p>
 <h2 id="access-token-signing">Access-token signing<a class="headerlink" href="#access-token-signing" title="Permanent link">&para;</a></h2>
 <p><code>instrument_signing({"default": service, ...})</code> — the identity plane. Labelled
 <code>forze.signer</code>, <code>forze.signer.algorithm</code>, and <code>forze.signer.kid</code> when set.</p>
