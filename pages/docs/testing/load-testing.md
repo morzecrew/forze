@@ -522,8 +522,8 @@ that never measured anything:
 | Exit | `forze load run` | `forze load compare` |
 | --- | --- | --- |
 | 0 | The run finished, a stop included: the stop rule or an emptied sample. A soak's drift flags never fail it | The runs were compared, and no `--fail-on` threshold was crossed |
-| 1 | Not by design: an unexpected exception, such as one your scenario code raises, ends the command with its traceback and Python's status 1 | A `--fail-on` metric is worse by more than its share, or has a value in the base run and none in the head |
-| 2 | The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid | A file cannot be read as a run, with or without `--fail-on`; the `--fail-on` spec is invalid; `--fail-on` finds no whole step in both runs, as with two realtime runs; an option is invalid |
+| 1 | Never: `run` has no threshold to cross | A `--fail-on` metric is worse by more than its share, or has a value in the base run and none in the head |
+| 2 | The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid; the run file cannot be written; your plan's code (its module, factory or a scenario) raises or exits, which prints its traceback | A file cannot be read as a run, with or without `--fail-on`; the `--fail-on` spec is invalid; `--fail-on` finds no whole step in both runs, as with two realtime runs; an option is invalid |
 
 Every `forze load` command exits 2 when the `load` extra is not installed.
 

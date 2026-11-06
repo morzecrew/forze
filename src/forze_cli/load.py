@@ -10,9 +10,11 @@ without it.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import sys
+import traceback
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 
@@ -125,8 +127,9 @@ def run_command(
     Exits 0 when the run finishes, including a ramp that stopped on its stop rule: a stop is
     a result, recorded in the summary. Gate on it with ``forze load compare --fail-on``. A
     soak's drift flags never fail it. Exits 2 when the plan is refused, an operation it
-    names does not resolve, a soak's metrics route cannot be read, a sign-in fails, or a
-    sample comes back empty.
+    names does not resolve, a soak's metrics route cannot be read, a sign-in fails, a
+    sample comes back empty, the run file cannot be written, or the plan's own code raises
+    or exits; never 1, which is ``compare``'s crossed gate.
     """
 
     from forze_load import ClosedRamp, LoadPlan, OpenRamp, Soak, run, summarize
@@ -145,6 +148,10 @@ def run_command(
     except (ValueError, ImportError, AttributeError) as error:
         typer.echo(f"cannot load {ref!r}: {error}", err=True)
         raise typer.Exit(code=2) from error
+
+    # Anything else a plan module or factory raises, or exits with, is a bug in the plan.
+    except (Exception, SystemExit) as error:
+        _plan_failed(error, "the plan's module or factory")
 
     if not isinstance(target, LoadPlan):
         typer.echo(
@@ -169,10 +176,10 @@ def run_command(
     if soak_s is not None and (ramp_only := _given(ctx, "step_s", "warm_s")):
         raise typer.BadParameter(f"a soak takes --window-s, not {' or '.join(ramp_only)}")
 
-    try:
-        if model not in ("closed", "open"):
-            raise typer.BadParameter("model must be 'closed' or 'open'")
+    if model not in ("closed", "open"):
+        raise typer.BadParameter("model must be 'closed' or 'open'")
 
+    try:
         if soak_s is not None:
             profile: ClosedRamp | OpenRamp | Soak = Soak(
                 duration_s=soak_s,
@@ -203,6 +210,23 @@ def run_command(
         typer.echo(f"refused: {error.summary}", err=True)
         raise typer.Exit(code=2) from error
 
+    # A scenario or hook of the plan raised, or exited: a bug in the plan, not a crossed
+    # gate, so not 1. Refusals raised inside a task group, and the run file, are told apart.
+    except (Exception, SystemExit) as error:
+        if (refusal := _refusal(error)) is not None:
+            typer.echo(f"refused: {refusal.summary}", err=True)
+            raise typer.Exit(code=2) from error
+
+        if (
+            isinstance(error, OSError)
+            and error.filename is not None
+            and Path(error.filename) == out
+        ):
+            typer.echo(f"cannot write {out}: {error.strerror}", err=True)
+            raise typer.Exit(code=2) from error
+
+        _plan_failed(error, "the plan")
+
     for line in summarize(result.rows, result.summary):
         typer.echo(line)
 
@@ -211,6 +235,44 @@ def run_command(
         typer.echo(f"skipped {operation}: {reason}")
 
     typer.echo(f"wrote {out}")
+
+
+def _refusal(error: BaseException) -> CoreException | None:
+    """The first refusal of a group made only of refusals, as a task group raises them."""
+
+    if isinstance(error, BaseExceptionGroup):
+        leaves = list(_leaves(error))
+        refusals = [leaf for leaf in leaves if isinstance(leaf, CoreException)]
+
+        if refusals and len(refusals) == len(leaves):
+            return refusals[0]
+
+    return None
+
+
+def _leaves(group: BaseExceptionGroup[BaseException]) -> Iterator[BaseException]:
+    for error in group.exceptions:
+        if isinstance(error, BaseExceptionGroup):
+            yield from _leaves(error)
+
+        else:
+            yield error
+
+
+def _plan_failed(error: BaseException, where: str) -> NoReturn:
+    """Exit 2 for a bug in *where*: 1 is a crossed ``--fail-on`` gate, and this is no verdict.
+
+    The traceback has no locals: a plan's frames hold its principals' credentials.
+    """
+
+    if isinstance(error, SystemExit):
+        typer.echo(f"{where} exited (status {error.code!r}); the run did not finish", err=True)
+
+    else:
+        traceback.print_exception(error, file=sys.stderr)
+        typer.echo(f"{where} raised {type(error).__name__}; the run did not finish", err=True)
+
+    raise typer.Exit(code=2) from error
 
 
 @load_app.command("compare")
