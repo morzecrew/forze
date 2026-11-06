@@ -7211,7 +7211,7 @@ from §7, without a row. D-259, D-266 and D-269a proposed no row. Comparing real
 | 0084 | 56 | Accepted | `ASSUMED` | The WebSocket transport is a minimal read-only RFC 6455 client over httpx | D-255 |
 | 0084 | 57 | Accepted, **extends row 21** | `ASSUMED` | A 4xx refuses a stream; errors and 5xx reopen with jittered backoff; no open stream stops the run as `no_stream` | D-256, D-257 |
 | 0084 | 58 | Accepted | `ASSUMED` | A key closes `timeout_s` after its answer as missing or gap; a later frame counts once as late | D-258 |
-| 0084 | 59 | Accepted | `ASSUMED` | A `steady` and a `storm` phase row, written once their keys close | D-260 |
+| 0084 | 59 | Accepted | `ASSUMED` | A `steady` phase row and, unless `storm=False`, a `storm` one, written once their keys close | D-260 |
 | 0084 | 60 | Accepted | `ASSUMED` | `replayed` and `back_in_s` as a client can see them | D-261 |
 | 0084 | 61 | Accepted | `ASSUMED` | `resume=False` declares a live-only route | D-262 |
 | 0084 | 62 | Accepted | `ASSUMED` | The kit never acks; each subscriber sends its own `device_id` | D-263 |
@@ -7669,8 +7669,10 @@ CodeRabbit's and CodeAnt's reviews of `f79908a42`. Every fix has a test that fai
 ## Decision-row outcomes — 2026-11-06 (RFC 0084 P4)
 
 The maintainer accepted D-271, D-272, D-274, D-275, D-276, D-277, D-278, D-279, D-283, D-284
-and D-285 as proposed, now RFC 0084 §11 rows 67 to 77. Row 71, from D-276, amends row 26, and
-row 69 reads row 22, which stays `LOCKED` as written. The drifts D-275 (with its row, as D-221
+and D-285 as proposed, now RFC 0084 §11 rows 67 to 77. Row 71, from D-276, amends row 26.
+Row 69 applies row 22 per series: a series labelled with its own process is fitted even when
+scrapes name several instances, and every unlabelled gauge is `interleaved`, as row 22 says; row
+22 stays `LOCKED` as written, and §5.8 stands as designed. The drifts D-275 (with its row, as D-221
 departed), D-281 and D-282 are accepted as departures; D-281 and D-282 get no row. D-270, D-273
 and D-280 proposed no row; subscribers during a soak (D-280) are demand-gated. With P3 and P4
 in, every scheduled phase of RFC 0084 has shipped, and the RFC is marked complete.
@@ -7679,7 +7681,7 @@ in, every scheduled phase of RFC 0084 has shipped, and the RFC is marked complet
 |---|---|---|---|---|---|
 | 0084 | 67 | Accepted | `ASSUMED` | The soak fits `forze_*` gauges and counters and the process gauges, not histograms | D-271 |
 | 0084 | 68 | Accepted | `ASSUMED` | A soak scrapes `LoadPlan.metrics` without a credential, before sign-in and after every window | D-272 |
-| 0084 | 69 | Accepted, **reads row 22** | `ASSUMED` | The one-process rule is applied per series | D-274 |
+| 0084 | 69 | Accepted, **applies row 22 per series** | `ASSUMED` | A series labelled with its process is fitted on its own; unlabelled gauges follow row 22 | D-274 |
 | 0084 | 70 | Accepted | `ASSUMED` | `Soak(...)`, its `window` rows, and `--soak-s` on the CLI | D-275 |
 | 0084 | 71 | Accepted, **amends row 26** | `ASSUMED` | The fit's duration, quarters, threshold, `sparse` and `inconclusive`, and client latency | D-276 |
 | 0084 | 72 | Accepted | `ASSUMED` | Capacity pairs are a listed table; a gauge at capacity is `at_capacity` | D-277 |
