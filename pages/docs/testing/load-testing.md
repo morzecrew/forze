@@ -110,7 +110,9 @@ plan = LoadPlan(
   that serves no docs, or guards them, save the document and pass
   `openapi=Path("openapi.json")`, or the parsed document itself. When the document's first
   server is a path, as FastAPI writes a `root_path` (`/api/v1`), `base_url` must end with
-  it. The meta line records the document's digest as `openapi_sha256`, so `compare` warns
+  it. Every request goes under `base_url`, so an operation or path that names a server of
+  its own, neither the document's nor `base_url`, is refused when referenced and skipped by
+  a sweep. Server variables are read at their defaults. The meta line records the document's digest as `openapi_sha256`, so `compare` warns
   when two runs read different documents.
 
 ### Sample ids from live data

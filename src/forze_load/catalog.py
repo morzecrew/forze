@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import attrs
 import httpx
@@ -125,6 +125,10 @@ class _Route:
     body_unresolved: bool
     """The body schema is a ``$ref`` that is missing, external or circular."""
 
+    server: str | None = None
+    """The server the operation or its path item names in place of the document's; ``None``
+    when it keeps the document's. The kit sends every request under the base URL."""
+
     @property
     def body_fields(self) -> frozenset[str]:
         """The properties the body schema declares."""
@@ -184,6 +188,9 @@ class _Route:
         *body* is the exact JSON body the kit would send, or ``None`` for none. It is judged
         by :func:`_body_misfit`, which refuses whatever it does not model.
         """
+
+        if self.server is not None:
+            return f"declares its own server {self.server!r}"
 
         needed = (self.path_params | self.required_query) - ({_ID} if allow_id else set())
 
@@ -395,7 +402,7 @@ async def resolve(plan: LoadPlan, client: httpx.AsyncClient) -> Catalog:
     # A sweep leaves alone every scenario name, and every operation a reference already calls.
     taken = {s.name for s in plan.scenarios}
     taken |= {s.operation for s in plan.scenarios if isinstance(s, OpScenario)}
-    builder = _Builder(index=_index(document), pool=pool, taken=taken)
+    builder = _Builder(index=_index(document, plan.base_url), pool=pool, taken=taken)
 
     for scenario in plan.scenarios:
         builder.add(scenario)
@@ -604,10 +611,11 @@ def _read_file(path: Path) -> Any:
         raise _unavailable(f"{path} cannot be read as JSON ({type(error).__name__})") from error
 
 
-def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
+def _index(document: Mapping[str, Any], base_url: str) -> dict[str, list[_Route]]:
     """Every operation with an ``operationId``, in document order."""
 
     index: dict[str, list[_Route]] = {}
+    default = _first_server(document.get("servers"), "The document") or "/"  # OpenAPI's default
 
     for path, raw in document["paths"].items():
         item = _deref(document, raw)
@@ -627,9 +635,22 @@ def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
             key = operation.get("operationId")
 
             if isinstance(key, str):
-                index.setdefault(key, []).append(
-                    _route(document, key, method, path, operation, shared)
+                route = _route(document, key, method, path, operation, shared)
+                # The operation's servers replace the path item's, which replace the document's.
+                server = (
+                    _first_server(operation.get("servers"), f"Operation {key!r}")
+                    or _first_server(item.get("servers"), f"Path {path!r}")
+                    or default
                 )
+
+                # Every request goes under base_url: a server that is the document's, or that
+                # resolves to base_url itself, is where the request goes anyway.
+                if server != default and urljoin(base_url, server).rstrip("/") != base_url.rstrip(
+                    "/"
+                ):
+                    route = attrs.evolve(route, server=server)
+
+                index.setdefault(key, []).append(route)
 
     return index
 
@@ -837,11 +858,9 @@ def _check_server(document: Mapping[str, Any], base_url: str) -> None:
     404s, which reads as deleted data, not as a misconfiguration.
     """
 
-    servers = document.get("servers")
-    first = servers[0] if isinstance(servers, list) and servers else None
-    url = first.get("url") if isinstance(first, dict) else None
+    url = _first_server(document.get("servers"), "The document")
 
-    if not isinstance(url, str) or not url.startswith("/"):
+    if url is None or not url.startswith("/"):
         return  # none, or an absolute server: the base URL decides
 
     prefix = url.rstrip("/")
@@ -851,6 +870,32 @@ def _check_server(document: Mapping[str, Any], base_url: str) -> None:
             f"The OpenAPI document serves its paths under {prefix!r}, and base_url does not "
             "end with it; add it to base_url"
         )
+
+
+def _first_server(servers: Any, where: str) -> str | None:
+    """The first entry of a ``servers`` list, its variables at their defaults, without a
+    trailing slash; ``None`` when the list is absent or empty."""
+
+    if servers is None or servers == []:
+        return None
+
+    first = servers[0] if isinstance(servers, list) else None
+
+    if not isinstance(first, dict) or not isinstance(url := first.get("url"), str):
+        raise _unavailable(f"{where} in the OpenAPI document has a 'servers' entry without a url")
+
+    variables = first.get("variables")
+    variables = variables if isinstance(variables, dict) else {}
+
+    def default(match: re.Match[str]) -> str:
+        variable = variables.get(match.group(1))
+
+        if isinstance(variable, dict) and "default" in variable:
+            return str(variable["default"])
+
+        return match.group(0)  # no default: left as written, so it matches only itself
+
+    return _PLACEHOLDER.sub(default, url).rstrip("/") or "/"
 
 
 def _deref(document: Mapping[str, Any], node: Any) -> dict[str, Any] | None:
@@ -927,6 +972,12 @@ def _sample_route(index: Mapping[str, list[_Route]], sample: Sample) -> _Route:
 def _check_inputs(op: OpScenario, route: _Route) -> None:
     where = f"Scenario {op.name!r} ({op.operation})"
     given = set(op.path)
+
+    if route.server is not None:
+        raise _invalid(
+            f"{where} names an operation that declares its own server {route.server!r}; "
+            "the kit sends every request under base_url"
+        )
 
     if given != route.path_params:
         raise _invalid(

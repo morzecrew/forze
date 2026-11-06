@@ -546,6 +546,99 @@ class TestDocumentShapes:
         assert result.rows[0]["outcomes"]["ok"] > 0
         assert "/api/v1/products/p1" in seen
 
+    @pytest.mark.parametrize("level", ["operation", "path item"])
+    async def test_a_reference_to_an_operation_on_its_own_server_is_refused(self, level) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        item = doc["paths"]["/products/{id}"]
+        (item["get"] if level == "operation" else item)["servers"] = [{"url": "/v2"}]
+
+        assert await _refused(_App({}, doc), _plan(_GET)) == "load_plan_invalid"
+
+    async def test_an_operation_naming_the_documents_server_resolves(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "/"}]
+
+        result = await _run(_App({"ada": ["p1"]}, doc), _plan(_GET))
+
+        assert result.rows[0]["outcomes"]["ok"] > 0
+
+    async def test_an_operation_server_that_resolves_to_the_target_is_accepted(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["servers"] = [{"url": "/v1"}]
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "http://127.0.0.1:9/v1/"}]
+        seen: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+
+            if request.url.path == "/v1/openapi.json":
+                return httpx.Response(200, json=doc)
+
+            return httpx.Response(200, json={"hits": [{"id": "p1"}]})
+
+        result = await run(
+            _plan(_GET, base_url="http://127.0.0.1:9/v1"),
+            ClosedRamp(steps=[1], step_s=0.2),
+            transport=httpx.MockTransport(handler),
+        )
+
+        assert result.rows[0]["outcomes"]["ok"] > 0
+        assert "/v1/products/p1" in seen
+
+    async def test_an_operation_server_equal_to_the_base_url_is_accepted_with_no_document_server(
+        self,
+    ) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "http://127.0.0.1:9"}]
+
+        result = await _run(_App({"ada": ["p1"]}, doc), _plan(_GET))
+
+        assert result.rows[0]["outcomes"]["ok"] > 0
+
+    @pytest.mark.parametrize(("own", "refused"), [("https", True), ("http", False)])
+    async def test_server_variables_are_compared_at_their_defaults(self, own, refused) -> None:
+        def server(scheme: str) -> dict[str, Any]:
+            return {"url": "{scheme}://127.0.0.1:9", "variables": {"scheme": {"default": scheme}}}
+
+        doc = json.loads(json.dumps(_DOC))
+        doc["servers"] = [server("http")]
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [server(own)]
+        app = _App({"ada": ["p1"]}, doc)
+
+        if refused:
+            assert await _refused(app, _plan(_GET)) == "load_plan_invalid"
+        else:
+            assert (await _run(app, _plan(_GET))).rows[0]["outcomes"]["ok"] > 0
+
+    async def test_one_template_with_no_default_matches_only_itself(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["servers"] = [{"url": "{scheme}://127.0.0.1:9"}]
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "{scheme}://127.0.0.1:9"}]
+        doc["paths"]["/orders/{id}"]["get"]["servers"] = [{"url": "{other}://127.0.0.1:9"}]
+        app = _App({"ada": ["p1"]}, doc)
+
+        assert (await _run(app, _plan(_GET))).rows[0]["outcomes"]["ok"] > 0
+        orders = Scenario.op("orders.get", path={"id": "o1"})
+        assert await _refused(app, _plan(orders)) == "load_plan_invalid"
+
+    @pytest.mark.parametrize("level", ["document", "operation"])
+    async def test_a_server_entry_without_a_url_is_refused(self, level) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        (doc if level == "document" else doc["paths"]["/products/{id}"]["get"])["servers"] = [{}]
+
+        assert await _refused(_App({}, doc), _plan(_GET)) == "load_openapi_unavailable"
+
+    async def test_a_sweep_skips_an_operation_on_its_own_server(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["paths"]["/rpc/notes.get"]["servers"] = [{"url": "https://elsewhere.example/v2"}]
+
+        result = await _run(_App({"ada": ["p1"]}, doc), _plan(Scenario.reads("notes.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"notes.list"}
+        assert result.meta["plan"]["skipped"] == {
+            "notes.get": "declares its own server 'https://elsewhere.example/v2'"
+        }
+
     async def test_an_operation_listed_under_two_kinds_is_skipped_not_dropped(self) -> None:
         doc = {
             "paths": {
