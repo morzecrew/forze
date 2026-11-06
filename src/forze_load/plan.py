@@ -6,7 +6,7 @@ import ipaddress
 import math
 import os
 import random
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -376,6 +376,22 @@ def write_host_allowed(host: str, write_hosts: Sequence[str] = ()) -> bool:
     allowed = {entry.strip().lower() for entry in (*write_hosts, *from_env) if entry.strip()}
 
     return host in allowed
+
+
+def assignments(principals: Sequence[Principal]) -> Iterator[Principal]:
+    """Principals by smooth weighted round robin: their shares hold at every count."""
+
+    total = sum(principal.weight for principal in principals)
+    current = [0] * len(principals)
+
+    while True:
+        for index, principal in enumerate(principals):
+            current[index] += principal.weight
+
+        chosen = max(range(len(principals)), key=current.__getitem__)
+        current[chosen] -= total
+
+        yield principals[chosen]
 
 
 def safe_target(base_url: str) -> str:

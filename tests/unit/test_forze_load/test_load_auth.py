@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 import forze_load.auth as auth_module
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_load import api_key, bearer, password_login
 from forze_load.auth import RETRY_FIRST_S, PasswordLogin, PasswordSession
 
@@ -133,6 +133,99 @@ class TestPasswordSession:
             await credential.session().headers(client)
 
         assert server.logins == 2
+
+    async def test_a_refresh_outlives_a_caller_cancelled_mid_flight(
+        self, password: str, clock: _Clock
+    ) -> None:
+        server = _AuthServer(lifetime=10, password=password)
+        rotated, release = asyncio.Event(), asyncio.Event()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            response = server.handler(request)  # a refresh rotates the token here
+
+            if request.url.path != "/login":
+                rotated.set()
+                await release.wait()
+
+            return response
+
+        session = password_login("ada", password_env="LOAD_PW").session()
+
+        async with _client(handler) as client:
+            await session.headers(client)
+            clock.now += 9.5
+            caller = asyncio.create_task(session.headers(client))
+            await rotated.wait()
+            caller.cancel()  # a storm's drop, mid-refresh
+            release.set()
+            await asyncio.gather(caller, return_exceptions=True)
+            await asyncio.sleep(0.01)  # the shielded refresh finishes and keeps the new token
+            clock.now += 9.5
+            await session.headers(client)
+
+        # The second refresh presented the rotated token: no reuse, no new sign-in.
+        assert server.refreshes == 2
+        assert server.logins == 1
+
+    async def test_settle_raises_a_refresh_that_failed_after_its_caller_left(
+        self, password: str, clock: _Clock
+    ) -> None:
+        server = _AuthServer(lifetime=10, password=password)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path != "/login":
+                started.set()
+                await release.wait()
+                server.refresh_fails_with = 503
+
+            return server.handler(request)
+
+        session = password_login("ada", password_env="LOAD_PW").session()
+
+        async with _client(handler) as client:
+            await session.headers(client)
+            clock.now += 11  # past expiry: a failed refresh can no longer keep the token
+            caller = asyncio.create_task(session.headers(client))
+            await started.wait()
+            caller.cancel()
+            await asyncio.gather(caller, return_exceptions=True)
+            release.set()
+            await asyncio.sleep(0.01)  # it fails with no caller left to tell
+
+            with pytest.raises(CoreException) as failed:
+                await session.settle()
+
+        assert failed.value.code == "load_refresh_failed"
+
+    async def test_settle_waits_for_every_pending_update_before_raising(self) -> None:
+        session = password_login("ada", password_env="LOAD_PW").session()
+        finished = asyncio.Event()
+
+        async def fails() -> None:
+            raise exc.configuration("refresh failed", code="load_refresh_failed")
+
+        async def slow() -> None:
+            await asyncio.sleep(0.05)
+            finished.set()
+
+        session._pending.update({asyncio.create_task(fails()), asyncio.create_task(slow())})
+
+        with pytest.raises(CoreException) as failed:
+            await session.settle()
+
+        assert failed.value.code == "load_refresh_failed"
+        assert finished.is_set()  # the slow one ended before the failure was raised
+
+    async def test_settle_returns_at_once_with_nothing_pending(self, password: str) -> None:
+        server = _AuthServer(password=password)
+        session = password_login("ada", password_env="LOAD_PW").session()
+
+        async with _client(server.handler) as client:
+            await session.headers(client)
+            await session.settle()
+
+        assert server.logins == 1
 
     async def test_a_revoked_family_signs_in_again(self, password: str, clock: _Clock) -> None:
         server = _AuthServer(lifetime=10, password=password)

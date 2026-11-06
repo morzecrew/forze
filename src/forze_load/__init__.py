@@ -24,13 +24,17 @@ operation is missing or its ``x-forze-kind`` contradicts the declared ``writes``
 
 A ``Soak`` holds one load level for hours, writes a row per window, and flags upward drift
 in client latency and in the server's ``forze_*`` and process series scraped from
-``/metrics``.
+``/metrics``. ``Realtime`` holds SSE or WebSocket subscribers instead, writes at a set rate,
+times each write's frame at every subscriber it addresses, and drops every stream at once to
+measure the resume from the last durable id each saw: ``Last-Event-ID`` on SSE, the
+``last_event_id`` query parameter on a WebSocket.
 
 Writes are off by default: a scenario declared ``writes=True`` is refused unless the plan
 allows writes and its host is loopback or allowlisted. Credentials come from environment
 variables only. Needs the ``load`` extra.
 """
 
+from ._wire import Frame
 from .auth import (
     ApiKeyAuth,
     Auth,
@@ -58,6 +62,7 @@ from .plan import (
     validate_plan,
     write_host_allowed,
 )
+from .realtime import Realtime
 from .report import Comparison, RunFile, compare_runs, parse_fail_on, read_run, summarize
 
 # ----------------------- #
@@ -70,6 +75,7 @@ __all__ = [
     "Call",
     "ClosedRamp",
     "Comparison",
+    "Frame",
     "HeadersFn",
     "LoadPlan",
     "OpScenario",
@@ -79,6 +85,7 @@ __all__ = [
     "Principal",
     "Profile",
     "ReadSweep",
+    "Realtime",
     "RunFile",
     "RunResult",
     "Sample",

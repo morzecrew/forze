@@ -6756,6 +6756,448 @@ no row.
 
 ---
 
+# Unit 23 · RFC 0084 P3 — realtime subscribers, delivery latency and the storm
+
+Branch `feat/load-realtime`, cut from `main` at `bad754b62`, fast-forwarded to `6706f8444`
+(the maintainer's answers to Unit 21) and rebased onto `888489579` once P4 landed (Unit 24,
+#872). Commit hashes below are those after the rebase. RFC 0084 P3 per §12: SSE and WebSocket
+subscribers, send → delivery and answer → delivery, the storm with resume (§5.7, rows 19 to
+21), the §6 Realtime and parser tests, the §7 docs and the changelog. Not built here, as §12
+assigns it to P4: the soak, the `/metrics` parser and drift, which Unit 24 records; a soak
+still opens no subscribers (its D-280). Socket.IO stays out (§8). Rows 1–18, 22–53 hold as
+written or do not apply to P3. Row 19 holds: both latencies run on the one process's
+monotonic clock. Rows 20 and 21 are refined by D-254 to D-263; row 2 holds
+(D-255).
+
+Every file:line §3.4 and §5.7 cite was checked against `6706f8444`, and holds at `888489579`,
+which changed nothing under the realtime routes, the hub or the mailbox. Only line numbers moved:
+the SSE route is `sse.py:539` (cited `:537`), the resume `:408-439` (`:406-437`), the draining
+answer `:272-288` (`:270-286`), the frame `:242-256` (`:240-254`), the end of an unconfirmed
+replay `:744-751` (`:748-749`); the mailbox's 1000 is `forze_kits/integrations/realtime/mailbox.py:55`
+(`:48`), the replay's 8 rounds `forze/application/integrations/realtime/replay.py:88` (`:82`),
+and the hub's 256-slot queue `hub.py:123-128` (`:120-126`). `ws.py:383`, `:637`, `:118`,
+`hub.py:157-160`, `:174`, `:274`, `sketch.py:99-100`, `:167-174`, `lifecycle.py:164-170` and
+`enrichment.py:42` are where the RFC says. What each says holds.
+
+**Drift count: 1.** Eighteen entries, D-253 to D-269a: one `drift` (D-267), fifteen
+`spec-gap`, two `discovery`. D-267 departs from §7's wording as D-246 did; no decision row is
+departed from. A fresh-eyes review of `6b5f23939` raised ten findings, one of them already
+found and under way; all ten were fixed in `25b30b058`. An independent review of `6eee4046d`
+raised fourteen more, one of them the maintainer's decision that a 5xx is retried (R-11); all
+were fixed in `0d4f4a604`. On PR #873, CodeRabbit raised thirteen threads and CodeQL one
+alert: the maintainer's `7a24a2618`, `9b55f54a6` and `7b726164f` answer the alert, five threads
+and one more finding, and `91ae47db9` the other eight (R-25 to R-37). The tables at the end record
+each.
+
+**Where each item lives.** `Realtime`, the phases, matching, the storm and the reconnect rules
+in [`forze_load/realtime.py`](../src/forze_load/realtime.py); `Frame`, the event-stream parser
+and the WebSocket client in [`_wire.py`](../src/forze_load/_wire.py). The engine gains three
+things in [`engine.py`](../src/forze_load/engine.py): `run()` takes `Realtime` as a profile
+beside the ramps and P4's `Soak`, and calls its `drive`; `_Run.on_response` hands each answer
+to the realtime run; and the meta line's profile filter leaves out callables and fields marked
+unrecorded. A password session's refresh in [`auth.py`](../src/forze_load/auth.py) is shielded
+from its caller's cancellation (D-269a). `forze_load` still imports only `forze` core and
+`httpx`; `uv.lock` and the `load` extra are unchanged.
+
+## D-253 — A realtime run is a profile for `run()`, from Python only
+
+- **Touches:** §5.7 ("`Realtime(transport=..., path=..., subscribers=N, principals=...,
+  topics=...)`"), §5.2 (`--profile ramp|open|soak`). No row says where realtime plugs in.
+- **RFC said:** the subscriber spec, writes "at a set rate", and a storm, with no entry point.
+- **Built:** `run(plan, Realtime(...))`, a profile beside `ClosedRamp`, `OpenRamp` and, since
+  the rebase, P4's `Soak`.
+  It carries the streams (`transport`, `path`, `subscribers`, `principals`, `topics`,
+  `batch`), the writes (`rate`, `writers`, `duration_s`), the matching (`match`, `key_of`,
+  `audience`, `timeout_s`) and the storm (`storm`, `resume`). A number refuses a bool, which
+  Python would read as 1 (R-26). Its principals and writers are checked against the plan with
+  the plan's validation, before the document is read or anyone signs in. `forze load run`
+  gains no realtime model: `match` and `key_of` are code, which a command line cannot carry.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run is `run(plan, Realtime(...))`, a
+  profile beside the ramps, checked against the plan before sign-in; it runs from Python only,
+  and `forze load run` has no realtime model.
+
+## D-254 — The writes are the writers' mixes, as open-model arrivals at `rate`
+
+- **Touches:** §5.7 ("A write scenario runs at a set rate"), row 5.
+- **RFC said:** one write scenario at a rate; silent on who sends it and how it is scheduled.
+- **Found:** a write runs as a principal, a principal-addressed event depends on who writes,
+  and a write that is an operation reference may need a sample. The open model already
+  schedules arrivals at a rate, caps what is in flight and counts late sends.
+- **Built:** the writes are the open model's arrivals at `rate`, constant spacing, over
+  `writers` (every principal by default) by weight, each picking a scenario from its mix.
+  `key_of` returns `None` for an answer that emits nothing, so a mix may hold reads. The
+  writes' own row fields are the open model's (`"latency": "open"`, from the intended send);
+  send → delivery runs from the instant the scenario starts sending, credential time left out
+  as in P1. The write guard applies unchanged.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run's writes are open-model arrivals at
+  `rate` over its `writers`' mixes, by weight; send → delivery runs from the scenario's send.
+
+## D-255 — The WebSocket client is read-only RFC 6455 over httpx's upgrade
+
+- **Touches:** §5.7 (`transport="ws"`), row 2 (`LOCKED`, the `load` extra is httpx only),
+  row 31.
+- **RFC said:** WebSocket subscribers; names no client.
+- **Found:** httpx has no WebSocket client. `websockets` is installed only through
+  `uvicorn[standard]`, the `fastapi` extra; adding it to `load` would break row 2.
+- **Built:** `_wire.ws_connect` sends the upgrade through `httpx.AsyncClient.stream`, so the
+  run's target guard, cookie policy and credential headers apply, and reads frames off the
+  upgraded connection httpx hands back (`network_stream`). It reads text messages, fragments
+  included and kept across a pong between them (R-7), skips binary ones, answers pings, sends
+  one ping of its own (D-256), masks with `secure_random_bytes`, and sends no message. It
+  checks the 101's `Upgrade`, `Connection` and `Sec-WebSocket-Accept`; a 101 without them is an
+  error (R-17). It echoes the server's close, and closes with the code sent on a protocol
+  violation: 1002 for a masked frame, a reserved bit, a reserved opcode, or a control frame
+  that is fragmented or over 125 bytes, a continuation with no message open, a new data frame
+  inside a fragmented one, or a close with a one-byte status (R-14, R-17, R-29); 1007 for text
+  that is not UTF-8 (R-17); 1009 for a frame or a message over 16 MiB (R-16). A broken
+  connection reads as 1006. The event-stream reader splits lines itself, on CR, LF and CRLF
+  only, drops one leading byte-order mark (R-21), and breaks the stream on a line or an event
+  over 16 MiB, every completed line checked and data counted in UTF-8 bytes (R-8, R-16, R-28).
+  A `retry:` too large to convert is ignored, the last one standing (R-31). Each dispatch sets
+  the resume id from the last `id:`, whether the block carried data or not, an empty `id:`
+  clears it, and the id outlives a connection, as the event-stream format says (R-37). Row 2
+  holds.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the WebSocket transport is a minimal read-only
+  RFC 6455 client over httpx's HTTP/1.1 upgrade; it checks the handshake, answers pings,
+  echoes the close, sends no message and closes on a protocol violation, so the `load` extra
+  stays httpx only.
+
+## D-256 — A WebSocket counts as open when its first ping is answered
+
+- **Touches:** §5.7 ("open time", "failed opens"; "WS: close 1012").
+- **Found:** forze accepts a refused WebSocket before closing it with 1008, so the close
+  reason reaches the client (`ws.py:512-513`), and a draining one before closing it with 1012
+  (`:476-477`). A 101 is therefore not an open stream. A healthy socket sends nothing until it
+  has a frame to send, so waiting for a frame would stall an idle stream's open.
+- **Built:** after the 101 the client pings. The open counts when a pong or a message comes
+  back first, timed at the 101. A close before either is a draining answer (1012), a refusal
+  (1008) or an error (any other code), as D-257 counts them.
+- **Class:** `discovery`. Its row is proposed with D-257.
+
+## D-257 — What each end of a stream counts as, and a run where none opens
+
+- **Touches:** §5.7 ("failed opens and open streams"; "Draining answers are reconnects …
+  never errors"), row 21.
+- **RFC said:** draining answers are reconnects with the server's `retry:`. Silent on any
+  other status, on transport errors, on a stream the server ends, on a WebSocket's retry delay,
+  which has no `retry:`, and on a run where nothing opens.
+- **Built:** each phase row counts, under `streams`:
+  - `opened`, with `open_ms`: streams that opened;
+  - `refused`: an SSE answer that is neither 200 nor a 5xx, or a 200 that is not
+    `text/event-stream`, compared case-insensitively and without its parameters, as
+    `EventSource` gives up on one (R-1, R-36); a WebSocket closed with 1008
+    before it answered the ping; an upgrade answered with a status that is neither 101 nor a
+    5xx. That subscriber stays closed;
+  - `errors`: a transport failure before the stream opened; an SSE 5xx, or an upgrade
+    answered with one, since a balancer's 502 or 503 is passing (R-11, the maintainer's
+    decision); a 101 that does not complete the handshake (R-17); another close before the
+    ping's answer. Retried;
+  - `draining`: SSE 200 with `X-Error-Code: realtime_draining`; WebSocket 1012 before the
+    ping's answer. Retried;
+  - `ended`: an open stream the server ended, the network cut or that stayed silent for
+    `idle_s` (an SSE end of stream or a broken read (R-5), any WebSocket close, 1012 from a
+    drain step and 1008 from an expired credential included; D-269), reopened with its
+    resume. The kit sends no `realtime.reauth`.
+
+  A reopen waits the stream's last `retry:`, or one second, doubled for each failure in a
+  row up to 30 s, then jittered by a factor from 0.5 to 1.5 drawn from the run's own seeded
+  stream, and never less than 50 ms; an open resets the doubling, and it stops at 32
+  doublings, before the power could overflow (R-8, R-15, R-27). `retry:` takes ASCII digits
+  only (R-8). "Failed opens" are `refused` plus `errors`. The streams open in batches of
+  `batch`; a batch stops waiting once each of its streams has opened, been refused or failed
+  once, and after `timeout_s` at most (R-15). With no stream open after the last batch, and
+  again after the replay's quiet (D-268), the run waits one `timeout_s` for one to open or for
+  all to be refused: a stream that opened may have dropped since (R-34). With none open then,
+  it stops before its first write, a finished run (row 36), with `stopped: {"phase":
+  "steady", "reason": "no_stream"}`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a WebSocket is open once its first ping is
+  answered. A refused stream (a 4xx, SSE or upgrade; a 200 that is not an event stream;
+  WebSocket 1008 before that ping) stays closed. Draining answers, errors (transport
+  failures, 5xx answers, broken handshakes) and open streams that end are reopened after the
+  server's `retry:` or one second, doubled per failure in a row up to 30 s and jittered. A run
+  with no stream open `timeout_s` after its opening, or after the replay's quiet, stops before
+  its first write as `no_stream`.
+
+## D-258 — A key closes `timeout_s` after its write's answer: missing, gap or late
+
+- **Touches:** §5.7 ("A key unseen after `timeout_s` is `missing`"; "gaps, keys written while
+  the stream was down that never arrived"), row 20.
+- **RFC said:** as quoted, gaps under the storm.
+- **Found:** silent on when `timeout_s` starts, on what a frame after it is, on how "down" is
+  decided, and on which subscribers a write expects. Keeping every key until the run ends
+  would hold subscribers × writes entries.
+- **Built:** a write's expected subscribers are fixed at its answer: those that had opened
+  before its send, are not refused, and are in its audience. `timeout_s` after the answer the
+  key is due to close, and it closes at the next answer or the next frame, whichever comes
+  first (R-12): an expected subscriber that has not received it counts a `gap` when it held
+  no open stream at the write's send, and `missing` otherwise. Gaps count in every phase, a
+  stream a drain ended included, not only in the storm. A closed key keeps the subscribers it
+  never reached: one of them receiving it later counts once as `late`, in the write's phase
+  like its `missing` and `gaps` (R-2, R-18), and any other frame for a closed key counts
+  nowhere. A closed key is let go ten `timeout_s` after it closes; a frame for it then counts
+  nowhere, as other traffic's frames do (R-19). The expected and the received subscribers
+  are bit sets, and an audience is the union of per-principal bit sets, so a write costs a
+  few big-integer operations rather than a scan of every subscriber (R-4). One key per
+  write: a repeated key is expected once.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a write expects the subscribers in its audience
+  that opened before its send; `timeout_s` after its answer each that has not received it is a
+  `gap` if it was down at the send and `missing` otherwise; a frame for a key a subscriber
+  missed, arriving within ten `timeout_s` of that, counts once as `late`; every count of a
+  write goes in its phase's row.
+
+## D-259 — A frame that beats its write's answer waits for the answer to name its key
+
+- **Touches:** row 20 (`key_of(response)`), §5.7 (answer → delivery "can be negative").
+- **Found:** the key comes from the answer, so a frame that arrives first matches no known
+  write yet. It is common, not an edge: against forze's routes served in process, more than
+  half of the steady deliveries beat their answer.
+- **Built:** such a frame is held under its key with its arrival time and repeats. The answer
+  resolves it: timed (a negative answer → delivery), its repeats counted as duplicates, and
+  dropped if its subscriber is not expected. A held frame no answer claims is let go after the
+  request timeout plus one second. A frame that arrives before the first write is not held:
+  it can only replay earlier traffic, as every first open does with the retained mailbox
+  (D-263, R-3).
+- **Class:** `discovery`.
+
+## D-260 — Two phases, one row each, written once their keys close
+
+- **Touches:** §5.7 ("Recorded: open time p50/p95, failed opens and open streams"; the storm's
+  records), §5.9 ("one row per step, window or phase"), §5.10.
+- **RFC said:** what is recorded, not in which rows.
+- **Built:** a `steady` phase of `duration_s`, then a `storm` phase of `duration_s` whose drop
+  happens at its start; the writes run across the boundary. Each phase writes one row,
+  `"kind": "phase"`: the writes' step fields (`calls`, `goodput_rps`, `ms`, `outcomes`,
+  `client`, `scenarios`, …), `streams` (D-257, and the opening in the steady row) and
+  `delivery` (`expected`, `delivered`, `share`, `duplicates`, `missing`, `gaps`, `late`,
+  `replayed`, `send_ms`, `answer_ms`, `answer_negative`). Rows are written when the writes
+  have stopped and every key has closed, since a steady key can close during the storm.
+  `open_ms` carries every quantile, not p50 and p95 only. The client report is the probe's,
+  so `client.saturated` is the flag §5.7 asks for when `share` is below 1. The summary keeps
+  its keys, the knee's `null`. A principal whose samples run out ends the phase as in a ramp
+  (row 46): the row says `cut_short`, and the run stops.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run writes a `steady` and a `storm`
+  row, `"kind": "phase"`, each with the writes' step fields, `streams` and `delivery`, once
+  the phase's keys have closed; the storm drops every stream at the start of its phase.
+
+## D-261 — `replayed` and `back_in_s`, as a client can see them
+
+- **Touches:** §5.7 ("time until all streams are back (`back_in_s`); frames replayed").
+- **Found:** no frame says it was replayed, and the client cannot see where a replay ends and
+  the live leg begins.
+- **Built:** `replayed` counts the frames a reopened stream received for writes sent before
+  it reopened, its duplicates included, in the row of the write's phase, as every count of a
+  write is (R-18). Only matched frames count: other traffic's replay has no write to compare
+  with. `back_in_s` runs from the drop to the last stream's reopen, and is
+  `null` while any stream that was dropped is still away; `back` counts those that returned.
+  Both cover the streams that had opened before the drop: one still retrying its first open
+  is restarted too, but was never dropped (R-6).
+  The drop closes each connection without a close frame, as a network failure would.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — `replayed` counts frames a reopened stream
+  received for writes sent before it reopened; `back_in_s` runs from the drop until the last
+  stream is back, `null` while one is away.
+
+## D-262 — `resume=False` stands for a live-only route
+
+- **Touches:** §5.7 ("A live-only route ignores `Last-Event-ID` … the storm records `resume:
+  "none"`"), row 21.
+- **Found:** a client cannot tell a live-only SSE route from a durable one: both answer 200
+  with an event stream, and a frame with no `id:` is also what a durable route sends for an
+  ephemeral signal.
+- **Built:** the plan says so: `Realtime(resume=False)` sends no id on a reopen and the storm
+  records `resume: "none"`. With the default `resume=True` the row records `"last_event_id"`,
+  and `resumed` counts the streams that had a durable id to send. The WebSocket route has no
+  live-only mode; `resume=False` there replays from the stored cursor.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the plan declares a live-only route with
+  `resume=False`, which sends no id and records `resume: "none"`; `resumed` counts streams
+  that sent one.
+
+## D-263 — The kit never acks, and gives each subscriber a `device_id`
+
+- **Touches:** §5.7 ("with `device_id` per subscriber"), §5.11 (the kit and shared
+  environments).
+- **RFC said:** a `device_id` per subscriber; silent on acks.
+- **Built:** the kit never acks, by `POST …/ack` or `realtime.ack`: an ack moves a device's
+  cursor and lets the trim delete mailbox entries, a write to a shared environment the plan
+  never declared. So every first open, and a stream reopened with no id, replays from the
+  stored cursor, which for a device that never acked is the retained mailbox, up to 1000
+  entries a principal (R-3); D-268 keeps the first opens' replay out of the measurement.
+  Each subscriber sends `device_id=forze-load-<n>`. forze's SSE route reads it. Its WebSocket
+  route keys the cursor by the `WsConnection.client` the app's resolver returns, which
+  `build_ws_connection_resolver` fills from `device_id`; a hand-written resolver must do the
+  same, or a principal's subscribers share one cursor. `Realtime`'s docstring and the docs
+  page say so (R-35).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run never acks, so it moves no cursor
+  and trims nothing; each subscriber sends its own `device_id`.
+
+## D-264 — `compare` does not read realtime rows
+
+- **Touches:** §5.9 (`compare` matches rows "by `kind` plus `workers` or `rate` or `window`"),
+  row 28.
+- **Found:** silent on phases. A delivery gate needs its own metrics (send → delivery, share,
+  gaps), and P4 was reworking `compare`'s row matching for windows at the same time.
+- **Built:** nothing. `read_run` keeps step rows, and since P4 window rows, never phase rows,
+  so two realtime files compare no row: the report warns that nothing was compared, and
+  `--fail-on` is refused as `load_compare_empty` (row 53). The docs say so.
+- **Class:** `spec-gap` (phasing).
+- **Proposed row (RFC 0084):** `ASSUMED` — `compare` reads step and window rows only;
+  comparing realtime phase rows is demand-gated.
+
+## D-265 — The meta line leaves out a realtime profile's path, topics and callables
+
+- **Touches:** row 15 (output holds no ids; `target` keeps scheme, host and port only), §5.9.
+- **Found:** the meta line records the profile with `attrs.asdict`. A realtime profile holds
+  callables, which JSON cannot carry, and a stream path or a topic can name a tenant or a
+  record (`/tenants/123/realtime/sse`, `order:42`), as a base path can.
+- **Built:** the profile is recorded through a filter that drops callables and fields marked
+  `recorded: False`, which `Realtime.path` and `Realtime.topics` are. Row 15 holds.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the meta line records a realtime profile's numbers,
+  not its path, topics or callables.
+
+## D-266 — The realtime wire names are pinned
+
+- **Touches:** §5.2, §6 ("wire-name constants pinned"), row 31, D-243.
+- **Built:** `forze_load.realtime` restates `Last-Event-ID`, `X-Error-Code`,
+  `realtime_draining`, 1012 and 1008. `test_load_wire_names.py` pins them to `sse.py`'s
+  `LAST_EVENT_ID_HEADER`, `forze_fastapi.exceptions.ERROR_CODE_HEADER`, core's
+  `REALTIME_DRAINING_CODE` and `ws.py`'s two close codes. The query names `device_id`,
+  `topics` and `last_event_id` are literals in the routes, with no constant to pin; the
+  integration test sends them to forze's own routes, but would not catch every rename.
+- **Class:** `spec-gap`.
+
+## D-267 — P3 amends the unreleased `forze_load` changelog entry
+
+- **Touches:** §7 ("A `CHANGELOG.md` `Added` entry per phase").
+- **Built:** `Realtime` is folded into the `forze_load` entry P1 added and P2 amended, which is
+  still unreleased, as D-246 did and the maintainer accepted. The entry stays within the
+  house's 320 characters, so its saturated-client clause gave way.
+- **Class:** `drift`.
+
+## D-268 — The first write waits for the first opens' replay to go quiet
+
+- **Touches:** §5.7 ("Streams are opened in batches"; "A write scenario runs at a set rate"),
+  D-259, D-263.
+- **Found (R-13):** a stream counted as open at its SSE headers or first pong, and the writes
+  began straight after. Since the kit never acks (D-263), each first open replays the
+  principal's retained mailbox: with 200 subscribers about 200,000 frames in the steady
+  phase's first seconds, which fill the readers and the hub's 256-slot queues. The server
+  then drops live frames, so the run reports `missing` that the kit caused, and inflated
+  `send_ms`.
+- **Built:** after the opening, the run waits until no frame has arrived for 0.25 s, and
+  `timeout_s` at most, before its first write. Frames before the first write are not held
+  (D-259).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the first write waits until the streams have been
+  quiet for 0.25 s, `timeout_s` at most, so the first opens' replay of the retained mailbox
+  is not measured.
+
+## D-269 — A stream silent for `idle_s` is cut and reopened
+
+- **Touches:** §5.3 ("a separate client for streams"), §5.7 ("open streams"), D-257.
+- **Found (R-22):** the stream client had no read timeout, so a half-open stream stayed "up"
+  and its subscriber counted every later key as `missing`. forze's SSE route heartbeats: a
+  `: keepalive` comment every `keepalive_interval`, 15 s by default (`sse.py:550`, `:498`).
+  Its WebSocket route leaves keepalive to the ASGI server's ping (`ws.py:19-21`): 20 s in
+  uvicorn (`ws_ping_interval`), and none at all in a server configured without one.
+- **Built:** `Realtime.idle_s`, 60 s by default, four times the SSE keepalive and three times
+  uvicorn's ping, bounds the wait for a byte: the stream client's read timeout bounds the
+  wait for headers, and the SSE and WebSocket readers bound each read. An open stream silent
+  that long counts `ended` and reopens with its resume. One that has not opened yet counts
+  under `errors`. `None` turns the bound off, for a server that sends no heartbeat.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a stream silent for `idle_s` (60 s by default,
+  above forze's 15 s SSE keepalive and uvicorn's 20 s WebSocket ping) is cut and reopened;
+  `None` turns it off.
+
+## D-269a — A credential refresh outlives a caller cancelled mid-flight
+
+- **Touches:** row 10 (no refresh token is ever presented twice), row 38, D-228.
+- **Found (R-20):** the storm cancels every subscriber task. One cancelled inside
+  `PasswordSession._renew`, after the server rotated the refresh token but before the new one
+  was stored, left the old token in place; the next refresh presented it, which forze counts
+  as reuse, and revoked the family. A ramp's end cancels its workers the same way.
+- **Built:** `PasswordSession.headers` runs the sign-in or refresh under `asyncio.shield`, so
+  it finishes and stores its tokens even when the caller is gone. The session keeps those
+  tasks, a failed one until it is read, and the run awaits them through the session's
+  `settle` before closing its clients, on every exit: a finished run raises their failure, and
+  a run that already failed or was cancelled keeps its own (R-32). Row 10 holds.
+- **Class:** `spec-gap`.
+
+## Review findings — 2026-11-06
+
+Fresh-eyes review of `6b5f23939`. R-1 was found while the review ran, and the review raised it
+too. Every fix has a test, run against the code without the fix, that fails there; R-7's and
+R-8's reproduce what the review reproduced.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | An SSE 200 that was not an event stream, a wrong path answering JSON say, counted as open, reopened every second and never reached `no_stream` | Fixed in `25b30b058`: refused, as `EventSource` refuses it (D-257) |
+| R-2 | Bug | `late` counted every frame for a closed key: duplicates and re-sends to streams that had it, and streams the write never expected | Fixed in `25b30b058`: a closed key keeps the subscribers it missed, and a late frame counts once, only there (D-258) |
+| R-3 | Risk | The kit never acks, so every first open replays the retained mailbox; each of those frames was held for up to the request timeout plus a second | Fixed in `25b30b058`: frames before the first write are not held (D-259); the docs say first opens replay (D-263) |
+| R-4 | Risk | Each answer scanned every subscriber and built a set of them, about 0.8 MB at 10,000 subscribers, kept per live write | Fixed in `25b30b058`: expected and received subscribers are bit sets, and an audience a union of per-principal bit sets (D-258) |
+| R-5 | Bug | An open SSE stream that broke mid-read counted as `errors` and ignored its `retry:`, while the same break on a WebSocket counted as `ended` | Fixed in `25b30b058`: `ended` on both (D-257) |
+| R-6 | Bug | A stream still retrying its first open when the storm dropped the rest kept `back_in_s` at `null`, and its first open counted as back | Fixed in `25b30b058`: `back` and `back_in_s` cover streams that had opened (D-261) |
+| R-7 | Bug | A pong between two fragments of a WebSocket message dropped the fragments before it | Fixed in `25b30b058`: fragments are kept across calls (D-255) |
+| R-8 | Risk | `retry: ²` passed `str.isdigit` and failed the run in `int`; `retry: 0` reopened with no floor; an event-stream line had no length cap | Fixed in `25b30b058`: ASCII digits only, a 50 ms floor, and a 16 MiB line breaks the stream (D-255, D-257) |
+| R-9 | Test | The test that other traffic's frames are let go passed whether they were or not | Fixed in `25b30b058`: the holding and `late` accounting are tested on the run directly |
+| R-10 | Docs | The docs said a frame's JSON is decoded only when `match` reads `data`, which holds on SSE only | Fixed in `25b30b058`: the docs and `Frame` say so |
+
+## Review findings — 2026-11-06 (independent review)
+
+An independent review of `6eee4046d`, with its probe scripts. R-11 is the maintainer's
+decision, not a finding. Each fix in `0d4f4a604` has a test that was run against the code without
+the fix and failed there; R-23 and R-24 change no behaviour.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-11 | Decision | A 5xx refused its subscriber for the rest of the run, so a balancer's passing 503 during a storm closed streams for good | Changed in `0d4f4a604`: an SSE 5xx, and an upgrade answered with one, count under `errors` and retry; only a 4xx refuses (D-257) |
+| R-12 | Bug | Keys closed only when a later write answered or at the end, so with writes failing in transport, or slower than one per `timeout_s`, a frame 20 s late counted as delivered | Fixed in `0d4f4a604`: each frame first closes the keys that are due (D-258) |
+| R-13 | Risk | Writes began as soon as the streams opened, while every first open replayed the retained mailbox, up to 1,000 frames a stream | Fixed in `0d4f4a604`: the first write waits for 0.25 s without a frame, `timeout_s` at most (D-268) |
+| R-14 | Bug | Control frames were not validated: a ping over 255 bytes raised outside the guard and failed the run, one of 126 to 255 bytes got a malformed pong, and a fragmented ping was accepted | Fixed in `0d4f4a604`: a control frame that is fragmented or over 125 bytes closes the socket with 1002 (D-255) |
+| R-15 | Risk | Reopens waited a fixed second, so streams came back in lockstep after a storm or a drain; a stream that only failed held its batch for the whole `timeout_s` (10,000 streams in batches of 50: about 33 minutes before `no_stream`) | Fixed in `0d4f4a604`: jitter from 0.5 to 1.5, doubling per failure in a row up to 30 s, and a batch stops waiting on streams that failed (D-257) |
+| R-16 | Risk | A WebSocket message across fragments, and an SSE event across `data:` lines, had no size cap | Fixed in `0d4f4a604`: 16 MiB; a WebSocket closes with 1009, an event stream breaks and reopens (D-255) |
+| R-17 | Risk | RFC 6455 MUSTs were skipped: the handshake's accept and headers, the close echo, masked server frames, reserved bits, UTF-8 | Fixed in `0d4f4a604`: each is checked, a bad 101 is an error and a violation closes with 1002 or 1007 (D-255, D-257) |
+| R-18 | Bug | `late` and `replayed` counted in the current phase while `missing` and `duplicates` counted in the write's, so a steady key arriving in the storm showed as storm `late` | Fixed in `0d4f4a604`: both count in the write's phase (D-258, D-261) |
+| R-19 | Risk | Closed keys were never let go, one entry per write for the whole run | Fixed in `0d4f4a604`: kept ten `timeout_s` after closing, then let go; a frame for one counts nowhere (D-258) |
+| R-20 | Bug | The storm could cancel a subscriber inside a refresh the server had already rotated, so the next refresh reused the old token and revoked the family | Fixed in `0d4f4a604`: the refresh is shielded (D-269a) |
+| R-21 | Bug | A leading UTF-8 byte-order mark, which the event-stream format says to drop, was kept | Fixed in `0d4f4a604`: dropped, split across chunks or not (D-255) |
+| R-22 | Risk | Streams had no read timeout, so a half-open one stayed "up" forever | Fixed in `0d4f4a604`: `idle_s`, 60 s by default (D-269) |
+| R-23 | Docs | `_HOLD_S`'s docstring sat under `_MIN_RETRY_S` | Fixed in `0d4f4a604` |
+| R-24 | Test | Three timing-sensitive tests: other traffic's frames with a 20 ms request timeout, a frame that had 30 ms to beat its answer, and an integration drain ended by a wall-clock timer | Fixed in `0d4f4a604`: a 0.5 s timeout, a fake that holds the answer until its frames are read, and an app that ends the drain itself after N draining answers. The realtime unit file passed three runs in a row |
+
+## Review findings — 2026-11-06 (PR #873)
+
+CodeRabbit's review of PR #873 and one CodeQL alert, with the maintainer's own find in R-27.
+R-25 to R-29 were fixed by the maintainer's commits; each fix in `91ae47db9` has a test that
+was run against the code without it and failed there.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-25 | Refuted | CodeQL read the WebSocket handshake's `key` variable as a credential sent in clear: it is the RFC 6455 nonce | Renamed `nonce` in `7a24a2618`; no behaviour change |
+| R-26 | Bug | `Realtime(rate=True)` or `idle_s=True` passed the positive-number check as 1 | Fixed in `9b55f54a6`: refused, as `subscribers` and `batch` already were (D-253) |
+| R-27 | Bug | The backoff raised 2.0 to the failure count before capping it, which overflows past 1,024 failures in a row and fails the run | Fixed in `9b55f54a6`: at most 32 doublings (D-257) |
+| R-28 | Bug | The 16 MiB line limit checked only the remainder still open after a chunk, and event data counted characters, not bytes | Fixed in `7b726164f`: every completed line is checked, and data counts UTF-8 bytes (D-255) |
+| R-29 | Bug | A continuation with no message open, a new data frame inside a fragmented one, and a close with a one-byte status were accepted | Fixed in `7b726164f`: each closes with 1002 (D-255) |
+| R-30 | Docs | The package docstring had a WebSocket resume from `Last-Event-ID`; it sends the `last_event_id` query parameter | Fixed in `91ae47db9`; the docs page already said so |
+| R-31 | Bug | A `retry:` too large to convert, past Python's integer-digit limit or a float's range, raised and failed the run | Fixed in `91ae47db9`: ignored, and the last hint stands (D-255) |
+| R-32 | Bug | A shielded sign-in or refresh (D-269a) could still be running when the run closed its client, so a failure in it was never reported | Fixed in `91ae47db9`: the run awaits it on every exit and raises its failure unless the run failed first (D-269a) |
+| R-33 | Bug | `Profile` names `Realtime`, imported only for type checking, so evaluating the alias raised `NameError` | Fixed in `91ae47db9`: the principal assignment moved to `plan.py`, so `engine.py` imports `Realtime` at runtime with no cycle |
+| R-34 | Bug | Streams that all opened and then dropped let the writes begin with no subscriber | Fixed in `91ae47db9`: a stream must be open when the writes begin, checked after the opening and again after the replay's quiet (D-257) |
+| R-35 | Docs | A hand-written WebSocket resolver that ignores `device_id` makes a principal's subscribers share one stored cursor | Documented in `91ae47db9`, in `Realtime`'s docstring and the docs page (D-263) |
+| R-36 | Bug | `Text/Event-Stream; charset=utf-8` was refused | Fixed in `91ae47db9`: the media type is compared case-insensitively, without its parameters (D-257) |
+| R-37 | Bug | An id-only event-stream block did not move the resume id, and an empty `id:` did not clear it | Fixed in `91ae47db9`: each dispatch sets the id from the last `id:`, data or not, and it outlives a connection (D-255) |
+
+---
+
 # Unit 24 · RFC 0084 P4 — the soak
 
 Branch `feat/load-soak` (PR #872), cut from `main` at `bad754b62` and rebased onto
