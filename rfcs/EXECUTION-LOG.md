@@ -6255,8 +6255,8 @@ D-247 and D-248.
 from. A fresh-eyes review of the working tree that became `b6375b5bc` raised fifteen findings;
 four were refuted. The PR #865 reviews raised eighteen inline findings, three of them raised
 by both reviewers, and all fifteen were fixed; of the two checks beside them, coverage was
-fixed and docstring coverage refuted. The tables at the end record each and where it was
-fixed. Commit hashes are
+fixed and docstring coverage refuted; a second round raised two edge cases on fixed threads,
+both fixed. The tables at the end record each and where it was fixed. Commit hashes are
 those after the branch was rebased for PR #865.
 
 **Where each item lives.** `x-forze-kind` in
@@ -6333,7 +6333,10 @@ imports it.
   more than once. Local `$ref`s are followed, their JSON Pointer escapes decoded (R-22), and
   path items given by `$ref` too. An operation's parameter replaces the path item's of the
   same name and location, as OpenAPI says (R-20). Header and cookie parameters are not
-  checked for an explicit reference: the principal's credential may supply them.
+  checked for an explicit reference: the principal's credential may supply them. A body,
+  a sample's included, goes out as `application/json` when the route offers it, else with
+  the route's first `application/*+json` type as its `Content-Type`, and that type's schema
+  is the one read (R-34).
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — an operation reference whose path, query or body
   does not fit the route's OpenAPI declaration, or whose key the document lists more than
@@ -6435,7 +6438,8 @@ imports it.
 - **Built:** a `query` route is generated when its required parameters are at most `id`
   (path, REST style; or query, RPC style), with no required header or cookie (R-16), and its
   JSON body, if any, requires no field, is not an `allOf`, `anyOf` or `oneOf` (R-3), resolves
-  (R-21), and takes an empty object: no non-object `type`, no `minProperties` (R-18). The
+  (R-21), and takes an empty object: no non-object `type`, no `minProperties` (R-18), and no
+  `enum` that leaves `{}` out or `const` other than `{}` (R-33). The
   body is sent as `{}`, so the route's default page size applies; `rev` is never sent. Every
   other `query` route the prefix matches is skipped with its reason: `needs ['q']`,
   `needs ['header X-Region']`, `its body requires ['aggregates']`, `takes a body that is not
@@ -6613,6 +6617,15 @@ fix has a test that fails without it.
 | R-30 | Bug | `compare --fail-on` gated a step one run had cut short against a whole one | Fixed in `a92b81490` (D-248) |
 | R-31 | Docs | The review body's docstring-coverage pre-merge check | Refuted, as Unit 20's R-34: no repository gate sets a threshold. The public methods of `SamplePool` gained docstrings in `6eea27d8c` |
 | R-32 | Test | Codecov's patch check: refusal paths in `catalog.py` and three guards in `engine.py` untested | Fixed in `36bfab79f`. Three `engine.py` lines stay uncovered, all from P1 and outside this patch: `inflight_cap`'s guard for a rate or timeout at or below zero, which validated profiles never reach; a scenario error raised during a step's drain; and a ramp whose worker count falls |
+
+## Review findings — 2026-11-06 (PR #865, second round)
+
+CodeRabbit's re-review of `73c2d1742`, on two threads the first round fixed.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-33 | Bug | A body schema with an `enum` that leaves `{}` out, or a `const` other than `{}`, still passed as taking an empty object, so a sweep or sample could send `{}` | Fixed in `7d1f30b09`: skipped as `its body cannot be an empty object`; an `enum` listing `{}` or a `const` of `{}` is generated (D-240) |
+| R-34 | Bug | A route that declares only `application/merge-patch+json` or another `application/*+json` passed resolution, but its body went out as `application/json`, which such a server may refuse with 415 | Fixed in `3a2dc88eb`: the body carries the route's own JSON type as its `Content-Type`; a route that also offers `application/json` gets that (D-235) |
 
 ---
 
