@@ -1,12 +1,16 @@
 # RFC 0084 — Load and soak kit for apps built on forze
 
-- **Status:** 🚧 In progress — **P1 shipped 2026-11-05** (#847): `forze_load` under the `load`
-  extra and `forze load run | compare`. **P2 shipped 2026-11-06** (#865): operation references
-  checked against `x-forze-kind`, sampled ids and the read sweep. The maintainer settled the
-  open rows on 2026-11-05 (rows 1–4, 6, 9, 12, 19, 23–25, 28, 32), each as its lean, and
-  accepted the rows execution proposed in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 20 the
-  same day (rows 34 to 41) and Unit 21 on 2026-11-06 (rows 42 to 53). P3 and P4 remain; RFC
-  0083 P1 and row 24's process gauges, which P4 waits on, have shipped.
+- **Status:** ✅ Complete — every scheduled phase has shipped. **P1 2026-11-05** (#847):
+  `forze_load` under the `load` extra and `forze load run | compare`. **P2 2026-11-06** (#865):
+  operation references checked against `x-forze-kind`, sampled ids and the read sweep. **P4
+  2026-11-06** (#872): the soak, the `/metrics` parser, the one-process rule and drift. **P3
+  2026-11-06** (#873): SSE and WebSocket subscribers, send → delivery and answer → delivery,
+  and the storm with resume. The maintainer settled the open rows on 2026-11-05 (rows 1–4, 6,
+  9, 12, 19, 23–25, 28, 32), each as its lean, and accepted the rows execution proposed in
+  [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Units 20, 21, 23 and 24 (rows 34 to 77). Still
+  demand-gated, not scheduled: several client processes (row 32), the Prometheus query source
+  (row 23), a target-side write opt-in (row 9), a Socket.IO client (§8), comparing realtime
+  phase rows (row 63) and subscribers during a soak (Unit 24, D-280).
 - **Scope:** A small library, `forze_load`, under a new `load` extra, that drives a running app
   built on forze over HTTP and writes one JSON line per step or window. It covers:
   - several principals, each logged in once and refreshed in one place;
@@ -922,11 +926,38 @@ under `-m perf`, which `just test` excludes.
 | 51 | `ASSUMED` | A document whose first server is a path is refused unless the base URL ends with that path. (D-245) |
 | 52 | `ASSUMED` | A step that retired scenarios (`sample_exhausted`) is never the knee and never confirms one, and the search stops there. It amends row 16. (D-247) |
 | 53 | `ASSUMED` | `compare` reports a step either run cut short and never gates on it; a `--fail-on` with no whole step in both runs is refused. (D-248) |
+| 54 | `ASSUMED` | A realtime run is `run(plan, Realtime(...))`, a profile beside the ramps, checked against the plan before sign-in; it runs from Python only, and `forze load run` has no realtime model. (D-253) |
+| 55 | `ASSUMED` | A realtime run's writes are open-model arrivals at `rate` over its `writers`' mixes, by weight; send → delivery runs from the scenario's send. (D-254) |
+| 56 | `ASSUMED` | The WebSocket transport is a minimal read-only RFC 6455 client over httpx's HTTP/1.1 upgrade; it checks the handshake, answers pings, echoes the close, sends no message and closes on a protocol violation, so the `load` extra stays httpx only. (D-255) |
+| 57 | `ASSUMED` | A WebSocket is open once its first ping is answered. A refused stream (any answer below 500 but the SSE 200 or the upgrade 101, so a 3xx or a 4xx; a 200 that is not an event stream; WebSocket 1008 before that ping) stays closed. Draining answers, errors (transport failures, 5xx answers, broken handshakes) and open streams that end are reopened after the server's `retry:` or one second, doubled per failure in a row up to 30 s and jittered. A run with no stream open `timeout_s` after its opening, or after the replay's quiet, stops before its first write as `no_stream`. It extends row 21. (D-256, D-257) |
+| 58 | `ASSUMED` | A write expects the subscribers in its audience that opened before its send; `timeout_s` after its answer each that has not received it is a `gap` if it was down at the send and `missing` otherwise; a frame for a key a subscriber missed, arriving within ten `timeout_s` of that, counts once as `late`; every count of a write goes in its phase's row. On a live-only route (row 61) the same rule holds, so every write sent while a stream was down is a `gap`: nothing replays it, and the storm there measures reconnects and those gaps. (D-258) |
+| 59 | `ASSUMED` | A realtime run writes a `steady` row and, unless `storm=False`, a `storm` row, `"kind": "phase"`, each with the writes' step fields, `streams` and `delivery`, once the phase's keys have closed; the storm drops every stream at the start of its phase. (D-260) |
+| 60 | `ASSUMED` | `replayed` counts frames a reopened stream received for writes sent before it reopened; `back_in_s` runs from the drop until the last stream is back, `null` while one is away. (D-261) |
+| 61 | `ASSUMED` | The plan declares a live-only route with `resume=False`, which sends no id and records `resume: "none"`; `resumed` counts streams that sent one. (D-262) |
+| 62 | `ASSUMED` | A realtime run never acks, so it moves no cursor and trims nothing; each subscriber sends its own `device_id`. (D-263) |
+| 63 | `ASSUMED` | `compare` reads step and window rows only; comparing realtime phase rows is demand-gated. (D-264) |
+| 64 | `ASSUMED` | The meta line records a realtime profile's numbers, not its path, topics or callables. (D-265) |
+| 65 | `ASSUMED` | The first write waits until the streams have been quiet for 0.25 s, `timeout_s` at most, so the first opens' replay of the retained mailbox is not measured. (D-268) |
+| 66 | `ASSUMED` | A stream silent for `idle_s` (60 s by default, above forze's 15 s SSE keepalive and uvicorn's 20 s WebSocket ping) is cut and reopened; `None` turns it off. (D-269) |
+| 67 | `ASSUMED` | The soak fits the `forze_*` gauges and counters and `instrument_process`'s two series; histogram and summary families, `_created` samples and the union route's snapshot-age gauge are not fitted. (D-271) |
+| 68 | `ASSUMED` | A soak scrapes `LoadPlan.metrics`, a path on the target, without a credential: once before sign-in, where a route that cannot be read stops the run, and after every window, where a failed scrape is recorded and the soak goes on; `None` soaks on client numbers only. (D-272) |
+| 69 | `ASSUMED` | The one-process rule is applied per series: a series labelled `service_instance_id` is fitted on its own; any other series is fitted only when every scrape named one and the same instance, and is `interleaved` or `unattributed` otherwise, counters included. Row 22 holds. (D-274) |
+| 70 | `ASSUMED` | A soak is `Soak(duration_s, window_s, warm_windows ≥ 2, workers \| rate)`, needs at least four windows past the warm-up, writes `window` rows with `warm`, `t_s` and `server`, and runs from the CLI as `--soak-s` with one `--steps` value; the CLI refuses a ramp's options beside `--soak-s`, and `--window-s` without it. (D-275) |
+| 71 | `ASSUMED` | The run's duration is the last window's end; a quarter is `n // 4` of the windows past the warm-up; the threshold is 10 % of the first quarter's absolute mean; from a first quarter of zero a series is flagged only when its whole last quarter is above zero, and is `sparse` otherwise; points that leave no slope are `inconclusive`; the client's p50, p95 and p99 are fitted by the same rule, on full precision window ends, leaving out a window a stop cut short. It amends row 26. (D-276) |
+| 72 | `ASSUMED` | A gauge is exempt at capacity only against a listed pair at identical labels (cache and tenant pool `size`/`capacity`, connection pool `in_use` and `idle`/`max`, bulkhead `in_use`/`limit`), and is reported `at_capacity`. (D-277) |
+| 73 | `ASSUMED` | A soak stops at the first window past its warm-up that passes `stop_error_rate` or is misconfigured; `stopped` names the window, and drift covers the windows written. (D-278) |
+| 74 | `ASSUMED` | `compare` matches soak windows by number and never gates on a warm-up window. (D-279) |
+| 75 | `ASSUMED` | A soak's point is stamped when its scrape was sent; a series of a union worker is stamped at the worker's snapshot write (send time less its `forze_metrics_snapshot_age_seconds`), and a snapshot the previous point already read adds no point. (D-283) |
+| 76 | `ASSUMED` | The meta line records how the first scrape ties series to a process (`server.attribution`), and the CLI warns before load when it ties none (`none`) or names several instances (`interleaved`); the soak runs. A first scrape that names one instance draws no warning, so workers that later interleave show only in the summary. (D-284) |
+| 77 | `ASSUMED` | A soak's windows run back to back on a fixed schedule from the load's start, with one load and one arrival schedule throughout; each window's drain and scrape start at its close and run beside the windows after it, and rows and the stop rule follow in window order; nothing is sent after the last boundary or once a stop is known, and calls in flight drain into their window. (D-285) |
 
 Rows 34 to 41 were added by execution and accepted by the maintainer on 2026-11-05, and rows
-42 to 53 on 2026-11-06; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came
+42 to 77 on 2026-11-06; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came
 from, and the sections above are left as designed. Rows 34 and 35 amend rows 30 and 16, row 41
-amends row 35, row 48 amends row 7, and row 52 amends row 16.
+amends row 35, row 48 amends row 7, row 52 amends row 16, row 57 extends row 21, and row 71
+amends row 26. Row 69 applies row 22 per series: a series labelled with its own process is
+that one process's series, so it is fitted even when scrapes name several instances, while every
+unlabelled gauge is `interleaved` as row 22 says. Row 22 stays `LOCKED` as written.
 
 ## 12. Phasing
 
