@@ -152,6 +152,8 @@ records nothing.
 - [SSE and raw WebSocket routes](../integrations/fastapi.md#realtime-egress-over-sse) —
   the two HTTP-native transports.
 - [Events & sagas](events-sagas.md) — the outbox and relay the durable path rides on.
+- [Load testing](../testing/load-testing.md#measure-realtime-delivery) — time delivery to
+  many SSE or WebSocket subscribers, and their resume after a reconnect storm.
 - Recipes: [offline delivery](../recipes/realtime-offline-delivery.md) (store-and-forward
   per device) and [tenant-sharded realtime](../recipes/tenant-sharded-realtime.md)
   (trusted per-tenant isolation).
