@@ -670,7 +670,14 @@ class TestRouteInputs:
 
     @pytest.mark.parametrize(
         "schema",
-        [{"type": "array"}, {"type": "string"}, {"type": "object", "minProperties": 1}],
+        [
+            {"type": "array"},
+            {"type": "string"},
+            {"type": "object", "minProperties": 1},
+            {"type": "object", "enum": [{"mode": "all"}]},
+            {"const": {"mode": "all"}},
+            {"type": "object", "enum": "not a list"},
+        ],
     )
     async def test_a_body_that_cannot_be_an_empty_object_is_skipped(self, schema) -> None:
         doc = {"paths": {"/a": {"get": _op("a.read")}, "/b": {"post": _op("a.batch", body=schema)}}}
@@ -678,6 +685,21 @@ class TestRouteInputs:
         result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
 
         assert result.meta["plan"]["skipped"] == {"a.batch": "its body cannot be an empty object"}
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "object", "enum": [{"mode": "all"}, {}]},
+            {"const": {}},
+            {"type": ["object", "null"]},
+        ],
+    )
+    async def test_a_body_that_admits_an_empty_object_is_generated(self, schema) -> None:
+        doc = {"paths": {"/b": {"post": _op("a.batch", body=schema)}}}
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"a.batch"}
 
     async def test_an_operation_parameter_overrides_the_path_s_own(self) -> None:
         doc = {

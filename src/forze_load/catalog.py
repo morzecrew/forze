@@ -85,7 +85,8 @@ class _Route:
     """The body schema is a ``$ref`` that is missing, external or circular."""
 
     body_takes_object: bool
-    """The body schema accepts ``{}``: no non-object ``type`` and no ``minProperties``."""
+    """The body schema accepts ``{}``: no non-object ``type``, no ``minProperties``, and an
+    ``enum`` or ``const`` that admits ``{}``."""
 
     @property
     def kind(self) -> str:
@@ -590,8 +591,6 @@ def _route(
     resolved = schema or {}
     fields = resolved.get("properties")
     requires = resolved.get("required")
-    minimum = resolved.get("minProperties")
-    shape = resolved.get("type")
 
     return _Route(
         operation=key,
@@ -615,11 +614,29 @@ def _route(
         else (),
         body_composed=any(k in resolved for k in ("allOf", "anyOf", "oneOf")),
         body_unresolved=schema is None,
-        body_takes_object=(
-            shape is None or shape == "object" or (isinstance(shape, list) and "object" in shape)
-        )
-        and not (isinstance(minimum, int) and minimum > 0),
+        body_takes_object=_takes_empty_object(resolved),
     )
+
+
+def _takes_empty_object(schema: Mapping[str, Any]) -> bool:
+    """Whether *schema* accepts ``{}``, judged by the keywords that can refuse it outright."""
+
+    shape = schema.get("type")
+    minimum = schema.get("minProperties")
+
+    if not (shape is None or shape == "object" or (isinstance(shape, list) and "object" in shape)):
+        return False
+
+    if isinstance(minimum, int) and minimum > 0:
+        return False
+
+    if "enum" in schema:  # a malformed enum admits nothing the kit can rely on
+        enum = schema["enum"]
+
+        if not isinstance(enum, list) or {} not in enum:
+            return False
+
+    return "const" not in schema or schema["const"] == {}
 
 
 def _is_json_type(media_type: str) -> bool:
