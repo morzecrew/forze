@@ -781,10 +781,44 @@ class TestRouteInputs:
         merge = {"application/merge-patch+json": {"schema": {"properties": {"n": {}}}}}
         patch = {**_op("x.patch", "command"), "requestBody": {"required": True, "content": merge}}
         plan = _plan(Scenario.op("x.patch", writes=True, body={"n": 1}), allow_writes=True)
+        app = _App({}, {"paths": {"/p": {"patch": patch}}})
 
-        result = await _run(_App({}, {"paths": {"/p": {"patch": patch}}}), plan)
+        result = await _run(app, plan)
 
         assert result.rows[0]["calls"] > 0
+        sent = [r for r in app.requests if r.url.path == "/p"]
+        assert sent and {r.headers["content-type"] for r in sent} == {
+            "application/merge-patch+json"
+        }
+        assert json.loads(sent[0].content) == {"n": 1}
+
+    async def test_a_route_that_also_takes_application_json_gets_it(self) -> None:
+        content = {
+            "application/merge-patch+json": {"schema": {"properties": {"n": {}}}},
+            "application/json": {"schema": {"properties": {"n": {}}}},
+        }
+        patch = {**_op("x.patch", "command"), "requestBody": {"required": True, "content": content}}
+        plan = _plan(Scenario.op("x.patch", writes=True, body={"n": 1}), allow_writes=True)
+        app = _App({}, {"paths": {"/p": {"patch": patch}}})
+
+        await _run(app, plan)
+
+        sent = [r for r in app.requests if r.url.path == "/p"]
+        assert sent and {r.headers["content-type"] for r in sent} == {"application/json"}
+
+    async def test_a_sample_sends_the_list_route_s_json_media_type(self) -> None:
+        body = {"application/vnd.shop+json": {"schema": {"properties": {"size": {}}}}}
+        listing = {**_op("x.list"), "requestBody": {"required": True, "content": body}}
+        doc = {
+            "paths": {"/x/{id}": {"get": _op("x.get", params=_ID)}, "/x/list": {"post": listing}}
+        }
+        app = _App({"ada": ["p1"]}, doc)
+
+        await _run(app, _plan(Scenario.op("x.get", path={"id": sample("x.list", size=5)})))
+
+        request = next(r for r in app.requests if r.url.path == "/x/list")
+        assert request.headers["content-type"] == "application/vnd.shop+json"
+        assert json.loads(request.content) == {"size": 5}
 
     async def test_an_explicit_body_missing_a_required_field_is_refused(self) -> None:
         assert await _refused(_App({}), _plan(Scenario.op("products.agg_list", body={}))) == (

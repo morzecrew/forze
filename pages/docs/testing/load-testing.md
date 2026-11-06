@@ -99,7 +99,9 @@ plan = LoadPlan(
 - **The inputs are checked too.** Every placeholder in the path must be filled, query names
   must be ones the route declares, and a route that requires a body must get one. `body` is
   sent as JSON, so the route must take `application/json` or another `application/*+json`
-  type, and a body must carry the fields its schema requires at the top level. An
+  type. It goes out as `application/json` when the route offers that, else as the route's
+  own type, such as `application/merge-patch+json`. A body must carry the fields its schema
+  requires at the top level. An
   operation's parameter replaces the path's of the same name and location, as OpenAPI
   says. Path values are URL-encoded. Header and cookie parameters are not checked: a
   principal's credential may be what supplies them.

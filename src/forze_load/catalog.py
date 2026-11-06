@@ -44,6 +44,7 @@ COMMAND = "command"
 
 _ID = "id"
 _SIZE = "size"
+_JSON = "application/json"
 _METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 _PLACEHOLDER = re.compile(r"\{([^}/]+)\}")
 
@@ -73,8 +74,9 @@ class _Route:
 
     has_body: bool
     body_required: bool
-    body_json: bool
-    """The body takes ``application/json`` or another ``application/*+json`` type."""
+    body_type: str | None
+    """The JSON media type the body is sent as: ``application/json`` when the route offers
+    it, else its first ``application/*+json`` type; ``None`` when it takes no JSON."""
 
     body_fields: frozenset[str]
     body_requires: tuple[str, ...]
@@ -87,6 +89,21 @@ class _Route:
     body_takes_object: bool
     """The body schema accepts ``{}``: no non-object ``type``, no ``minProperties``, and an
     ``enum`` or ``const`` that admits ``{}``."""
+
+    @property
+    def body_json(self) -> bool:
+        """The body takes JSON, as ``application/json`` or another ``application/*+json``."""
+
+        return self.body_type is not None
+
+    @property
+    def body_headers(self) -> dict[str, str]:
+        """The ``Content-Type`` a JSON body needs beyond httpx's ``application/json``."""
+
+        if self.body_type is None or self.body_type == _JSON:
+            return {}
+
+        return {"Content-Type": self.body_type}
 
     @property
     def kind(self) -> str:
@@ -236,7 +253,11 @@ class Catalog:
 
         try:
             response = await client.request(
-                route.method, route.path, json=body, params=params, headers=dict(headers)
+                route.method,
+                route.path,
+                json=body,
+                params=params,
+                headers={**headers, **(route.body_headers if body is not None else {})},
             )
 
         except httpx.TransportError as error:
@@ -585,8 +606,9 @@ def _route(
     if not isinstance(content, dict):
         raise _malformed(key, "a body 'content' that is not an object")
 
-    json_types = [t for t in content if t == "application/json" or _is_json_type(t)]
-    media = content[json_types[0]] if json_types else None
+    # application/json when offered, else the first application/*+json: the type it is sent as.
+    body_type = _JSON if _JSON in content else next(filter(_is_json_type, content), None)
+    media = content[body_type] if body_type is not None else None
     schema = _deref(document, media.get("schema") if isinstance(media, dict) else None)
     resolved = schema or {}
     fields = resolved.get("properties")
@@ -607,7 +629,7 @@ def _route(
         ),
         has_body=bool(body),
         body_required=bool(body.get("required")),
-        body_json=bool(json_types),
+        body_type=body_type,
         body_fields=frozenset(fields) if isinstance(fields, dict) else frozenset(),
         body_requires=tuple(r for r in requires if isinstance(r, str))
         if isinstance(requires, list)
@@ -798,7 +820,13 @@ def _send(route: _Route, op: OpScenario, pool: SamplePool) -> SendFn:
             path = path.replace("{" + name + "}", quote(str(fill(value)), safe=""))
 
         params = {name: fill(value) for name, value in op.params.items()}
-        response = await call.request(route.method, path, json=op.body, params=params or None)
+        response = await call.request(
+            route.method,
+            path,
+            json=op.body,
+            params=params or None,
+            headers=route.body_headers if op.body is not None else None,
+        )
 
         # Deleted, or gone for this principal: the value leaves the sample, not the run. With
         # two sampled values the answer does not say which is gone, so neither leaves.
