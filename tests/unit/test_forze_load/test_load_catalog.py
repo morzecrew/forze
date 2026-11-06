@@ -546,6 +546,33 @@ class TestDocumentShapes:
         assert result.rows[0]["outcomes"]["ok"] > 0
         assert "/api/v1/products/p1" in seen
 
+    @pytest.mark.parametrize("level", ["operation", "path item"])
+    async def test_a_reference_to_an_operation_on_its_own_server_is_refused(self, level) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        item = doc["paths"]["/products/{id}"]
+        (item["get"] if level == "operation" else item)["servers"] = [{"url": "/v2"}]
+
+        assert await _refused(_App({}, doc), _plan(_GET)) == "load_plan_invalid"
+
+    async def test_an_operation_naming_the_documents_server_resolves(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["paths"]["/products/{id}"]["get"]["servers"] = [{"url": "/"}]
+
+        result = await _run(_App({"ada": ["p1"]}, doc), _plan(_GET))
+
+        assert result.rows[0]["outcomes"]["ok"] > 0
+
+    async def test_a_sweep_skips_an_operation_on_its_own_server(self) -> None:
+        doc = json.loads(json.dumps(_DOC))
+        doc["paths"]["/rpc/notes.get"]["servers"] = [{"url": "https://elsewhere.example/v2"}]
+
+        result = await _run(_App({"ada": ["p1"]}, doc), _plan(Scenario.reads("notes.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"notes.list"}
+        assert result.meta["plan"]["skipped"] == {
+            "notes.get": "declares its own server 'https://elsewhere.example/v2'"
+        }
+
     async def test_an_operation_listed_under_two_kinds_is_skipped_not_dropped(self) -> None:
         doc = {
             "paths": {
