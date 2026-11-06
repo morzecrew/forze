@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An authz decision skips the policy principal read after a fast-path admission of it.** With one `RevocationStates` object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (`ttl` at most). Other subjects still read.
 
-- **`SessionRevocation.check` returns a `FreshEpoch` when the token is on its principal's current epoch, `None` otherwise, instead of the epoch; `ApiKeyRevocation.fresh` returns `FreshEpoch | None` instead of a bool** (**Breaking**). A custom verifier that compared the epoch tests the result for `None`.
+- **`SessionRevocation.check` and `ApiKeyRevocation.fresh` return a `FreshEpoch` when the credential is on its principal's current epoch, `None` otherwise, not the epoch and a bool** (**Breaking**). A custom verifier passes it as `fresh=` to `remember_admitted_session` or `remember_admitted_api_key`, which refuse a bool.
 
 - **`instrument_realtime_mailbox()` now exports every mailbox built in the process** (**Breaking**), per-connect factories, gateway and writer included, so its counters no longer read zero. It takes only `meter` and labels each series by spec (`forze.document`). `DocumentRealtimeMailbox.on_replay` can no longer be set.
 

@@ -237,6 +237,10 @@ _ON_EPOCH: ContextVar[_Fresh | None] = ContextVar(
 
 
 def _remember(admitted: AdmittedSession | AdmittedApiKey | None, fresh: FreshEpoch | None) -> None:
+    # A bool from before FreshEpoch would otherwise fail later, in admitted_just_now.
+    if fresh is not None and not isinstance(fresh, FreshEpoch):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise exc.configuration(f"fresh must be a FreshEpoch or None, not {fresh!r}")
+
     record_authn_admission(admitted)
     _FRESH.set(
         _Fresh(fresh, asyncio.current_task())
