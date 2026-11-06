@@ -226,10 +226,10 @@ wiring notes below.
 
 ## Testing
 
-Drive the public components in-process with `forze_mock` — mailbox, cursors and
-publisher need no sockets. For the HTTP transports, FastAPI's `TestClient` reads
-the SSE body and the WebSocket frames directly; assert on envelopes and cursor
-advance, not on transport internals.
+Drive the public components in-process with `forze_mock` — mailbox, cursors and publisher need no
+sockets. For the HTTP transports, FastAPI's `TestClient` reads the SSE body and the WebSocket frames
+directly; assert on envelopes and cursor advance, not on transport internals. To time delivery and a
+reconnect storm against a running app, see [load testing](load-testing.md).
 
 ## Anti-patterns
 
