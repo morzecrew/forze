@@ -124,7 +124,36 @@ async def test_upload_refuses_a_prefix_ending_in_a_line_break(
             UploadedObject(filename="a.txt", data=b"x", prefix="lake/x\n"),
         )
 
+
+@pytest.mark.parametrize("bad", ["..", "../up", "a/../b", "a/.."])
+def test_validate_prefix_refuses_a_dot_dot_segment(
+    storage_adapter: ObjectStorageAdapter, bad: str
+) -> None:
+    with pytest.raises(CoreException) as ei:
+        storage_adapter._validate_prefix(bad)
+
+    assert "Unsafe object storage prefix" in str(ei.value)
+
+
+async def test_upload_refuses_a_prefix_with_a_dot_dot_segment(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    """Otherwise it mints ``../up/<id>``, a key every later read refuses."""
+
+    storage_adapter.client.upload_bytes = AsyncMock()
+
+    with pytest.raises(CoreException):
+        await storage_adapter.upload(UploadedObject(filename="a.txt", data=b"x", prefix="../up"))
+
     storage_adapter.client.upload_bytes.assert_not_called()
+
+
+def test_dots_inside_a_segment_are_not_a_dot_dot_segment(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter._validate_prefix("a..b")
+    storage_adapter._validate_prefix("lake/v1..v2/")
+    storage_adapter._validate_key(storage_adapter.construct_key("a..b"))
 
 
 def test_validate_key_keeps_hive_keys_inside_the_tenant() -> None:

@@ -344,6 +344,10 @@ class ObjectStorageAdapter(
         if not re.fullmatch(rf"[{_KEY_CHARS}]*", prefix):
             raise exc.precondition(f"Invalid object storage prefix: {prefix}")
 
+        # A key minted under a ``..`` segment would fail :meth:`_validate_key` on every read.
+        if ".." in prefix.split("/"):
+            raise exc.precondition(f"Unsafe object storage prefix: {prefix!r}")
+
     # ....................... #
 
     def _validate_key(self, key: str) -> None:

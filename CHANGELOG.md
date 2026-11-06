@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A DuckDB analytics query over a missing object or empty glob raises `not_found` (`duckdb_source_not_found`), not the driver's `HTTPException`,** on every read path. Other store failures are `infrastructure` (`429`: `throttled`), a missing bucket `configuration`, a truncated Parquet file `internal`.
 
+- **A storage `prefix` with a `..` segment is refused with `precondition`**, instead of an upload storing the object at a key that every later read refuses.
+
 ### Security
 
 - **Storage keys and prefixes ending in a line break are refused**, as the key charset already intended.
