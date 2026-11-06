@@ -6488,6 +6488,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#outbound-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Outbound HTTP
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#crypto-and-kms" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6752,6 +6763,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Connection pools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#outbound-http" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Outbound HTTP
       </span>
     </span>
   </a>
@@ -7186,8 +7208,8 @@ thrash — hot tenants' pools evicted by cold one-off traffic, each rebuild payi
 connection establishment.</p>
 <h2 id="connection-pools">Connection pools<a class="headerlink" href="#connection-pools" title="Permanent link">&para;</a></h2>
 <p><code>instrument_connection_pools({"postgres": client, ...})</code> — one entry per client that
-implements <code>SupportsConnectionPoolStats</code>. Today that is <code>PostgresClient</code>; Redis, MongoDB
-and outbound HTTP follow.</p>
+implements <code>SupportsConnectionPoolStats</code>: <code>PostgresClient</code>, <code>RedisClient</code> and
+<code>MongoClient</code>.</p>
 <table>
 <thead>
 <tr>
@@ -7211,35 +7233,87 @@ and outbound HTTP follow.</p>
 <td>observable gauge</td>
 <td>1</td>
 <td><code>forze.client</code></td>
-<td>open connections not checked out</td>
+<td>connections in the pool not checked out</td>
 </tr>
 <tr>
 <td><code>forze.connection_pool.max</code></td>
 <td>observable gauge</td>
 <td>1</td>
 <td><code>forze.client</code></td>
-<td>configured cap (<code>max_size</code>)</td>
+<td>configured cap (<code>max_size</code>); absent for a pool with none, such as MongoDB with <code>max_pool_size=0</code></td>
 </tr>
 <tr>
 <td><code>forze.connection_pool.waiting</code></td>
 <td>observable gauge</td>
 <td>1</td>
 <td><code>forze.client</code></td>
-<td>callers queued for a connection; absent where the driver does not expose it</td>
+<td>callers queued for a connection; Postgres only, absent for Redis and MongoDB</td>
 </tr>
 </tbody>
 </table>
+<p>Where each number comes from:</p>
+<ul>
+<li><strong>Postgres:</strong> psycopg_pool's public <code>get_stats()</code>.</li>
+<li><strong>Redis:</strong> redis-py's public <code>get_connection_count()</code>, split by its
+  <code>db.client.connection.state</code> label. redis-py keeps a connection it disconnected, or
+  failed to connect on checkout, among the idle ones, so <code>idle</code> can include closed
+  connections. A pubsub subscription holds a connection in use while it runs.</li>
+<li><strong>MongoDB:</strong> pymongo's public <code>ConnectionPoolListener</code> events, which the client
+  registers when it is built. pymongo keeps one pool per server, and the gauges report
+  the pool with the most connections in use, so <code>max</code> is the per-server
+  <code>max_pool_size</code>. A sum would hide a saturated primary behind idle secondaries. A
+  connection still opening counts as in use for at most <code>connect_timeout</code> plus a second:
+  pymongo sends no close event for one whose open is cancelled at the wrong moment, so it
+  would otherwise count until its pool closes.</li>
+</ul>
+<p><code>waiting</code> is absent where it cannot be counted honestly. redis-py exposes no count of
+callers queued on a <code>BlockingConnectionPool</code>. pymongo publishes no event when a queued
+caller is cancelled, so a count would only climb.</p>
 <p>A client with no open pool reports nothing. A routed client is refused: summing its
 per-tenant pools would hide the one that is saturated. Its connections are not exported;
 the tenant pool gauges above report only its pool cache (size and churn).</p>
-<p><strong>The alert that matters:</strong> <code>waiting</code> above zero across scrapes, or <code>in_use</code> pinned at
-<code>max</code>, means callers queue for connections and will start failing at the acquire timeout.
-<code>in_use</code> that climbs under steady load and never falls back is a leaked connection.
-A database that is down shows the same pattern: the pool's reconnect attempts hold <code>in_use</code>
-at <code>max</code> with <code>waiting</code> above zero while no caller saturates the pool, so pair the alert
-with a connectivity signal. On Postgres, a caller that timed out still counts in <code>waiting</code>
-until a connection is returned to the pool, so <code>waiting</code> stays up for as long as every
-connection is held or the database is unreachable.</p>
+<p><strong>The alert that matters:</strong> <code>in_use</code> pinned at <code>max</code> means the pool is exhausted. What
+callers do next depends on the pool. psycopg_pool, pymongo, and redis-py's
+<code>BlockingConnectionPool</code> (used when <code>RedisConfig.pool_timeout</code> is set) queue them until
+they time out. A plain redis-py <code>ConnectionPool</code> refuses the next checkout at once. Only
+Postgres exports <code>waiting</code>, so there <code>waiting</code> above zero across scrapes shows the queue
+itself. <code>in_use</code> that climbs under steady load and never falls back is a leaked
+connection. On Postgres, a database that is down shows the same pattern: the pool's
+reconnect attempts hold <code>in_use</code> at <code>max</code> with <code>waiting</code> above zero while no caller
+saturates the pool, so pair the alert with a connectivity signal. A Postgres caller that
+timed out still counts in <code>waiting</code> until a connection is returned to the pool, so
+<code>waiting</code> stays up for as long as every connection is held or the database is unreachable.</p>
+<h2 id="outbound-http">Outbound HTTP<a class="headerlink" href="#outbound-http" title="Permanent link">&para;</a></h2>
+<p><code>instrument_http_clients({"payments": client, ...})</code> from <code>forze_http</code> — one entry per
+<code>HttpClient</code>. httpx exposes no pool numbers, so outbound HTTP has no connection pool
+gauges. The client counts requests at its own methods instead.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Labels</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.http.client.in_flight</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.client</code></td>
+<td>requests sent and not finished: <code>request</code> until it has read the response, <code>stream</code> and <code>send</code> until their block exits; queued ones count</td>
+</tr>
+</tbody>
+</table>
+<p>It counts requests, not connections. Leaving a <code>stream</code> or <code>send</code> block closes its
+response, but closing the response inside the block does not end the count. A client
+before <code>initialize</code> or after <code>close</code> reports nothing. A <code>RoutedHttpClient</code> is refused.</p>
+<p><strong>The alert that matters:</strong> a count that climbs under steady load and never falls back is
+a <code>stream</code> or <code>send</code> block that never exits. It may still hold its connection, or may have
+closed its response already; the count alone does not tell which. For a service transport,
+it is usually an SDK response nobody closes.</p>
 <h2 id="crypto-and-kms">Crypto and <abbr title="Key Management Service">KMS</abbr><a class="headerlink" href="#crypto-and-kms" title="Permanent link">&para;</a></h2>
 <p><code>instrument_crypto({"default": keyring, ...})</code>.</p>
 <table>

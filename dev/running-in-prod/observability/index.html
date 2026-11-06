@@ -7310,7 +7310,7 @@ connection that is never returned is the leak a soak test exists to catch.
 <code>instrument_connection_pools</code> exports the pool of every client you name:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_connection_pools</span>
 
-<span class="n">instrument_connection_pools</span><span class="p">({</span><span class="s2">"postgres"</span><span class="p">:</span> <span class="n">pg</span><span class="p">})</span>
+<span class="n">instrument_connection_pools</span><span class="p">({</span><span class="s2">"postgres"</span><span class="p">:</span> <span class="n">pg</span><span class="p">,</span> <span class="s2">"redis"</span><span class="p">:</span> <span class="n">redis</span><span class="p">,</span> <span class="s2">"mongo"</span><span class="p">:</span> <span class="n">mongo</span><span class="p">})</span>
 </code></pre></div>
 <table>
 <thead>
@@ -7326,31 +7326,46 @@ connection that is never returned is the leak a soak test exists to catch.
 </tr>
 <tr>
 <td><code>forze.connection_pool.idle</code> (gauge)</td>
-<td>open connections not checked out</td>
+<td>connections in the pool not checked out</td>
 </tr>
 <tr>
 <td><code>forze.connection_pool.max</code> (gauge)</td>
-<td>the configured cap</td>
+<td>the configured cap, absent for a pool without one</td>
 </tr>
 <tr>
 <td><code>forze.connection_pool.waiting</code> (gauge)</td>
-<td>callers queued for a connection, where the driver exposes it</td>
+<td>callers queued for a connection, Postgres only</td>
 </tr>
 </tbody>
 </table>
 <p>One series per client, labelled <code>forze.client</code> with the name you chose. A
 client counts if it implements <code>SupportsConnectionPoolStats</code>
 (<code>forze.application.contracts.pools</code>) with an in-memory snapshot. The callback
-runs on every scrape, so it never does I/O. Today only <code>PostgresClient</code> does:
-it reads psycopg_pool's public <code>get_stats()</code>. Redis, MongoDB and outbound HTTP
-follow in later releases. A routed client is refused, because it keeps one
+runs on every scrape, so it never does I/O. <code>PostgresClient</code>, <code>RedisClient</code>
+and <code>MongoClient</code> do, each from public driver numbers only; the
+<a href="../../reference/metrics/#connection-pools">metric catalog</a> says where each one
+comes from. A <code>MongoClient</code> reports its busiest server's pool, so on a replica
+set <code>max</code> is the per-server cap. A routed client is refused, because it keeps one
 pool per tenant and a sum would hide the saturated one. Its connections are
 not exported: the tenant pool gauges above report only its pool cache. Alert
-on <code>waiting</code> above zero across scrapes, or <code>in_use</code> pinned at <code>max</code>: callers
-are queueing and will start failing at the acquire timeout. A database that is
-down shows the same pattern, because the pool's reconnect attempts hold
-<code>in_use</code> at <code>max</code> while callers wait. Pair the alert with a connectivity
-signal, such as the health check.</p>
+on <code>in_use</code> pinned at <code>max</code>: the pool is exhausted. What callers do next
+depends on the pool. Postgres, MongoDB, and a Redis client with
+<code>pool_timeout</code> set queue them until they time out; a Redis client without it
+refuses the next checkout at once. Only Postgres exports <code>waiting</code>, so there
+<code>waiting</code> above zero across scrapes shows the queue itself. On Postgres, a
+database that is down shows the same pattern, because the pool's reconnect
+attempts hold <code>in_use</code> at <code>max</code> while callers wait. Pair the alert with a
+connectivity signal, such as the health check.</p>
+<p>httpx exposes no pool numbers, so outbound HTTP gets a count of requests
+instead: <code>instrument_http_clients</code> from <code>forze_http</code> exports
+<code>forze.http.client.in_flight</code> per <code>HttpClient</code>: requests sent and not
+finished, until <code>request</code> has read the response or until a <code>stream</code> or
+<code>send</code> block exits. A count that never falls back is a block that never
+exits; it may or may not still hold its connection.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_http</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_http_clients</span>
+
+<span class="n">instrument_http_clients</span><span class="p">({</span><span class="s2">"payments"</span><span class="p">:</span> <span class="n">payments</span><span class="p">})</span>
+</code></pre></div>
 <h2 id="document-l1-metrics">Document L1 metrics<a class="headerlink" href="#document-l1-metrics" title="Permanent link">&para;</a></h2>
 <p>The <a href="../../data-events/caching/#an-in-process-l1-for-hot-documents">in-process L1</a>
 exports its counters the same way:</p>

@@ -10968,7 +10968,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that <code>forze load compare</code> diffs. Writes are refused unless allowed and the host is loopback or allowlisted.</p>
 </li>
 <li>
-<p><strong><code>instrument_connection_pools</code> exports Postgres connection pool gauges.</strong> Per client you name (<code>forze.client</code>), <code>forze.connection_pool.*</code> reports in use, idle, max and waiting from psycopg_pool's <code>get_stats()</code>. A routed client is refused; Redis, MongoDB and outbound HTTP follow.</p>
+<p><strong><code>instrument_connection_pools</code> exports Postgres, Redis and MongoDB connection pool gauges.</strong> Per client you name (<code>forze.client</code>), <code>forze.connection_pool.*</code> reports in use, idle, max and, on Postgres, waiting. A routed client is refused.</p>
+</li>
+<li>
+<p><strong><code>instrument_http_clients</code> exports outbound HTTP requests in flight</strong> per <code>HttpClient</code>, as <code>forze.http.client.in_flight</code>: requests sent and not yet read, or whose <code>stream</code>/<code>send</code> block has not exited.</p>
 </li>
 <li>
 <p><strong><code>instrument_process</code> exports the process's CPU time and resident memory to OpenTelemetry.</strong> It registers <code>process.cpu.time</code> per <code>cpu.mode</code> and, on Linux only, <code>process.memory.usage</code> from <code>/proc/self/statm</code>, with no new dependency. One scrape sees every pre-fork worker's series only through <code>MetricsSnapshots</code>.</p>
