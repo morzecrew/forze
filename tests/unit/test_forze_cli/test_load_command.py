@@ -289,3 +289,157 @@ def test_the_group_refuses_without_the_extra(monkeypatch) -> None:
     # 2, not 1: exit 1 means --fail-on was crossed, and a missing extra is no regression.
     assert result.exit_code == 2
     assert "forze[cli,load]" in result.output
+
+
+class TestSoak:
+    def test_a_soak_writes_a_row_per_window_and_exits_0(self, tmp_path: Path) -> None:
+        out = tmp_path / "soak.jsonl"
+
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:soak_plan",
+                "--steps",
+                "2",
+                "--soak-s",
+                "0.3",
+                "--window-s",
+                "0.05",
+                "--out",
+                str(out),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "window=6: goodput" in result.output
+        assert "drift:" in result.output
+        # Meta, six windows, the summary.
+        assert len(out.read_text().splitlines()) == 8
+
+    def test_an_open_soak_runs_at_one_rate(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:soak_plan",
+                "--model",
+                "open",
+                "--steps",
+                "20",
+                "--soak-s",
+                "0.3",
+                "--window-s",
+                "0.05",
+                "--out",
+                str(tmp_path / "o.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "window=1: goodput" in result.output
+
+    def test_a_soak_takes_one_load_level(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:soak_plan", "--soak-s", "600"])
+
+        assert result.exit_code == 2
+        assert "one load level" in result.output
+
+    def test_a_soak_too_short_to_fit_exits_2(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["load", "run", f"{_PLANS}:soak_plan", "--steps", "1", "--soak-s", "120"],
+        )
+
+        assert result.exit_code == 2
+        assert "at least 6 windows" in result.output
+
+    def test_a_metrics_route_that_cannot_be_read_exits_2(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:plan",
+                "--steps",
+                "1",
+                "--soak-s",
+                "0.3",
+                "--window-s",
+                "0.05",
+                "--out",
+                str(tmp_path / "m.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "metrics route" in result.output
+
+    def test_a_soak_whose_scrape_names_no_process_warns_at_start(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import forze_load.soak as soak
+
+        async def nameless(_client, _path):
+            return soak.parse_metrics("# TYPE forze_g gauge\nforze_g 1\n")
+
+        monkeypatch.setattr(soak, "fetch_metrics", nameless)
+
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:plan",
+                "--steps",
+                "1",
+                "--soak-s",
+                "0.3",
+                "--window-s",
+                "0.05",
+                "--out",
+                str(tmp_path / "n.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "warning: the metrics scrape names no instance" in result.output
+        # At the start, before the rows the command prints when the run ends.
+        assert result.output.index("warning:") < result.output.index("window=1:")
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--window-s", "10"],
+            ["--soak-s", "600", "--step-s", "5"],
+            ["--soak-s", "600", "--warm-s", "1"],
+        ],
+    )
+    def test_an_option_the_run_does_not_read_is_a_usage_error(self, args: list[str]) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:soak_plan", "--steps", "1", *args])
+
+        assert result.exit_code == 2
+        assert "soak" in result.output
+
+
+@pytest.mark.parametrize(
+    ("attribution", "warning"),
+    [
+        ("none", "names no instance, so no server series will be fitted"),
+        ("interleaved", "its unlabelled series may not be fitted; series labelled"),
+        ("instance", ""),
+        ("per_series", ""),
+        (None, ""),
+    ],
+)
+def test_the_start_warning_matches_the_attribution(
+    attribution: str | None, warning: str, capsys
+) -> None:
+    from forze_cli.load import _warn_unattributed
+
+    _warn_unattributed({"server": {"attribution": attribution}} if attribution else {})
+    err = capsys.readouterr().err
+
+    assert (warning in err) if warning else err == ""

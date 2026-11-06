@@ -279,6 +279,11 @@ class LoadPlan:
     (:class:`~pathlib.Path`) for a deployment that serves no docs, or the document itself.
     Read only when the plan has an operation reference."""
 
+    metrics: str | None = "/metrics"
+    """Where a :class:`~forze_load.Soak` scrapes the app's Prometheus text: a path on the
+    target, read without a credential. ``None`` soaks on client numbers only. Ramps never
+    read it."""
+
     allow_writes: bool = False
     """Allow scenarios declared ``writes=True``. Even then the host must be allowlisted."""
 
@@ -316,6 +321,9 @@ def validate_plan(plan: LoadPlan) -> None:
 
     if isinstance(plan.openapi, str):
         require_path(plan.openapi, "LoadPlan.openapi")
+
+    if plan.metrics is not None:
+        require_path(plan.metrics, "LoadPlan.metrics")
 
     names = [scenario.name for scenario in plan.scenarios]
 

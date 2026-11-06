@@ -5,6 +5,7 @@ The scenarios answer without the network, so ``run`` exercises the whole command
 
 from __future__ import annotations
 
+import attrs
 import httpx
 
 from forze_load import Call, LoadPlan, Principal, Scenario, password_login
@@ -30,6 +31,8 @@ async def _unavailable(_call: Call) -> httpx.Response:
 
 plan = _plan(writes=False)
 writing_plan = _plan(writes=True)
+# A soak on client numbers only: nothing listens on port 9 to serve `/metrics`.
+soak_plan = attrs.evolve(plan, metrics=None)
 failing_plan = LoadPlan(
     base_url="http://127.0.0.1:9",
     principals=[Principal(name="viewer", mix={"read": 1})],

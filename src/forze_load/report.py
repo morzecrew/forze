@@ -1,7 +1,7 @@
 """JSON lines output, and the comparison of two runs.
 
-A run file is one JSON object per line: a ``meta`` record, one ``step`` row per step, and a
-``summary``. It holds counts, latencies and outcome classes only, never bodies, headers,
+A run file is one JSON object per line: a ``meta`` record, one ``step`` row per step (or one
+``window`` row per window of a soak), and a ``summary``. It holds counts, latencies and outcome classes only, never bodies, headers,
 tokens or ids.
 """
 
@@ -30,6 +30,8 @@ _LOWER_IS_WORSE = frozenset({"goodput"})
 _METRICS: tuple[str, ...] = ("goodput", "p50", "p95", "p99")
 _PERCENTILES: tuple[str, ...] = ("p50", "p95", "p99")
 _META_IGNORED = frozenset({"kind", "schema", "started_at"})
+_FLAGS: tuple[str, ...] = ("warm", "cut_short")
+_FITTED = frozenset({"flagged", "steady", "sparse", "at_capacity"})
 _META_LABELS: dict[str, str] = {
     "forze_load": "forze_load version",
     "client.cpus": "client cores",
@@ -117,10 +119,13 @@ def read_run(path: str | Path) -> RunFile:
     if not _is_plan(meta.get("plan", {})):
         raise _invalid(f"{path} has a meta plan whose weights or mixes are not objects")
 
-    rows = [record for record in records if record.get("kind") == "step"]
+    rows = [record for record in records if record.get("kind") in ("step", "window")]
 
     if not all(_is_step(row) for row in rows):
-        raise _invalid(f"{path} has a step row without a numeric key, goodput or latency")
+        raise _invalid(
+            f"{path} has a row without a numeric key, goodput or latency, or with a "
+            f"{' or '.join(_FLAGS)} that is not true or false"
+        )
 
     summary = next((record for record in records if record.get("kind") == "summary"), None)
 
@@ -134,9 +139,11 @@ def _is_number(value: Any) -> bool:
 
 def _is_step(row: Mapping[str, Any]) -> bool:
     """A step row ``compare`` can read: a finite key and goodput, and the compared percentiles
-    present, each a finite number or null (a percentile with no answered call)."""
+    present, each a finite number or null (a percentile with no answered call). The flags
+    ``compare`` branches on must be booleans when present: a string ``"false"`` is truthy,
+    and would drop a window from the gate without a word."""
 
-    key = row.get("workers", row.get("rate"))
+    key = row.get("window", row.get("workers", row.get("rate")))
     ms = row.get("ms")
 
     return (
@@ -145,6 +152,7 @@ def _is_step(row: Mapping[str, Any]) -> bool:
         and isinstance(ms, dict)
         and all(name in ms for name in _PERCENTILES)
         and all(value is None or _is_number(value) for value in ms.values())
+        and all(isinstance(row.get(flag, False), bool) for flag in _FLAGS)
     )
 
 
@@ -208,10 +216,11 @@ def compare_runs(
 ) -> Comparison:
     """Compare *head* against *base*, step by step.
 
-    Rows are matched by worker count or rate. Goodput is worse when it falls, latency when
-    it rises. Without *fail_on* nothing fails: load runs vary far more than micro-benchmarks,
-    so a default threshold would make a gate flaky. A step that a stop cut short in either
-    run (``cut_short``) is reported with a warning and never gated: its window was shorter.
+    Rows are matched by worker count or rate, a soak's by window. Goodput is worse when it
+    falls, latency when it rises. Without *fail_on* nothing fails: load runs vary far more
+    than micro-benchmarks, so a default threshold would make a gate flaky. A step that a
+    stop cut short in either run (``cut_short``) is reported with a warning and never gated:
+    its window was shorter. Nor is a soak's warm-up window (``warm``).
 
     :raises CoreException: ``configuration`` (``load_compare_empty``) — *fail_on* is given
         and no whole step appears in both runs.
@@ -235,9 +244,13 @@ def compare_runs(
             for run, rows in (("base", base_rows), ("head", head_rows))
             if rows[key].get("cut_short")
         ]
+        warm = any(rows[key].get("warm") for rows in (base_rows, head_rows))
 
         if short:
             warnings.append(f"{label}: cut short in {' and '.join(short)}, not gated")
+
+        elif warm:
+            warnings.append(f"{label}: warm-up, not gated")
 
         else:
             gated += 1
@@ -248,7 +261,7 @@ def compare_runs(
             cells.append(f"{metric} {_fmt(old)} -> {_fmt(new)}{_fmt_change(change)}")
             limit = (fail_on or {}).get(metric)
 
-            if limit is None or short:
+            if limit is None or short or warm:
                 continue
 
             # A latency the head run lost (no call answered) is not "unchanged": it fails.
@@ -310,7 +323,10 @@ type _StepKey = tuple[str, float, int]
 def _step(row: Mapping[str, Any]) -> tuple[str, float]:
     """A step's key as a number, so ``rate=50`` and ``rate=50.0`` are one step."""
 
-    return ("workers", float(row["workers"])) if "workers" in row else ("rate", float(row["rate"]))
+    # `read_run` keeps only rows that carry one of the three.
+    kind = next(name for name in ("window", "workers", "rate") if name in row)
+
+    return kind, float(row[kind])
 
 
 def _keyed(rows: Sequence[Mapping[str, Any]]) -> dict[_StepKey, Mapping[str, Any]]:
@@ -379,11 +395,47 @@ def summarize(rows: Sequence[Mapping[str, Any]], summary: Mapping[str, Any]) -> 
         + (", misconfigured" if row["misconfigured"] else "")
         for row in rows
     ]
-    knee = summary.get("knee")
-    note = summary.get("note")
-    lines.append(f"knee: {knee if knee is not None else 'none'}" + (f" ({note})" if note else ""))
+    if "drift" in summary:
+        drift = summary["drift"]
+        flagged = drift["flagged"]
+        lines.append(f"drift: {', '.join(flagged) if flagged else 'none flagged'}")
+        client = _evaluated("client", drift["client"])
+
+        # "none flagged" must not read as "all clear" when nothing could be fitted.
+        if not client.endswith(" fitted"):
+            lines.append(client)
+
+        lines.append(
+            _evaluated("server", drift["server"])
+            if drift["server"] is not None
+            else "server drift: not evaluated (no metrics route)"
+        )
+
+    else:
+        knee = summary.get("knee")
+        note = summary.get("note")
+        lines.append(
+            f"knee: {knee if knee is not None else 'none'}" + (f" ({note})" if note else "")
+        )
 
     if summary.get("stopped"):
         lines.append(f"stopped: {summary['stopped']}")
 
     return lines
+
+
+def _evaluated(side: str, fits: Mapping[str, Mapping[str, Any]]) -> str:
+    """How many of *side*'s series were fitted, and why the others were not."""
+
+    left_out = Counter(fit["status"] for fit in fits.values() if fit["status"] not in _FITTED)
+    fitted = len(fits) - sum(left_out.values())
+    reasons = ", ".join(f"{count} {status}" for status, count in sorted(left_out.items()))
+
+    if fitted:
+        return f"{side} drift: {fitted} series fitted" + (
+            f", not fitted: {reasons}" if reasons else ""
+        )
+
+    return f"{side} drift: not evaluated, " + (
+        f"no series could be fitted ({reasons})" if reasons else "no series scraped"
+    )
