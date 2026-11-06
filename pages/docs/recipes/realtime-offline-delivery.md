@@ -66,7 +66,9 @@ phone reconnect again: []
   best-effort.
 - The mailbox is **bounded recent history**: trimmed once all known devices ack,
   with a TTL/cap backstop. A device offline longer than the window loses the
-  oldest signals — guarantee-forever delivery belongs in domain state.
+  oldest signals — guarantee-forever delivery belongs in domain state. A replay that
+  skips its oldest backlog past the cap counts in `forze.realtime.mailbox.overflowed`
+  (see [Realtime mailbox](../reference/metrics.md#realtime-mailbox)).
 - The cursor key is a `ClientIdentity` — a client-supplied `device_id` (stable
   across logins) or the authenticated session `sid`. With neither, it falls back
   to the per-connection socket id.

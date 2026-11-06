@@ -134,9 +134,12 @@ Declaring the window and forgetting the step is refused at build
 which is worse than the honest unbounded case. If unbounded is genuinely what you
 want, say so and it is allowed: `MailboxRetention.unbounded(reason=…)`. Nothing
 about this failure mode is loud otherwise — storage grows, replays stay correct,
-and the first symptom is a disk. `instrument_realtime_mailbox` shows the trend sooner:
-its `forze.realtime.mailbox.replay_size` histogram records each reconnect's unacked
-backlog, and a tail that keeps growing means devices are falling behind.
+and the first symptom is a disk. No metric counts mailbox rows, so watch the store's
+size. The `forze.realtime.mailbox.replay_size` histogram from
+[`instrument_realtime_mailbox`](../reference/metrics.md#realtime-mailbox) records only
+the unacked backlog a reconnecting device reads: a growing tail means devices fall
+behind on acks, but a device that never reconnects, the kind that freezes the trim,
+records nothing.
 
 ## Where to go next
 

@@ -158,7 +158,7 @@ Mock transactions are **faithful by default**: a write inside a transaction that
 - **Rolls back** — documents, outbox rows, inbox marks, and document-backed identity stores. A handler that stages an outbox event and then fails leaves no rows behind.
 - **Survives rollback** — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either).
 
-The default journal mode is atomic *without* serializing, so concurrent transactions still interleave. Two modes are opt-in — `MockDepsModule(transactions="strict")` (a serializing global-snapshot manager) and `transactions="none"` (the legacy no-op). See [Transactions](../writing-operation/transactions.md#transactions-under-the-mock) for the full picture, and [Deterministic simulation](../dst/overview.md) for exploring concurrency and isolation under the faithful default.
+The default journal mode is atomic *without* serializing, so concurrent transactions still interleave. Two modes are opt-in — `MockDepsModule(transactions="strict")` (a serializing global-snapshot manager, and the only mock mode with savepoints, so a test of a nested [`rollback_only()`](../writing-operation/transactions.md#dry-runs-roll-back-on-purpose) needs it) and `transactions="none"` (the legacy no-op). See [Transactions](../writing-operation/transactions.md#transactions-under-the-mock) for the full picture, and [Deterministic simulation](../dst/overview.md) for exploring concurrency and isolation under the faithful default.
 
 ## Testing with identity context
 
@@ -332,3 +332,4 @@ Keep unit tests fast and parallelizable; run integration tests in CI or before d
 - [Deterministic simulation](../dst/overview.md) — seed-driven exploration of concurrency, faults, and crashes
 - [Contracts](../core-concepts/contracts.md) — ports and adapters overview
 - [Transactions](../writing-operation/transactions.md) — strict mode details
+- [Load testing](load-testing.md) — ramp and soak a running app as the principals that use it

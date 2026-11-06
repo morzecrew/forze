@@ -183,9 +183,10 @@ it for you.
 A manager whose store refused every write in the transaction it opened says so
 through `ReadOnlyAware.read_only_enforced()`. Postgres and the mock's `journal`
 and `strict` managers do, but not for a scope nested in a transaction opened
-outside forze, which becomes a savepoint. A nested scope on another route
-resolves another manager and opens a transaction of its own, so the read-only
-root counts only while it is the only route a finished scope entered. After-commit
+outside forze, which becomes a savepoint. A nested scope on another route may
+run on another client and commit a transaction of its own, so the read-only
+root counts only while it is the only route a finished scope entered: a second
+route gives up the skip even when it shares the root's client. After-commit
 work queued with `run_or_defer` may write, so it gives up the skip too. A query
 interrupted after
 such a read is safe to re-run rather than

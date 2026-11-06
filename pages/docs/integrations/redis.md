@@ -325,3 +325,6 @@ it is a server setting forze cannot check.
   worker that can handle an operation must share the same namespace.
 - **Routed clients** use `routed_client_lifecycle_step` — don't mix routed and
   non-routed lifecycle steps for one client.
+- **Pool metrics.** `instrument_connection_pools({"redis": client})` exports the pool's
+  connections in use and idle, and its cap; Redis reports no waiting callers, and a routed
+  client is refused. See [Connection pools](../reference/metrics.md#connection-pools).
