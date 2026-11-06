@@ -151,6 +151,10 @@ connection error, with forze's exception as the cause. Closing the SDK's client 
 pooled client open, because the lifecycle owns it. `HttpServiceTransport` is the class, if
 you build one yourself from a client and a config.
 
+A stream or an SDK response that nobody closes holds its request open. To see it, export
+each pooled client's requests in flight with
+[`instrument_http_clients`](../reference/metrics.md#outbound-http).
+
 ## Errors
 
 A failed call raises a `CoreException` whose kind follows the counterparty's answer:

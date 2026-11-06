@@ -257,6 +257,9 @@ Operational hardening around the loop:
   flat. Backlog is a property of the consumer group, not the process: poll
   `AckStreamGroupAdminPort.depth(group, stream)` for undelivered/pending/oldest-idle —
   the same surface `quiesce(ack_streams=[(stream_spec, group)])` attests at standstill.
+  For the mailbox, call [`instrument_realtime_mailbox()`](../reference/metrics.md#realtime-mailbox)
+  once too: it counts every mailbox built in the process, the gateway's included. Alarm on
+  `forze.realtime.mailbox.overflowed`.
 - **Backplane heartbeat** — `realtime_backplane_heartbeat_lifecycle_step(sio, health)`
   pushes a probe frame through the Redis manager on an interval and
   `instrument_realtime_backplane(health)` exports its freshness; a dead manager listener

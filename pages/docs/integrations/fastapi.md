@@ -488,6 +488,10 @@ graceful timeout, the lifespan sets it to 10 seconds.
 - **Gunicorn.** Its uvicorn worker runs the same server, so the same lifespan drains
   there. Set gunicorn's `--graceful-timeout` above the logged worst case: past it,
   the master kills the worker.
+- **Metrics.** A plain `/metrics` route answers from whichever worker took the scrape.
+  Give `attach_metrics_route` a `MetricsSnapshots` and a `worker_metrics_reader()`, so one
+  scrape covers every worker: see
+  [Several workers, one scrape](../running-in-prod/grafana-stack.md#several-workers-one-scrape).
 - **Under `serve_uvicorn`,** the lifespan leaves the signals to `serve_uvicorn`.
 - **Under another server,** or a uvicorn off the main thread that installs no
   handler, the lifespan logs a warning. The drain phases then run only in the
@@ -927,6 +931,7 @@ runs them. The surface, at a glance:
 | `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe, optionally sweeping dependency `health()` |
+| `attach_metrics_route` / `MetricsSnapshots` / `worker_metrics_reader` | a Prometheus `GET /metrics` pull endpoint; with snapshots, one scrape for every worker of a pre-fork group |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
 | `realtime_sse_sharded_tail_lifecycle_step` | tenant-aware SSE: per-tenant tail loops, tenant trusted from the stream |

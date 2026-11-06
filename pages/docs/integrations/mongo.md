@@ -187,3 +187,7 @@ lifecycle = LifecyclePlan.from_steps(
   code `search_query_vector_required`, before any database call.
 - Relations accept a static `(database, collection)` tuple or a per-tenant
   resolver; routed clients handle database-per-tenant.
+- **Pool metrics.** `instrument_connection_pools({"mongo": client})` exports the connections
+  in use and idle, and the cap, of the server pool with the most in use; MongoDB reports no
+  waiting callers, and a routed client is refused. See
+  [Connection pools](../reference/metrics.md#connection-pools).

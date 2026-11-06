@@ -326,3 +326,7 @@ PostgresLifecycleModule(
   blank query; a text query is refused as a `precondition` error with code
   `search_query_vector_required`, before any SQL runs. Hub and federated searches take no
   `query_vector`, so their vector legs still require `embeddings_name`.
+- **Pool metrics.** `instrument_connection_pools({"postgres": client})` exports the pool's
+  connections in use and idle, its cap, and the callers waiting for one; a routed client is
+  refused. Alert on `in_use` pinned at `max`. See
+  [Connection pools](../reference/metrics.md#connection-pools).
