@@ -774,6 +774,9 @@ class MockStorageAdapter(
                 return StoredObjectPage(objects=[], total=0, container_missing=True)
 
             rows = list(self._objects().values())
+        # As the real adapter: a leading ``/`` is ignored, a trailing one kept as a folder.
+        prefix = (prefix or "").lstrip("/")
+
         if prefix:
             rows = [row for row in rows if row.key.startswith(prefix)]
         # Lexicographic by key, as an object store lists. The mock returned insertion order,

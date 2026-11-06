@@ -368,6 +368,58 @@ async def test_list_threads_include_tags_to_client(
     assert kwargs["include_tags"] is True
 
 
+def _listing_adapter(**kw) -> ObjectStorageAdapter:
+    client = MagicMock()
+    client.client.return_value.__aenter__ = AsyncMock()
+    client.client.return_value.__aexit__ = AsyncMock()
+    client.list_objects = AsyncMock(return_value=([], 0))
+
+    return ObjectStorageAdapter(
+        client=client,
+        bucket_spec="test-bucket",
+        resolve_bucket=_resolve_static_bucket,
+        **kw,
+    )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "sent"),
+    [
+        (None, ""),
+        ("", ""),
+        ("/", ""),
+        ("lake/symbol=BTC", "lake/symbol=BTC"),
+        ("lake/symbol=BTC/", "lake/symbol=BTC/"),
+        ("/lake/symbol=BTC/", "lake/symbol=BTC/"),
+        (("lake", "symbol=BTC"), "lake/symbol=BTC"),
+    ],
+)
+async def test_list_keeps_a_trailing_slash_as_a_folder_boundary(
+    prefix: str | tuple[str, ...] | None, sent: str
+) -> None:
+    adapter = _listing_adapter()
+
+    await adapter.list(10, 0, prefix=prefix)  # type: ignore[arg-type]
+
+    assert adapter.client.list_objects.await_args.kwargs["prefix"] == sent
+
+
+@pytest.mark.parametrize(
+    ("prefix", "suffix"),
+    [(None, ""), ("/", "/"), ("lake/symbol=BTC", "/lake/symbol=BTC"), ("lake/", "/lake/")],
+)
+async def test_list_keeps_the_folder_boundary_under_a_tenant(
+    prefix: str | None, suffix: str
+) -> None:
+    tenant = TenantIdentity(tenant_id=uuid4())
+    adapter = _listing_adapter(tenant_aware=True, tenant_provider=lambda: tenant)
+
+    await adapter.list(10, 0, prefix=prefix)
+
+    sent = adapter.client.list_objects.await_args.kwargs["prefix"]
+    assert sent == f"{tenant_key_prefix(tenant.tenant_id)}{suffix}"
+
+
 @pytest.mark.asyncio
 async def test_list_prefers_listed_object_tags_over_head_tags(
     storage_adapter: ObjectStorageAdapter,

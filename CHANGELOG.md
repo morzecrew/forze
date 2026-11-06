@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A storage `prefix` with a `..` segment is refused with `precondition`**, instead of an upload storing the object at a key that every later read refuses.
 
+- **A storage `list` prefix that ends in `/` lists exactly that folder on S3 and GCS**, as on the mock: `symbol=BTC/` no longer also returns `symbol=BTCUSDT/…`. Without the `/`, the prefix still matches as a plain string.
+
 ### Security
 
 - **Storage keys and prefixes ending in a line break are refused**, as the key charset already intended.

@@ -1620,12 +1620,25 @@ class ObjectStorageAdapter(
         :attr:`StoredObjectPage.container_missing`. Under per-tenant buckets that flag is
         the difference between a tenant nothing has provisioned and a tenant that has
         simply uploaded nothing, which are the same zero objects to anyone downstream.
+
+        A string ``prefix`` matches keys as a plain string prefix, as S3 and GCS do, except
+        that a trailing ``/`` is kept as a folder boundary: ``lake/symbol=BTC/`` lists that
+        folder only, never ``lake/symbol=BTCUSDT/…``. A tuple is joined into path segments
+        and matched the same way, without a trailing ``/``.
         """
 
+        if isinstance(prefix, tuple):
+            prefix = default_path_codec.join(*prefix)
+
+        # The codec strips the caller's trailing ``/``; restored on the path below.
+        folder = prefix is not None and prefix.endswith("/")
         prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
 
         path = self.construct_path(prefix)
+
+        if folder and path:
+            path = f"{path}/"
 
         bucket = await self._resolved_bucket()
 
