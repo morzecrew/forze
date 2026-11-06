@@ -10989,7 +10989,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The shipped Grafana dashboards and alerts cover the new gauges.</strong> Panels for connection pools, HTTP in flight, process CPU and memory, bulkhead <code>in_use</code>, the realtime hub and replay size. New rules: <code>ForzeConnectionPoolExhausted</code>, <code>ForzeDurableRunsFailing</code>, <code>ForzeRevocationWriteFailures</code>, <code>ForzeRealtimeEmitFailing</code>.</p>
 </li>
 <li>
-<p><strong>A transaction scope can roll back on purpose, for dry runs, without logging an error.</strong> <code>ctx.tx_ctx.scope(route)</code> yields a handle: <code>tx.rollback_only()</code> rolls back instead of committing. A nested one needs <code>TxCapabilities(savepoints=True)</code> (Postgres, strict mock); managers see <code>RollbackSignal</code>.</p>
+<p><strong>A transaction scope can roll back on purpose, for dry runs, without logging an error.</strong> <code>ctx.tx_ctx.scope(route)</code> yields a <code>TransactionScopeHandle</code>: <code>tx.rollback_only()</code> rolls back instead of committing. A nested one needs <code>TxCapabilities(savepoints=True)</code> (Postgres, strict mock); managers see <code>RollbackSignal</code>.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
@@ -11021,6 +11021,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Resilience gauges no longer fail a scrape that lands while a call is admitted.</strong> The bulkhead queue-depth and hedge-delay callbacks of <code>instrument_resilience</code> could raise <code>RuntimeError: OrderedDict mutated during iteration</code> in the exporter thread and lose that sample.</p>
+</li>
+<li>
+<p><strong><code>propose</code> no longer logs an ERROR traceback on Postgres for every dry run</strong>, and an <code>apply</code> that opens a scope on another client's route is refused (<code>propose_cross_client</code>) instead of committing there; <code>TransactionScopeHandle.independent_routes</code> lists such scopes.</p>
 </li>
 </ul>
 <h2 id="0220-2026-11-04"><a href="https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0">0.22.0</a> - 2026-11-04<a class="headerlink" href="#0220-2026-11-04" title="Permanent link">&para;</a></h2>

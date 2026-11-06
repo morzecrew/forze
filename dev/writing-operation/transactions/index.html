@@ -6985,7 +6985,8 @@ every backend logs that as an error. Mark the scope instead:</p>
 </code></pre></div>
 <p><code>rollback_only()</code> decides how the scope ends, not when: the body runs to the end,
 then the scope rolls back instead of committing. Call it first thing to declare a
-dry run up front.</p>
+dry run up front. To type a helper that takes <code>tx</code>, import <code>TransactionScopeHandle</code>
+from <code>forze.application.execution</code>.</p>
 <ul>
 <li><strong>At the root</strong>, the whole transaction rolls back. Work deferred with
   <a href="#after-the-commit"><code>run_or_defer</code></a> never runs, as after any rollback, and
