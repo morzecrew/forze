@@ -7114,13 +7114,18 @@ which makes the mapping trivial: <strong>the <abbr title="OpenTelemetry">OTel</a
 <td><code>forze.crypto.cold_miss</code></td>
 <td><code>forze_crypto_cold_miss</code></td>
 </tr>
+<tr>
+<td><code>process.cpu.time</code></td>
+<td><code>process_cpu_time</code></td>
+</tr>
 </tbody>
 </table>
 <p>Leave suffixes on — the collector default — and the same metrics arrive as
-<code>forze_operations_total</code> and <code>forze_operation_duration_milliseconds_bucket</code>. Both are
-fine; they are just different, and the shipped dashboards and alert rules assume the
-first. A unit test checks every expression in those files against the metric constants in
-<code>src/</code>, which is only possible because the mapping is pinned — and an integration test
+<code>forze_operations_total</code>, <code>forze_operation_duration_milliseconds_bucket</code> and
+<code>process_cpu_time_seconds_total</code>. Both are fine; they are just different, and the shipped
+dashboards and alert rules assume the first. A unit test checks every expression in those
+files against the metric constants in <code>src/</code>, which is only possible because the mapping is
+pinned — and an integration test
 puts a real Alloy in front of a real Prometheus and asserts the names that actually
 arrive, so the pinning is verified rather than assumed.</p>
 <p>Attribute names follow the same rule: <code>forze.outcome</code> becomes the label <code>forze_outcome</code>.
@@ -7503,21 +7508,22 @@ Both, not either.</p>
 </tr>
 <tr>
 <td><strong>Resilience</strong></td>
-<td>breaker states, event rates by kind, bulkhead depth against the adaptive limit, hedge delay</td>
+<td>breaker states, event rates by kind, bulkhead slots in use and queue depth against the limit, hedge delay</td>
 </tr>
 <tr>
 <td><strong>Data planes</strong></td>
-<td>tenant-pool size/capacity/churn, <abbr title="Key Management Service">KMS</abbr> round-trips and cache hit ratio, document L1, token signing</td>
+<td>tenant-pool size/capacity/churn, connection-pool occupancy and waiting callers, outbound HTTP requests in flight, <abbr title="Key Management Service">KMS</abbr> round-trips and cache hit ratio, document L1, token signing, process CPU and resident memory</td>
 </tr>
 <tr>
 <td><strong>Realtime</strong></td>
-<td>gateway delivery outcomes, backplane freshness, offline mailbox</td>
+<td>gateway delivery outcomes, backplane freshness, live-hub subscribers and drops, offline mailbox and its replay size</td>
 </tr>
 </tbody>
 </table>
-<p>Every panel queries a metric that exists — checked by a unit test against the constants in
-<code>src/</code>, in both directions, so a renamed metric fails CI instead of silently emptying a
-panel.</p>
+<p>A row fills once its <code>instrument_*</code> call runs; the <a href="../../reference/metrics/">metric catalog</a>
+names the call for each plane. Every panel queries a metric that exists — checked by a unit
+test against the constants in <code>src/</code>, so a renamed metric fails CI instead of silently
+emptying a panel.</p>
 <h2 id="alerts">Alerts<a class="headerlink" href="#alerts" title="Permanent link">&para;</a></h2>
 <p><a href="../assets/grafana/alerts.yml"><code>alerts.yml</code></a> codifies the alarms that until now lived only in
 docstrings. Each rule carries its reasoning in the annotation, because a threshold without
@@ -7537,6 +7543,10 @@ a "what this means, what to do" is a page nobody can action.</p>
 <tr>
 <td><code>ForzeDurableRecoverySustained</code></td>
 <td>runs keep being reclaimed from processes that died holding them</td>
+</tr>
+<tr>
+<td><code>ForzeDurableRunsFailing</code></td>
+<td>over 5% of a function's finished runs failed for 5 minutes, so one failed run of a quiet function is enough; cancelled, timed-out and retrying runs are excluded</td>
 </tr>
 <tr>
 <td><code>ForzeJobsStalled</code></td>
@@ -7559,12 +7569,24 @@ a "what this means, what to do" is a page nobody can action.</p>
 <td>pool creation while the cache sits at capacity</td>
 </tr>
 <tr>
+<td><code>ForzeConnectionPoolExhausted</code></td>
+<td>a process has held every connection of a pool for ten minutes</td>
+</tr>
+<tr>
 <td><code>ForzeTokenVerificationFailures</code></td>
 <td>rotation gaps, clock skew, or forgeries</td>
 </tr>
 <tr>
+<td><code>ForzeRevocationWriteFailures</code></td>
+<td>a revoked credential stays admitted for up to the revocation states' <code>ttl</code></td>
+</tr>
+<tr>
 <td><code>ForzeRealtimeBackplaneStale</code></td>
 <td>cross-node emit is silently down</td>
+</tr>
+<tr>
+<td><code>ForzeRealtimeEmitFailing</code></td>
+<td>every Socket.IO emit fails and none is delivered</td>
 </tr>
 <tr>
 <td><code>ForzeRealtimeDeliveriesDropped</code></td>
@@ -7588,6 +7610,9 @@ makes silence loud.</p>
 </div>
 <p>Thresholds are starting points. Tune them against your own traffic; the annotations tell
 you what you are trading.</p>
+<p>No rule ships for a leaked HTTP stream: no fixed threshold tells a leak from load. Watch
+the floor of the <strong>Requests in flight</strong> panel instead. A floor that rises under steady
+load and never falls back is a <code>stream</code> or <code>send</code> block that never exits.</p>
 <h2 id="exemplars">Exemplars<a class="headerlink" href="#exemplars" title="Permanent link">&para;</a></h2>
 <p>Grafana can jump from a histogram bucket straight to a trace, if the SDK attached an
 exemplar. The shipped datasource leaves <code>exemplarTraceIdDestinations</code> empty on purpose:

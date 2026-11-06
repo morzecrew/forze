@@ -7449,9 +7449,12 @@ not <code>forze.*</code>.</p>
 as the current value would hide the leak it is meant to show, so the instrument is skipped.</p>
 <p>The OpenTelemetry Prometheus exporter renders these as <code>process_cpu_time_seconds_total</code> and
 <code>process_memory_usage_bytes</code>, not prometheus_client's <code>process_cpu_seconds_total</code> /
-<code>process_resident_memory_bytes</code>, so panels built on those need new queries. A default
-<code>PrometheusMetricReader()</code> renders the default registry, whose own process collector reports
-that pair beside these; <code>worker_metrics_reader()</code> renders a registry without it.</p>
+<code>process_resident_memory_bytes</code>, so panels built on those need new queries. Through the
+<a href="../../running-in-prod/grafana-stack/#metric-names-in-prometheus">Grafana stack</a>, with
+suffixes off, they arrive as <code>process_cpu_time</code> and <code>process_memory_usage</code>, which its data
+planes dashboard queries. A default <code>PrometheusMetricReader()</code> renders the default registry,
+whose own process collector reports that pair beside these; <code>worker_metrics_reader()</code>
+renders a registry without it.</p>
 <p>Each process reports its own series. A pre-fork server scraped through one port answers from
 whichever worker takes the scrape, unless every worker writes a snapshot through
 <code>worker_metrics_reader()</code> and <code>MetricsSnapshots</code>, which label each series
