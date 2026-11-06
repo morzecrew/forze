@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import attrs
 import httpx
@@ -402,7 +402,7 @@ async def resolve(plan: LoadPlan, client: httpx.AsyncClient) -> Catalog:
     # A sweep leaves alone every scenario name, and every operation a reference already calls.
     taken = {s.name for s in plan.scenarios}
     taken |= {s.operation for s in plan.scenarios if isinstance(s, OpScenario)}
-    builder = _Builder(index=_index(document), pool=pool, taken=taken)
+    builder = _Builder(index=_index(document, plan.base_url), pool=pool, taken=taken)
 
     for scenario in plan.scenarios:
         builder.add(scenario)
@@ -611,11 +611,11 @@ def _read_file(path: Path) -> Any:
         raise _unavailable(f"{path} cannot be read as JSON ({type(error).__name__})") from error
 
 
-def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
+def _index(document: Mapping[str, Any], base_url: str) -> dict[str, list[_Route]]:
     """Every operation with an ``operationId``, in document order."""
 
     index: dict[str, list[_Route]] = {}
-    default = _first_server(document.get("servers")) or "/"  # OpenAPI's default server
+    default = _first_server(document.get("servers"), "The document") or "/"  # OpenAPI's default
 
     for path, raw in document["paths"].items():
         item = _deref(document, raw)
@@ -637,9 +637,17 @@ def _index(document: Mapping[str, Any]) -> dict[str, list[_Route]]:
             if isinstance(key, str):
                 route = _route(document, key, method, path, operation, shared)
                 # The operation's servers replace the path item's, which replace the document's.
-                server = _first_server(operation.get("servers") or item.get("servers")) or default
+                server = (
+                    _first_server(operation.get("servers"), f"Operation {key!r}")
+                    or _first_server(item.get("servers"), f"Path {path!r}")
+                    or default
+                )
 
-                if server != default:
+                # Every request goes under base_url: a server that is the document's, or that
+                # resolves to base_url itself, is where the request goes anyway.
+                if server != default and urljoin(base_url, server).rstrip("/") != base_url.rstrip(
+                    "/"
+                ):
                     route = attrs.evolve(route, server=server)
 
                 index.setdefault(key, []).append(route)
@@ -850,7 +858,7 @@ def _check_server(document: Mapping[str, Any], base_url: str) -> None:
     404s, which reads as deleted data, not as a misconfiguration.
     """
 
-    url = _first_server(document.get("servers"))
+    url = _first_server(document.get("servers"), "The document")
 
     if url is None or not url.startswith("/"):
         return  # none, or an absolute server: the base URL decides
@@ -864,13 +872,30 @@ def _check_server(document: Mapping[str, Any], base_url: str) -> None:
         )
 
 
-def _first_server(servers: Any) -> str | None:
-    """The URL of the first entry in a ``servers`` list, without a trailing slash."""
+def _first_server(servers: Any, where: str) -> str | None:
+    """The first entry of a ``servers`` list, its variables at their defaults, without a
+    trailing slash; ``None`` when the list is absent or empty."""
 
-    first = servers[0] if isinstance(servers, list) and servers else None
-    url = first.get("url") if isinstance(first, dict) else None
+    if servers is None or servers == []:
+        return None
 
-    return (url.rstrip("/") or "/") if isinstance(url, str) else None
+    first = servers[0] if isinstance(servers, list) else None
+
+    if not isinstance(first, dict) or not isinstance(url := first.get("url"), str):
+        raise _unavailable(f"{where} in the OpenAPI document has a 'servers' entry without a url")
+
+    variables = first.get("variables")
+    variables = variables if isinstance(variables, dict) else {}
+
+    def default(match: re.Match[str]) -> str:
+        variable = variables.get(match.group(1))
+
+        if isinstance(variable, dict) and "default" in variable:
+            return str(variable["default"])
+
+        return match.group(0)  # no default: left as written, so it matches only itself
+
+    return _PLACEHOLDER.sub(default, url).rstrip("/") or "/"
 
 
 def _deref(document: Mapping[str, Any], node: Any) -> dict[str, Any] | None:
