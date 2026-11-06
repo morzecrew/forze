@@ -234,7 +234,7 @@ the metric tells you when.
 ## Connection pool metrics
 
 Pool state is the first thing to check when an API slows under load, and a
-connection that is never returned is the leak a soak test exists to catch.
+connection that is never returned is the leak a [soak test](../testing/load-testing.md#soak-a-steady-load) exists to catch.
 `instrument_connection_pools` exports the pool of every client you name:
 
 ```python
@@ -302,7 +302,7 @@ in-box W-TinyLFU store or raise `capacity`.
 
 ## Process metrics
 
-A slow memory leak or CPU creep only shows in a soak if the server's own memory
+A slow memory leak or CPU creep only shows in a [soak](../testing/load-testing.md#soak-a-steady-load) if the server's own memory
 and CPU arrive in the same scrape as everything else. `instrument_process`
 exports them, standard library only:
 
@@ -341,7 +341,7 @@ For more — open file descriptors, threads, disk and network I/O — use
 
 Each realtime plane has its own opt-in call; the
 [catalog](../reference/metrics.md#realtime-gateway) lists what each exports. Two cover what a
-soak needs to tell a stuck node from a busy one:
+[soak](../testing/load-testing.md#soak-a-steady-load) needs to tell a stuck node from a busy one:
 
 ```python
 from forze_fastapi.realtime import instrument_realtime_hub

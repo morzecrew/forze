@@ -42,6 +42,7 @@ reaches for the wrong things. Start from the table below and read the whole row.
 | Encrypt a field | `field-encryption` → `kms-backends` → `spec-to-backend-config` |
 | Simulate my service under faults | `dst-simulation` → `dst-invariants` → `testing-with-mock` |
 | Instrument it for production | `logging-metrics` → `connection-settings` → `fastapi-setup` → `resilience` |
+| Load-test a running service | `fastapi-generated-routes` → `fastapi-identity` → `load-testing` → `logging-metrics` |
 
 If the task is not one of these, pick from the index below — but check whether it decomposes into
 a row first.
@@ -150,6 +151,7 @@ a row first.
 |---|---|
 | [errors](references/errors.md) | `CoreException`, adapter exception mapping, FastAPI error responses |
 | [logging-metrics](references/logging-metrics.md) | Structured logging, call context, operation, resilience, pool, process and HTTP metrics; one scrape for every pre-fork worker |
+| [load-testing](references/load-testing.md) | Ramping, soaking and comparing a running app with `forze_load`; realtime delivery and reconnect storms |
 | [resilience](references/resilience.md) | Retry, breaker, bulkhead, rate limit, hedging; invocation deadlines |
 | [shutdown-fleet](references/shutdown-fleet.md) | Graceful drain, quiesce, readiness, fleet posture across replicas |
 

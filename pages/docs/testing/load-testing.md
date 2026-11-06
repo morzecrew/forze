@@ -63,8 +63,10 @@ plan = LoadPlan(
   `attach_authn_routes` serves. Any async callable that takes the client and returns headers
   works too, for an external IdP or a cookie-mode app. The run's clients keep no cookies,
   because every principal shares them: a cookie-mode credential returns its session as an
-  explicit `Cookie` header. `password_login`'s routes are paths on the target; a URL with a
-  host is refused. Each run opens a fresh session, so a plan can be run again.
+  explicit `Cookie` header. `password_login`'s routes are paths on the target, `/login` and
+  `/refresh` by default; for authn routes mounted under a prefix, pass `login_path=` and
+  `refresh_path=`. A URL with a host is refused. Each run opens a fresh session, so a plan
+  can be run again.
 - **`tenant`** is sent as `X-Tenant-Id`. A token's tenant claim wins over it, and the app
   reads the header only with `trust_tenant_header=True`.
 
@@ -165,7 +167,8 @@ fields only.
 
 ## Run a ramp
 
-Point the CLI at the plan by import string:
+Point the CLI at the plan by import string, or at a function that takes no arguments and
+returns one:
 
 ```bash
 forze load run myapp.load:plan --steps 1,2,4,8,16,32,64 --step-s 30 --warm-s 5 --out ramp.jsonl
@@ -202,7 +205,8 @@ Before any load, the plan is validated and every principal signs in, at most fou
 forze hashes passwords with Argon2 four at a time by default, and a mass sign-in would
 measure that queue. The first failed sign-in stops the run, and the command exits 2. A ramp
 that stops on its stop rule exits 0: the stop is a result, recorded in the summary. To gate
-on a run, compare it with `--fail-on` (see [Compare two runs](#compare-two-runs)).
+on a run, compare it with `--fail-on` (see [Compare two runs](#compare-two-runs) and
+[Exit codes](#exit-codes)).
 
 ## Read the result
 
@@ -246,13 +250,15 @@ forze load compare base.jsonl head.jsonl --fail-on p95:15%,goodput:10%
 ```
 
 Steps are matched by worker count or rate, a soak's windows by their number, and goodput,
-p50, p95 and p99 are printed side by side. Without `--fail-on` the command only reports: load runs vary far more than
-micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
-exits 1 when a named metric is worse by more than its share, or has a value in the base run
-and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
-appears in both runs: a gate that compared nothing does not pass. A step either run cut
-short (`cut_short`) is printed with a warning and never gated, since its window was shorter;
-a gate left with only such steps compared nothing, and exits 2 too.
+p50, p95 and p99 are printed side by side. A file that cannot be read as a run exits 2,
+with or without `--fail-on`. Without `--fail-on` the command only reports: load runs vary
+far more than micro-benchmarks, and a default threshold would make a CI gate flaky.
+`--fail-on` names `goodput`, `p50`, `p95` or `p99`, each with a positive percentage. With
+it, the command exits 1 when a named metric is worse by more than its share, or has a value
+in the base run and none in the head (no call answered), and 2 when no step appears in both
+runs: a gate that compared nothing does not pass. A step either run cut short (`cut_short`)
+is printed with a warning and never gated, since its window was shorter; a gate left with
+only such steps compared nothing, and exits 2 too.
 When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the `forze_load` version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:
@@ -409,7 +415,10 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
   `device_id`; a hand-written resolver must do the same, or a principal's subscribers share
   one cursor, and a stream that reopens with no id replays from another's. Streams open in
   batches of `batch`. The kit never acks, so no cursor moves and nothing is trimmed, and every
-  first open replays the principal's retained mailbox, up to 1,000 entries. The first write
+  first open replays the principal's retained mailbox, up to 1,000 entries. On a shared
+  stack that skews the mailbox metrics: every open adds to `forze.realtime.mailbox.replayed`
+  and `forze.realtime.mailbox.replay_size`, and the run never adds to `acked`. Run it against
+  a stack of its own. The first write
   waits until no frame has come for a quarter of a second, at most `timeout_s`, so that
   replay is over. It also waits, `timeout_s` at most, until a stream is open.
 - **Writes** run for `duration_s` as open-model arrivals at `rate`: each picks one of
@@ -482,11 +491,15 @@ Each stream is read by its own task. On SSE a frame's JSON is decoded only when 
 reads `data`; a WebSocket frame is decoded on arrival, since its event name is inside. A
 stream that reads slower than its frames arrive fills its 256-slot queue on the server, and
 the live leg drops what does not fit. So a `share` below 1 is a server finding
-when `client.saturated` is false, and the client's own limit when it is true.
+when `client.saturated` is false, and the client's own limit when it is true. The server
+counts each such drop as `forze.realtime.hub.dropped` when the app calls
+[`instrument_realtime_hub`](../reference/metrics.md#realtime-hub). A realtime run scrapes
+nothing, so read that counter from your own metrics.
 
 Realtime runs from Python only: `forze load run` has no realtime model, since `match` and
-`key_of` are code. `forze load compare` reads step and window rows, and skips phase rows. The
-meta line records the profile's numbers, not its path, topics or callables.
+`key_of` are code. `forze load compare` reads step and window rows, and skips phase rows, so
+two realtime runs compare nothing: without `--fail-on` the command warns, and with it, it
+exits 2. The meta line records the profile's numbers, not its path, topics or callables.
 
 ## Writes and shared environments
 
@@ -500,6 +513,19 @@ reference is a writing scenario when it declares `writes=True`, which its route'
 
 The run never cleans up what it wrote. Run write-enabled plans against a seeded, disposable
 stack, never against production.
+
+## Exit codes
+
+`forze load` keeps 1 for a crossed threshold, so a CI job can tell a regression from a run
+that never measured anything:
+
+| Exit | `forze load run` | `forze load compare` |
+| --- | --- | --- |
+| 0 | The run finished, a stop included: the stop rule or an emptied sample. A soak's drift flags never fail it | The runs were compared, and no `--fail-on` threshold was crossed |
+| 1 | Not by design: an unexpected exception, such as one your scenario code raises, ends the command with its traceback and Python's status 1 | A `--fail-on` metric is worse by more than its share, or has a value in the base run and none in the head |
+| 2 | The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid | A file cannot be read as a run, with or without `--fail-on`; the `--fail-on` spec is invalid; `--fail-on` finds no whole step in both runs, as with two realtime runs; an option is invalid |
+
+Every `forze load` command exits 2 when the `load` extra is not installed.
 
 ## Notes
 

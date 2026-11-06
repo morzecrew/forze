@@ -19,8 +19,9 @@
 #   D4  Deliberately deferred. In scope, not yet worth the words. Requires a rationale
 #       *and* a trigger that would move it into D1 or D2.
 #
-# D4 holds one unit, `forze_load`, with its trigger below. An empty D4 is the healthier
-# state: every deferral names what moves it into D1 or D2.
+# D4 is empty, and that is the healthier state: nothing in scope is currently being put
+# off. The vocabulary stays defined because the next integration to land will plausibly
+# want it.
 
 # --------------------------------------------------------------------------------------
 # Extras → census units.
@@ -159,6 +160,7 @@ names = ["observability", "zstd"]
 "forze_sandbox" = { doctrine = "D1" }
 "forze_sandbox.container" = { doctrine = "D1" }
 
-# RFC 0084 P1 ships the generic core (ramp, principals, JSON output): no forze-specific
-# wiring yet for a worked example to show.
-"forze_load" = { doctrine = "D4", rationale = "RFC 0084 P1 is the generic load core; app authors reach it through the testing docs page until it gains forze-specific wiring", trigger = "RFC 0084 P2 (operation references from OpenAPI) lands, or a consumer app ports its harness onto forze_load" }
+# Was D4 until RFC 0084 gave it forze-specific wiring: operations by key checked against
+# `x-forze-kind`, samples from the app's own list routes, the read sweep, soak drift from
+# `/metrics` and realtime delivery.
+"forze_load" = { doctrine = "D1" }

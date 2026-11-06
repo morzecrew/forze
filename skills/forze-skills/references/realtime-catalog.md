@@ -76,3 +76,4 @@ operation, because publishing is a side effect.
 ## Reference
 
 - [Realtime egress](https://morzecrew.github.io/forze/latest/data-events/realtime/)
+- [Load testing a running app](load-testing.md) — delivery latency and the reconnect storm
