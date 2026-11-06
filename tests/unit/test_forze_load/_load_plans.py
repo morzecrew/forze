@@ -5,9 +5,12 @@ The scenarios answer without the network, so ``run`` exercises the whole command
 
 from __future__ import annotations
 
+import sys
+
 import attrs
 import httpx
 
+from forze.base.exceptions import exc
 from forze_load import Call, LoadPlan, Principal, Scenario, password_login
 
 # ----------------------- #
@@ -37,6 +40,31 @@ soak_plan = attrs.evolve(plan, metrics=None)
 
 async def _broken(_call: Call) -> httpx.Response:
     raise RuntimeError("scenario bug")
+
+
+async def _exits(_call: Call) -> httpx.Response:
+    sys.exit(1)
+
+
+async def _grouped_refusal(_call: Call) -> httpx.Response:
+    # As a scenario's task group surfaces a framework refusal: inside an ExceptionGroup.
+    raise ExceptionGroup("calls", [exc.configuration("refused inside", code="load_test")])
+
+
+def _with(scenario: Scenario) -> LoadPlan:
+    return LoadPlan(
+        base_url="http://127.0.0.1:9",
+        principals=[Principal(name="viewer", mix={"read": 1})],
+        scenarios=[scenario],
+    )
+
+
+exiting_plan = _with(Scenario("read", _exits, writes=False))
+grouped_refusal_plan = _with(Scenario("read", _grouped_refusal, writes=False))
+
+
+def crashing_factory() -> LoadPlan:
+    raise RuntimeError("factory bug")
 
 
 # A scenario that raises: a bug in the plan, which ends the run without a verdict.

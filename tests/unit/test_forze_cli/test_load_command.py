@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -167,6 +168,43 @@ class TestRun:
 
         assert result.exit_code == 2, result.output
         assert "RuntimeError" in result.output
+
+    def _run(self, ref: str, out: Path, *extra: str) -> Any:
+        args = ["load", "run", f"{_PLANS}:{ref}", "--steps", "1", "--step-s", "0.2"]
+
+        return runner.invoke(app, [*args, "--warm-s", "0", "--out", str(out), *extra])
+
+    def test_a_scenario_that_exits_exits_2_not_1(self, tmp_path: Path) -> None:
+        result = self._run("exiting_plan", tmp_path / "e.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "exited" in result.output
+
+    def test_refusals_raised_inside_a_task_group_are_refusals(self, tmp_path: Path) -> None:
+        result = self._run("grouped_refusal_plan", tmp_path / "g.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "refused: refused inside" in result.output
+        assert "the plan raised" not in result.output
+
+    def test_an_unwritable_run_file_is_not_a_plan_failure(self, tmp_path: Path) -> None:
+        result = self._run("plan", tmp_path / "missing-dir" / "p.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "cannot write" in result.output
+        assert "the plan raised" not in result.output
+
+    def test_a_factory_that_raises_exits_2(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:crashing_factory"])
+
+        assert result.exit_code == 2, result.output
+        assert "factory raised RuntimeError" in result.output
+
+    def test_an_unknown_model_is_a_usage_error_not_a_plan_failure(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:plan", "--model", "sideways"])
+
+        assert result.exit_code == 2
+        assert "the plan raised" not in result.output
 
     def test_a_read_sweep_lists_the_routes_it_skipped(self, tmp_path: Path) -> None:
         out = tmp_path / "s.jsonl"
