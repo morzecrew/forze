@@ -66,6 +66,10 @@ _MIN_RETRY_S = 0.05
 _MAX_BACKOFF_S = 30.0
 """The longest base wait between reopens of a stream that keeps failing, before jitter."""
 
+_MAX_DOUBLINGS = 32
+"""Doublings past which the backoff stops growing: any ``retry:`` base has reached
+:data:`_MAX_BACKOFF_S` by then, and ``2.0 ** 1024`` would overflow."""
+
 _QUIET_S = 0.25
 """Seconds without a frame that end the wait for the first opens' replay, before any write."""
 
@@ -172,7 +176,10 @@ class Realtime:
             value = getattr(self, name)
 
             if (value is not None or name != "idle_s") and not (
-                isinstance(value, int | float) and math.isfinite(value) and value > 0
+                isinstance(value, int | float)
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value > 0
             ):
                 raise _invalid(f"Realtime {name} must be a positive, finite number")
 
@@ -547,7 +554,9 @@ class _RealtimeRun:
         :data:`RETRY_S`), doubled for each failure in a row up to :data:`_MAX_BACKOFF_S`, then
         jittered by half either way so the streams do not come back in lockstep."""
 
-        backoff = min(base * 2.0 ** max(sub.failures - 1, 0), _MAX_BACKOFF_S)
+        # The exponent is capped first: 2.0 ** 1024 overflows long before `min` would apply.
+        doublings = min(max(sub.failures - 1, 0), _MAX_DOUBLINGS)
+        backoff = min(base * 2.0**doublings, _MAX_BACKOFF_S)
 
         return max(backoff * self.rng.uniform(0.5, 1.5), _MIN_RETRY_S)
 

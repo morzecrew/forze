@@ -873,6 +873,13 @@ class TestReopenDelay:
         assert bases[0] <= 1.5 < bases[1] <= 3.0 < bases[2] <= 6.0
         assert bases[3] <= 45.0  # 30 s at most, before jitter
 
+    def test_a_long_failure_streak_keeps_the_capped_wait(self) -> None:
+        rt = _direct()
+        sub = rt.subscribers[0]
+        sub.failures = 2000  # 2.0 ** 1999 would overflow
+
+        assert 15.0 <= rt._delay(sub, 1.0) <= 45.0
+
     def test_an_open_resets_the_backoff(self) -> None:
         rt = _direct()
         sub = rt.subscribers[0]
@@ -984,6 +991,8 @@ class TestRefusals:
             {"rate": float("nan")},
             {"duration_s": 0},
             {"timeout_s": float("inf")},
+            {"rate": True},
+            {"idle_s": True},
         ],
     )
     def test_a_malformed_profile_is_refused(self, options: dict[str, Any]) -> None:
