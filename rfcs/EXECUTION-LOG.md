@@ -6636,6 +6636,30 @@ CodeRabbit's re-reviews of `73c2d1742` and `c8544032e`, on two threads the first
 | R-34 | Bug | A route that declares only `application/merge-patch+json` or another `application/*+json` passed resolution, but its body went out as `application/json`, which such a server may refuse with 415 | Fixed in `3a2dc88eb`: the body carries the route's own JSON type as its `Content-Type`; a route that also offers `application/json` gets that (D-235) |
 | R-35 | Bug | Two more bodies passed the empty-object check: a schema with `not` that refuses `{}`, and a sample's `{"size": 500}` against a `const` of `{}` or an `enum` that lacks it. Patching keyword by keyword would not converge | Fixed in `6217bff32`, by construction: only an allowlist of keywords is evaluated, a schema with any other top-level keyword is skipped as `its body schema uses keywords the kit does not evaluate: …`, and the exact body sent is judged, a sample's `size` included (D-236, D-240) |
 
+## Decision-row outcomes — 2026-11-06 (RFC 0084)
+
+The maintainer accepted D-233, D-234, D-235, D-236, D-237 with D-238, D-239, D-240, D-241,
+D-242, D-245, D-247 and D-248 as proposed, now RFC 0084 §11 rows 42 to 53. Row 48, from the
+drift D-240, amends row 7 and widens §5.5's input class; row 52, from D-247, amends row 16.
+The drift D-246 is accepted as a departure from §7, without a row. D-244 is accepted:
+`forze_load` stays D4 in the skills census, and #868 moves it to D1 with a worked example.
+D-243 proposed no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0084 | 42 | Accepted | `ASSUMED` | The OpenAPI document is read once per run, before sign-in and without a credential, from `LoadPlan.openapi` | D-233 |
+| 0084 | 43 | Accepted | `ASSUMED` | `Scenario.op` defaults to `writes=False`, and `x-forze-kind` must confirm it either way | D-234 |
+| 0084 | 44 | Accepted | `ASSUMED` | A reference that does not fit its route, or whose key is listed twice, stops the run before sign-in | D-235 |
+| 0084 | 45 | Accepted | `ASSUMED` | A sample reads a `query` operation that needs no input; a failed or unreadable answer stops the run before load | D-236 |
+| 0084 | 46 | Accepted | `ASSUMED` | Equal samples are shared per principal; `sample_exhausted` stops the run as finished, and a `cut_short` step is never a knee | D-237, D-238 |
+| 0084 | 47 | Accepted | `ASSUMED` | A generated id route samples its namespace's `list`, and is skipped without one | D-239 |
+| 0084 | 48 | Accepted, **amends row 7** | `ASSUMED` | The sweep generates a `query` route needing at most an id, with a required body that accepts `{}` | D-240 |
+| 0084 | 49 | Accepted | `ASSUMED` | A sweep is one mix entry split evenly; skipped routes go in `plan.skipped` | D-241 |
+| 0084 | 50 | Accepted | `ASSUMED` | Every request uses the plan's `timeout_s`; `x-deadline-seconds` is demand-gated | D-242 |
+| 0084 | 51 | Accepted | `ASSUMED` | A document whose first server is a path is refused unless the base URL ends with it | D-245 |
+| 0084 | 52 | Accepted, **amends row 16** | `ASSUMED` | A step that retired scenarios is never the knee, never confirms one, and stops the search | D-247 |
+| 0084 | 53 | Accepted | `ASSUMED` | `compare` never gates on a cut-short step; a `--fail-on` with no whole step in both runs is refused | D-248 |
+
 ---
 
 # Unit 22 · RFC 0083 P2 — the minimal collector recipe
@@ -6720,3 +6744,12 @@ documented job. Three sabotages each failed it: an unknown exporter key (Tier 1)
   No traces pipeline to a `nop` exporter: that would swallow spans the reader may think are
   kept.
 - **Proposed row (RFC 0083):** none.
+
+## Decision-row outcomes — 2026-11-06 (RFC 0083)
+
+The maintainer accepted D-251 as proposed, now RFC 0083 §11 row 23. D-250 and D-252 proposed
+no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0083 | 23 | Accepted | `ASSUMED` | The collector recipe turns name suffixes off and its scrape job sets `honor_labels: true`, so the shipped dashboards and alerts apply | D-251 |
