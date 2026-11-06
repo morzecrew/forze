@@ -148,6 +148,17 @@ def test_the_path_loses_its_query_string_and_user_info() -> None:
     assert object_store_error(error).details == {"path": "https://host/b/k.parquet", "status": 404}
 
 
+def test_a_path_that_does_not_parse_is_left_out() -> None:
+    error = duckdb.IOException(
+        'IO Error: No files found that match the pattern "//[bad/missing.parquet"'
+    )
+
+    mapped = object_store_error(error)
+
+    _assert_mapped(mapped, ExceptionKind.NOT_FOUND, SOURCE_NOT_FOUND_CODE)
+    assert mapped.details == {"path": None}
+
+
 def test_the_driver_error_is_kept_as_the_cause() -> None:
     error = duckdb.IOException('IO Error: No files found that match the pattern "/x/*.parquet"')
 

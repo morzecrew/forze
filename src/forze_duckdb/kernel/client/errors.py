@@ -57,7 +57,8 @@ def _location(message: str) -> str | None:
     """The failed path from *message*, without a query string, fragment or user info.
 
     A presigned URL carries its signature in the query, and an ``http`` URL can carry
-    credentials before the host; neither belongs in an error.
+    credentials before the host; neither belongs in an error. A path that does not parse as
+    a URL is left out rather than reported raw.
     """
 
     match = _QUOTED.search(message.partition("\n")[0])
@@ -65,7 +66,11 @@ def _location(message: str) -> str | None:
     if match is None:
         return None
 
-    parts = urlsplit(match.group(1))
+    try:
+        parts = urlsplit(match.group(1))
+
+    except ValueError:  # e.g. an unclosed ``[`` read as an IPv6 host
+        return None
 
     return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
 
