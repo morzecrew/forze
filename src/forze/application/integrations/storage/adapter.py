@@ -332,7 +332,8 @@ class ObjectStorageAdapter(
         if prefix is None:
             return
 
-        if not re.match(r"^[a-zA-Z0-9!\-_.*'()/]*$", prefix):
+        # ``fullmatch``: ``$`` would also match before a trailing newline.
+        if not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]*", prefix):
             raise exc.precondition(f"Invalid object storage prefix: {prefix}")
 
     # ....................... #
@@ -357,7 +358,7 @@ class ObjectStorageAdapter(
         upload/list — take the key verbatim.
         """
 
-        if not key or not re.match(r"^[a-zA-Z0-9!\-_.*'()/]+$", key):
+        if not key or not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]+", key):
             raise exc.precondition(f"Invalid object storage key: {key!r}")
 
         if key.startswith("/") or ".." in key.split("/"):

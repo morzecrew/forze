@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`propose` no longer logs an ERROR traceback on Postgres for every dry run**, and an `apply` that opens a scope on another client's route is refused (`propose_cross_client`) instead of committing there; `TransactionScopeHandle.independent_routes` lists such scopes.
 
+### Security
+
+- **Storage keys and prefixes ending in a line break are refused**, as the key charset already intended.
+
 ## [0.22.0] - 2026-11-04
 
 ### Added

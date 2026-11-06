@@ -75,6 +75,35 @@ def test_validate_key_rejects_unsafe_keys(
             storage_adapter._validate_key(bad)
 
 
+@pytest.mark.parametrize("bad", ["lake/x\n", "lake/x\r", "lake/\nx", "lake/x\r\n"])
+def test_validate_key_refuses_a_line_break_anywhere(
+    storage_adapter: ObjectStorageAdapter, bad: str
+) -> None:
+    with pytest.raises(CoreException):
+        storage_adapter._validate_key(bad)
+
+
+@pytest.mark.parametrize("bad", ["lake/x\n", "lake/x\r", "lake/\nx", "\n"])
+def test_validate_prefix_refuses_a_line_break_anywhere(
+    storage_adapter: ObjectStorageAdapter, bad: str
+) -> None:
+    with pytest.raises(CoreException):
+        storage_adapter._validate_prefix(bad)
+
+
+async def test_upload_refuses_a_prefix_ending_in_a_line_break(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.upload_bytes = AsyncMock()
+
+    with pytest.raises(CoreException):
+        await storage_adapter.upload(
+            UploadedObject(filename="a.txt", data=b"x", prefix="lake/x\n"),
+        )
+
+    storage_adapter.client.upload_bytes.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_delete_rejects_traversal_key(
     storage_adapter: ObjectStorageAdapter,
