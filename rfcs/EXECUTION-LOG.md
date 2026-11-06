@@ -6758,9 +6758,10 @@ no row.
 
 # Unit 24 · RFC 0084 P4 — the soak
 
-Branch `feat/load-soak`, cut from `main` at `bad754b62` and rebased onto `6706f8444` (#869). RFC 0084 P4 per §12: the soak, the
-`/metrics` parser, the one-process rule (row 22) and drift (row 26), with the §6 Drift and
-Parsers tests, the §7 docs and the changelog (§5.8, §5.9). The gates hold on `main`: RFC 0083
+Branch `feat/load-soak` (PR #872), cut from `main` at `bad754b62` and rebased onto
+`6706f8444` (#869). RFC 0084 P4 per §12: the soak, the `/metrics` parser, the one-process rule
+(row 22) and drift (row 26), with the §6 Drift and Parsers tests, the §7 docs and the
+changelog (§5.8, §5.9). The gates hold on `main`: RFC 0083
 P1 (#846, the union scrape) and P2 (Unit 22, the collector recipe) shipped, the process gauges
 of row 24 shipped (#854), and row 25's gauges landed as D-270 lists them. Not built: P3
 (realtime subscribers), which another branch builds at the same time, and with it §5.8's
@@ -6769,16 +6770,18 @@ Row 22 holds, and D-274 settles the detection rule §10 left to RFC 0083's shape
 25 hold, as D-270 records. Row 26 is refined by D-271, D-276 and D-277, row 28 by D-279. Unit
 21's proposed rows are unanswered; this unit builds as if each is accepted as proposed.
 
-**Drift count: 3.** Fifteen entries, D-270 to D-284: three `drift` (D-275, D-281, D-282),
-eleven `spec-gap`, one `discovery`. The drifts depart from §5.2's CLI sketch and from §7's page
+**Drift count: 3.** Sixteen entries, D-270 to D-285: three `drift` (D-275, D-281, D-282),
+twelve `spec-gap`, one `discovery`. The drifts depart from §5.2's CLI sketch and from §7's page
 and changelog wording, not from a decision row. A review of the branch raised eight findings,
-all fixed; the table at the end records each. Fixing them amended D-272, D-275, D-276 and
-D-278 and added D-283 and D-284.
+and PR #872's reviews ten more, all fixed; the two tables at the end record each. The first
+round amended D-272, D-275, D-276 and D-278 and added D-283 and D-284; the second amended
+D-272 to D-276, D-278, D-279 and D-284 and added D-285.
 
 **Where each item lives.** The parser, the scrape, the per-series points, the one-process rule
 and the fit in [`forze_load/soak.py`](../src/forze_load/soak.py); the `Soak` profile and the
-window loop in [`engine.py`](../src/forze_load/engine.py) (`Soak`, `_soak`, and a `finish`
-hook on `_ramp` that completes each row before it is written); `LoadPlan.metrics` in
+window loop in [`engine.py`](../src/forze_load/engine.py) (`Soak`, `_soak` and
+`_window_row`; the ramps' `_Run.step`, `_ramp`, `_closed` and `_open` are as on `main`);
+`LoadPlan.metrics` in
 [`plan.py`](../src/forze_load/plan.py); window rows in `compare` and `summarize` in
 [`report.py`](../src/forze_load/report.py); `--soak-s` and `--window-s` in
 [`forze_cli/load.py`](../src/forze_cli/load.py). `forze_load` still imports only `forze`
@@ -6791,7 +6794,12 @@ one-process rule removed, the last-quarter test removed, warm-up windows fitted,
 windows gated by `compare`, label values left escaped, union points stamped at the scrape, a
 re-read snapshot kept, `sparse` removed, only transport errors caught, a value's text left
 in the error, the stop rule applied to warm-up windows, `server.attribution` left out of the
-meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning removed.
+meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning removed. The
+second round adds twelve: `inconclusive` removed, rounded `t_s` fitted, a cut-short window
+fitted, timestamps unchecked, any escape read, a value's token in the error, a gap for the
+scrape between windows, run-file flags unchecked, the "not evaluated" line removed, the
+interleaved warning reworded, and the previous round's engine run against the back-to-back
+and arrival-schedule tests.
 
 ## D-270 — Row 24's and row 25's gauges, as `main` has them
 
@@ -6865,12 +6873,14 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
     (any `httpx` error, a body that cannot be decoded included; a status other than 200; text
     the parser refuses) stops the run as `load_metrics_unavailable` (exit 2) before a file is
     written. It is also the counters' baseline;
-  - the reason a scrape failed names the error class, the status or the parser's complaint,
-    never the body: a value that is not a number reads `<metric> has a value that is not a
-    number`, so a token a misrouted answer carries reaches neither the file nor the CLI;
+  - the reason a scrape failed is `request failed (<error class>)`, `answered <status>`, or
+    the parser's `line <n> is not Prometheus text: <what is wrong>`, and never repeats text
+    from the body, a metric name included, so a token a misrouted answer carries reaches
+    neither the file nor the CLI;
   - `metrics=None` runs a soak on client numbers only; ramps never read the field;
-  - a scrape that fails later is recorded as the row's `server: {"error": ...}`, and the soak
-    goes on; the next scrape's counter rates span both windows.
+  - a scrape runs as each window ends, beside the next window (D-285), within `timeout_s`;
+    one that fails is recorded as the row's `server: {"error": ...}`, and the soak goes on;
+    the next scrape's counter rates span both windows.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a soak scrapes `LoadPlan.metrics`, a path on the
   target, without a credential: once before sign-in, where a route that cannot be read stops
@@ -6885,9 +6895,12 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
   identity is. The exporter writes `otel_scope_schema_url=""` and `otel_scope_version=""` on
   every series.
 - **Built:** `parse_metrics` reads text format 0.0.4: `# HELP`, `# TYPE` and free comments,
-  labels with the `\\`, `\"` and `\n` escapes, a trailing comma, `NaN` and `±Inf`, and an
-  optional timestamp, which is ignored. A histogram's samples take their family's type by
-  suffix. A malformed sample line refuses the whole scrape, as Prometheus refuses it. The
+  labels with the `\\`, `\"` and `\n` escapes and no other (an unknown escape refuses the
+  scrape, since reading it as its character could merge two series), a trailing comma, `NaN`
+  and `±Inf`, and an optional timestamp, which must be a signed 64-bit integer and is then
+  ignored. A histogram's samples take their family's type by suffix. A malformed sample line
+  refuses the whole scrape, as Prometheus refuses it; the error gives the line's number and
+  what is wrong, never text from the line (R-15). The
   request asks for `text/plain`; OpenMetrics is not read. A series key is
   `name{label="value",…}` with labels sorted and those with an empty value dropped, which
   Prometheus reads as absent. Tested on the real exporter's output through a plain
@@ -6932,12 +6945,12 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
 - **Built:**
   - `Soak(duration_s, window_s=60.0, warm_windows=2, workers= | rate=, think_s, arrivals,
     stop_error_rate)`, exactly one of `workers` and `rate`, beside P1's `ClosedRamp` and
-    `OpenRamp` (D-221). A window runs as a step with no warm-up of its own;
+    `OpenRamp` (D-221). Windows run back to back (D-285);
   - each window writes a `kind: "window"` row: the step row's fields plus `window` (from 1),
-    `warm`, `t_s` (seconds since the load started, taken once the window's calls have
-    finished, so its end plus that wait) and `server`
-    (`instances` and `series`, counters as per-second rates). Warm-up windows are written
-    and marked, not dropped;
+    `warm`, `t_s` (seconds since the load started, at the window's end, rounded to the
+    millisecond in the file; the fit reads the full value) and `server` (`instances` and
+    `series`, counters as per-second rates). Warm-up windows are written and marked, not
+    dropped;
   - `warm_windows` is at least 2, and a soak shorter than `warm_windows + 4` windows (one per
     quarter, `MIN_FIT_WINDOWS`) is refused when built; `duration_s` is rounded down to whole
     windows;
@@ -6966,16 +6979,21 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
   threshold is 10 % of the first quarter's absolute mean. From a first quarter of zero any
   rise passes it, so one late event (`[0, 0, 0, 0, 0, 0, 0, 1/60]`) would read as a leak:
   such a series is flagged only when every point of its last quarter is above zero, and is
-  `sparse` otherwise, a status of its own so the reader sees it. A non-finite value and a counter that went down (a reset) give no point. The
-  client's p50, p95 and p99 are fitted by the same rule; goodput is recorded beside them,
-  not fitted, since more goodput is no leak. Tested: the same flag at a `window_s` of 1 to
-  60 s over one duration, and in seconds and milliseconds.
+  `sparse` otherwise, a status of its own so the reader sees it. A non-finite value and a
+  counter that went down (a reset) give no point. Points whose times leave no slope (all
+  at one time) are `inconclusive`, never an exception that would lose the summary (R-10).
+  The client's p50, p95 and p99 are fitted by the same rule, on each window's end at full
+  precision, from windows a stop did not cut short: one slow answer can dominate a partial
+  window (R-16); that window's scrape still counts for the server's series. Goodput is
+  recorded beside them, not fitted, since more goodput is no leak. Tested: the same flag at
+  a `window_s` of 1 to 60 s over one duration, and in seconds and milliseconds.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — the run's duration is the last window's end; a
   quarter is `n // 4` of the windows past the warm-up; the threshold is 10 % of the first
   quarter's absolute mean; from a first quarter of zero a series is flagged only when its
-  whole last quarter is above zero, and is `sparse` otherwise; the client's p50, p95 and p99
-  are fitted by the same rule.
+  whole last quarter is above zero, and is `sparse` otherwise; points that leave no slope
+  are `inconclusive`; the client's p50, p95 and p99 are fitted by the same rule, on full
+  precision window ends, leaving out a window a stop cut short.
 
 ## D-277 — Capacity pairs are a table, pinned to core's instruments
 
@@ -7000,7 +7018,10 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
 - **Built:** a window past the warm-up whose 5xx, 504 and transport failures pass
   `stop_error_rate`, or that is misconfigured, ends the soak; `stopped` names the window, the
   load level and the reason. A warm-up window never stops it: a cold-start burst of 5xx is
-  what a ramp's `warm_s` keeps out of its stop rule too. A principal whose samples run out halts it as it halts a ramp (D-238). Drift is
+  what a ramp's `warm_s` keeps out of its stop rule too. A window's row is read once its
+  calls drain and its scrape answers, while the next window runs (D-285), so the rule sees
+  every call; a stop found then ends that next window, which is written cut short. A
+  principal whose samples run out halts the soak as it halts a ramp (D-238). Drift is
   computed over the windows written, and the run exits 0.
 - **Because:** a server that falls over mid-soak is the finding; hours of errors after it
   measure nothing more, and a misconfigured mix measures nothing from the start.
@@ -7017,8 +7038,13 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
   window number. A warm-up window in either run is printed with the warning
   `window=N: warm-up, not gated` and no threshold is applied, as a step cut short is not
   gated (D-248); a gate left with only such windows is refused as `load_compare_empty`.
-  Drift summaries are not compared: §5.9 compares rows. `summarize` prints the flagged series
-  where a ramp prints its knee.
+  Drift summaries are not compared: §5.9 compares rows. A row's `warm` and `cut_short`, which
+  `compare` branches on, must be booleans, or the file is refused as `load_run_file_invalid`:
+  a string `"false"` is truthy and would drop a window from the gate (R-17). `summarize`
+  prints the flagged series where a ramp prints its knee, and under them how many server
+  series were fitted and the count left out per status, or that server drift was not
+  evaluated (no metrics route, no series scraped, or none fittable); the client's line
+  appears when one of its percentiles was not fitted (R-13).
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — `compare` matches soak windows by number and never
   gates on a warm-up window.
@@ -7090,7 +7116,9 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
   `per_series` (every kept series names its instance), `instance` (the scrape names one),
   `interleaved` (several, with unlabelled series) or `none`. `run()` takes an `on_meta`
   callback, called once the meta line is written and before sign-in; `forze load run` uses
-  it to print a warning for `none` and `interleaved`. It warns and does not refuse: client
+  it to print a warning: for `none` that no server series will be fitted, for
+  `interleaved` that the unlabelled series may not be, while series labelled
+  `service_instance_id` still are (R-9). It warns and does not refuse: client
   numbers and their drift still count, and the run exits 0. A pre-fork server without the
   union reads as `instance` at first, since one scrape reaches one worker; only a later
   scrape on another worker shows it.
@@ -7098,6 +7126,32 @@ meta line, `--window-s` accepted without `--soak-s`, and the CLI's warning remov
 - **Proposed row (RFC 0084):** `ASSUMED` — the meta line records how the first scrape ties
   series to a process (`server.attribution`), and the CLI warns before load when none can be
   fitted; the soak runs.
+
+## D-285 — Windows run back to back, the scrape beside the next one
+
+- **Touches:** §5.8 ("A row is written every `window_s`"), §5.3 (open-model arrivals), row 26,
+  D-275, D-278, D-283.
+- **RFC said:** a steady load, a row every `window_s`. Silent on what happens between rows.
+- **Found (PR #872 review, R-11 and R-12):** the soak ran its windows through the ramp's step
+  loop. A step drains its calls, and the soak then scraped, before the next window opened:
+  the load went on in between, counted in no window and unseen by the stop rule, and every
+  scrape lengthened the run (six 60 s windows behind 8 s scrapes took at least 408 s). The
+  open model also restarted its arrival schedule at each window with an immediate arrival,
+  so `rate=0.001` with 60 s windows sent about one request a window, not one per 1,000 s.
+- **Built:** the soak has its own loop. The load starts once and runs to the end. Windows
+  close on a fixed schedule from the load's start, `started + n × window_s`, and the next
+  opens at the same instant, so every call counts in one window. A closed window's drain
+  and its scrape run side by side, beside the next window, and the scrape is stamped when
+  it is sent (D-283). The row is written, and the stop rule read, when both are done. A
+  soak lasts its windows plus the last window's drain and scrape; a scrape slower than a
+  window delays the next row and lengthens that window, and no call goes uncounted. The
+  open model keeps one arrival schedule for the whole soak. The ramps keep `main`'s step
+  loop: their steps change rate, and their `warm_s` keeps the switch out of their numbers.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a soak's windows run back to back on a fixed
+  schedule from the load's start, with one load and one arrival schedule throughout; a
+  window's drain and scrape run beside the next window, and its row and stop rule follow
+  when both are done.
 
 ## Review findings — 2026-11-06
 
@@ -7113,3 +7167,20 @@ Review of `572ecc88b`. Every fix has a test that fails without it.
 | R-6 | Risk | The stop rule ended a soak on a cold-start burst in its warm-up, which a ramp's `warm_s` would not | Fixed (D-278): warm-up windows never stop a soak |
 | R-7 | Docs | `t_s` was documented as the window's end though taken after the drain; the tenant pool pair named no `instrument_*`; the CLI ignored `--window-s` without `--soak-s` and `--step-s`/`--warm-s` with it | Fixed: `t_s` described as built (D-275), `instrument_tenant_pools` named, the options refused with exit 2 (D-275). The changelog entry has no room for `LoadPlan.metrics` or `--soak-s` under 320 characters and is unchanged |
 | R-8 | Test | Two engine tests needed a call inside a 50 ms real window, so a scheduler stall could empty it | Fixed: the goodput test runs 0.2 s windows and asks for goodput in one fitted window; the stop test accepts whichever window past the warm-up first saw a call |
+
+## Review findings — 2026-11-06 (PR #872)
+
+CodeRabbit's and CodeAnt's reviews of `f79908a42`. Every fix has a test that fails without it.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-9 | Docs | The start warning for a scrape with labelled and unlabelled series said no server series would be fitted, though the labelled ones are | Fixed (D-284): "its unlabelled series may not be fitted"; tested per attribution value |
+| R-10 | Bug | Client drift was fitted on the rounded `t_s`: with very short windows four answered windows could share one, `statistics.linear_regression` raised, and the run file kept no summary | Fixed (D-276): fitted on full precision window ends; points that leave no slope are `inconclusive` |
+| R-11 | Bug | Windows were not continuous: while a window drained and its scrape ran, the load went on uncounted and out of the stop rule's sight, and every scrape lengthened the run | Fixed (D-285): windows back to back on a fixed schedule, the drain and the scrape beside the next window |
+| R-12 | Bug | Each window restarted the open model's arrival schedule with an immediate arrival, so `rate=0.001` sent about one request per window | Fixed (D-285): one arrival schedule for the whole soak |
+| R-13 | Risk | `drift: none flagged` printed when no server series had been fitted at all | Fixed (D-279): the counts per status, or "not evaluated" and why |
+| R-14 | Bug | A sample's timestamp was dropped unread, so `forze_x 12 not-a-timestamp` passed | Fixed (D-273): a signed 64-bit integer, or the scrape is refused |
+| R-15 | Security | Parser errors still repeated the line's metric name, so a name-shaped secret in a misrouted answer reached `server.error` | Fixed (D-272, D-273): the line's number and what is wrong, no text from it |
+| R-16 | Risk | A window a stop cut short fed the client fit, where one slow answer could flag latency drift | Fixed (D-276): left out of the client fit; its scrape still counts |
+| R-17 | Bug | `read_run` took any `warm`; a string `"false"` is truthy and skipped that window's `--fail-on` gate | Fixed (D-279): `warm` and `cut_short` must be booleans, or the file is refused |
+| R-18 | Risk | An unknown label-value escape was read as its character, accepting malformed text and merging distinct series | Fixed (D-273): only `\\`, `\"` and `\n`; another refuses the scrape |
