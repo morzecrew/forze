@@ -2574,6 +2574,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#call-operations-by-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call operations by key
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Call operations by key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sample-ids-from-live-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sample ids from live data
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sweep-the-read-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweep the read routes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-a-ramp" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6593,6 +6632,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#call-operations-by-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Call operations by key
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Call operations by key">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sample-ids-from-live-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sample ids from live data
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sweep-the-read-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweep the read routes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-a-ramp" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6815,6 +6893,92 @@ refuse any request to another origin, from a scenario or a credential, the same 
 <li><strong><code>tenant</code></strong> is sent as <code>X-Tenant-Id</code>. A token's tenant claim wins over it, and the app
   reads the header only with <code>trust_tenant_header=True</code>.</li>
 </ul>
+<h2 id="call-operations-by-key">Call operations by key<a class="headerlink" href="#call-operations-by-key" title="Permanent link">&para;</a></h2>
+<p>A hand-typed path drifts from the API: a renamed route turns into a run of 404s. A scenario
+can name the operation instead, by the key forze gives the route as its <code>operationId</code>, and
+the run reads the method and path from the app's OpenAPI document when it starts:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_load</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoadPlan</span><span class="p">,</span> <span class="n">Principal</span><span class="p">,</span> <span class="n">Scenario</span><span class="p">,</span> <span class="n">api_key</span><span class="p">,</span> <span class="n">sample</span>
+
+<span class="n">plan</span> <span class="o">=</span> <span class="n">LoadPlan</span><span class="p">(</span>
+    <span class="n">base_url</span><span class="o">=</span><span class="s2">"http://localhost:8000"</span><span class="p">,</span>
+    <span class="n">principals</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">Principal</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"viewer"</span><span class="p">,</span> <span class="n">mix</span><span class="o">=</span><span class="p">{</span><span class="s2">"products.get"</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">"list"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"reads"</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
+                  <span class="n">auth</span><span class="o">=</span><span class="n">api_key</span><span class="p">(</span><span class="s2">"VIEWER_API_KEY"</span><span class="p">)),</span>
+    <span class="p">],</span>
+    <span class="n">scenarios</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">Scenario</span><span class="o">.</span><span class="n">op</span><span class="p">(</span><span class="s2">"products.get"</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="n">sample</span><span class="p">(</span><span class="s2">"products.list"</span><span class="p">)}),</span>
+        <span class="n">Scenario</span><span class="o">.</span><span class="n">op</span><span class="p">(</span><span class="s2">"products.list"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"list"</span><span class="p">,</span> <span class="n">body</span><span class="o">=</span><span class="p">{</span><span class="s2">"size"</span><span class="p">:</span> <span class="mi">50</span><span class="p">}),</span>
+        <span class="n">Scenario</span><span class="o">.</span><span class="n">reads</span><span class="p">(</span><span class="s2">"orders."</span><span class="p">),</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>The kind is checked.</strong> forze marks every generated route with <code>x-forze-kind</code>, <code>query</code>
+  or <code>command</code>. <code>Scenario.op</code> declares <code>writes=False</code> unless you pass <code>writes=True</code>, and the
+  run stops before signing anyone in when the operation is missing from the document or its
+  kind disagrees with that declaration. A route with no <code>x-forze-kind</code>, or an unknown value,
+  counts as <code>command</code>: a hand-written route, or one served by a forze older than the key.</li>
+<li><strong>The inputs are checked too.</strong> Every placeholder in the path must be filled, query names
+  must be ones the route declares, and a route that requires a body must get one. <code>body</code> is
+  sent as JSON, so the route must take <code>application/json</code> or another <code>application/*+json</code>
+  type. It goes out as <code>application/json</code> when the route offers that, else as the route's
+  own type, such as <code>application/merge-patch+json</code>. A body must carry the fields its schema
+  requires at the top level. An
+  operation's parameter replaces the path's of the same name and location, as OpenAPI
+  says. Path values are URL-encoded. Header and cookie parameters are not checked: a
+  principal's credential may be what supplies them.</li>
+<li><strong>Where the document comes from.</strong> <code>openapi</code> defaults to <code>/openapi.json</code> on the target,
+  fetched without credentials and only when the plan names an operation. For a deployment
+  that serves no docs, or guards them, save the document and pass
+  <code>openapi=Path("openapi.json")</code>, or the parsed document itself. When the document's first
+  server is a path, as FastAPI writes a <code>root_path</code> (<code>/api/v1</code>), <code>base_url</code> must end with
+  it. The meta line records the document's digest as <code>openapi_sha256</code>, so <code>compare</code> warns
+  when two runs read different documents.</li>
+</ul>
+<h3 id="sample-ids-from-live-data">Sample ids from live data<a class="headerlink" href="#sample-ids-from-live-data" title="Permanent link">&para;</a></h3>
+<p><code>sample("products.list", field="id", size=500)</code> calls the list operation once as each
+principal that uses it, after sign-in and before the first step, and keeps the values of
+<code>field</code> from the answer's <code>hits</code>, at most <code>size</code> of them. <code>size</code> is sent as the body's
+<code>size</code>, or as the query's when the body has none, and is at most 10,000. Each call picks
+one value at random. Each principal samples for itself, because an id one principal can
+read may be forbidden to another.</p>
+<ul>
+<li>A sample must read a <code>query</code> operation, and an empty one stops the run before load,
+  naming the principal and the operation. The body it sends, <code>{"size": n}</code> or <code>{}</code>, must
+  fit the route's schema by the same rule as a sweep's (below), or the run is refused.</li>
+<li>An id that answers 404 later, deleted by a write scenario or by someone else, counts as
+  <code>not_found</code> and leaves the sample. A request that carries two sampled values drops
+  neither: the 404 does not say which one is gone. A sample emptied by 404s retires its
+  scenarios for that principal, and the step row lists them under <code>sample_exhausted</code>. The
+  principal's workers carry on with the rest of its mix, but the knee search stops at that
+  step, because the steps after it run another mix. When nothing is left, the run ends the
+  step there and stops: the summary's <code>stopped</code> says <code>sample_exhausted</code> and names the
+  principal, and the step it cut short says <code>cut_short</code>. Such a step is never named the
+  knee, and <code>compare</code> reports it without gating on it.</li>
+<li>Sampled ids never reach the output.</li>
+</ul>
+<h3 id="sweep-the-read-routes">Sweep the read routes<a class="headerlink" href="#sweep-the-read-routes" title="Permanent link">&para;</a></h3>
+<p><code>Scenario.reads("orders.")</code> generates one scenario per <code>query</code> operation whose key starts
+with the prefix and whose input the kit can fill without guessing:</p>
+<ul>
+<li>no input, or a JSON body whose schema accepts <code>{}</code>, such as a paginated list, sent as <code>{}</code>;</li>
+<li>an <code>id</code>, in the path or the query, with an optional <code>rev</code>. Ids are sampled from the <code>list</code>
+  operation beside the route: <code>orders.list</code> for <code>orders.get</code>.</li>
+</ul>
+<p>The body check is conservative by construction. It reads only <code>type</code>, <code>properties</code>,
+<code>required</code>, <code>minProperties</code>, <code>maxProperties</code>, <code>enum</code>, <code>const</code>, <code>additionalProperties</code> and
+<code>nullable</code>, plus annotations such as <code>title</code>, <code>description</code> and <code>default</code>, and judges the
+exact body it would send against them. A schema with any other keyword at its top level,
+such as <code>not</code>, <code>allOf</code> or <code>if</code>, is skipped rather than half read.</p>
+<p>Every other <code>query</code> route is recorded with its reason under <code>plan.skipped</code> in the meta line,
+and <code>forze load run</code> prints them: one that needs a header or a cookie, or whose body schema
+cannot be resolved, uses a keyword the kit does not evaluate, or refuses <code>{}</code>, among them.
+<code>command</code> routes are never generated. A mix weights the group by its name, <code>reads</code> by
+default, and the weight is split evenly between the generated scenarios; the rows name each
+by its operation key. An operation another scenario of the plan already calls, by its name
+or as a <code>Scenario.op</code> under another name, is left to that scenario, and a sweep that
+generates nothing stops the run. An explicit <code>Scenario.op</code> body is checked for its required
+fields only.</p>
 <h2 id="run-a-ramp">Run a ramp<a class="headerlink" href="#run-a-ramp" title="Permanent link">&para;</a></h2>
 <p>Point the CLI at the plan by import string:</p>
 <div class="highlight"><pre><span></span><code>forze<span class="w"> </span>load<span class="w"> </span>run<span class="w"> </span>myapp.load:plan<span class="w"> </span>--steps<span class="w"> </span><span class="m">1</span>,2,4,8,16,32,64<span class="w"> </span>--step-s<span class="w"> </span><span class="m">30</span><span class="w"> </span>--warm-s<span class="w"> </span><span class="m">5</span><span class="w"> </span>--out<span class="w"> </span>ramp.jsonl
@@ -6896,6 +7060,14 @@ window's real length. A step row carries:</p>
 <td><code>scenarios</code></td>
 <td>Calls, 2xx and latency per scenario</td>
 </tr>
+<tr>
+<td><code>sample_exhausted</code></td>
+<td>Scenarios retired during the step, as <code>principal</code> and <code>scenario</code>, because 404s emptied their sample; present only when one was</td>
+</tr>
+<tr>
+<td><code>cut_short</code></td>
+<td><code>true</code> when a stop ended the step before its window did; such a step is never the knee, and <code>compare</code> never gates on it. Present only then</td>
+</tr>
 </tbody>
 </table>
 <p>A transport failure (a refused connection, a timeout) is counted but has no latency.</p>
@@ -6907,8 +7079,8 @@ like excellent throughput and measures nothing.</p>
 first rate whose p99 more than doubles, with at least 100 answered calls in each step, or
 whose goodput falls more than 5 % below the offered rate less its <code>conflict</code> and <code>not_found</code>
 answers; either is confirmed only when the next rate repeats it. A step whose client was
-saturated, or that was misconfigured, is never named and never confirms a knee; the
-summary's <code>note</code> says why no knee was named.</p>
+saturated, that was misconfigured, or that retired scenarios (<code>sample_exhausted</code>) is never
+named and never confirms a knee; the summary's <code>note</code> says why no knee was named.</p>
 <h2 id="compare-two-runs">Compare two runs<a class="headerlink" href="#compare-two-runs" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>forze<span class="w"> </span>load<span class="w"> </span>compare<span class="w"> </span>base.jsonl<span class="w"> </span>head.jsonl
 forze<span class="w"> </span>load<span class="w"> </span>compare<span class="w"> </span>base.jsonl<span class="w"> </span>head.jsonl<span class="w"> </span>--fail-on<span class="w"> </span>p95:15%,goodput:10%
@@ -6918,7 +7090,9 @@ side. Without <code>--fail-on</code> the command only reports: load runs vary fa
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
 exits 1 when a named metric is worse by more than its share, or has a value in the base run
 and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
-appears in both runs: a gate that compared nothing does not pass.
+appears in both runs: a gate that compared nothing does not pass. A step either run cut
+short (<code>cut_short</code>) is printed with a warning and never gated, since its window was shorter;
+a gate left with only such steps compared nothing, and exits 2 too.
 When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the <code>forze_load</code> version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:
@@ -6928,7 +7102,9 @@ another host, runtime or mix is another measurement, not a regression.</p>
 scenario needs <code>allow_writes=True</code> <strong>and</strong> a target host that is a loopback address,
 <code>localhost</code>, listed in the plan's <code>write_hosts</code>, or listed in the comma-separated
 <code>FORZE_LOAD_WRITE_HOSTS</code> environment variable. Hosts are compared exactly, never by suffix:
-<code>localhost.example.com</code> is refused. The check runs before anything is sent.</p>
+<code>localhost.example.com</code> is refused. The check runs before anything is sent. An operation
+reference is a writing scenario when it declares <code>writes=True</code>, which its route's
+<code>x-forze-kind</code> must confirm as <code>command</code>; a sweep never generates one.</p>
 <p>The run never cleans up what it wrote. Run write-enabled plans against a seeded, disposable
 stack, never against production.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
@@ -6949,8 +7125,10 @@ stack, never against production.</p>
 <li><strong>The file holds numbers only:</strong> counts, latencies and outcome classes. No bodies, headers,
   tokens or ids, and the target is written as scheme, host and port only. The meta line
   records each principal's weight and mix.</li>
-<li><strong>Not yet covered:</strong> scenarios built from your OpenAPI operations, realtime subscribers, and
-  soak runs that watch server gauges for drift. They are later phases of RFC 0084.</li>
+<li><strong>One timeout for every request.</strong> Operation references use the plan's <code>timeout_s</code> too;
+  a route's <code>x-deadline-seconds</code> is not read.</li>
+<li><strong>Not yet covered:</strong> realtime subscribers, and soak runs that watch server gauges for
+  drift. They are later phases of RFC 0084.</li>
 </ul>
 
 

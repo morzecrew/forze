@@ -10965,7 +10965,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A minimal OpenTelemetry Collector recipe gives one Prometheus scrape across workers and hosts.</strong> <em>The Grafana stack</em> page ships <code>assets/otel-collector/config.yaml</code>: every process pushes OTLP, each keeps its own <code>instance</code>, and with <code>honor_labels: true</code> on the scrape the shipped dashboards and alert rules apply.</p>
 </li>
 <li>
-<p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps the app over HTTP as several principals under a closed or open model, names the knee, flags a saturated client, and writes JSON lines that <code>forze load compare</code> diffs. Writes are refused unless allowed and the host is loopback or allowlisted.</p>
+<p><strong><code>forze_load</code> load-tests a running app (<code>load</code> extra).</strong> It ramps it as several principals, names the knee, flags a saturated client and writes JSON lines for <code>forze load compare</code>. <code>Scenario.op</code>, <code>Scenario.reads</code> and <code>sample()</code> name operations and ids from OpenAPI. Writes need <code>allow_writes</code> and an allowlisted host.</p>
+</li>
+<li>
+<p><strong>Generated routes declare in OpenAPI whether they read or write.</strong> Every route the <code>attach_*_routes</code> helpers serve carries <code>x-forze-kind</code>, <code>query</code> or <code>command</code>, from the operation catalog: list routes are <code>POST</code>, so the verb never told.</p>
 </li>
 <li>
 <p><strong><code>instrument_connection_pools</code> exports Postgres, Redis and MongoDB connection pool gauges.</strong> Per client you name (<code>forze.client</code>), <code>forze.connection_pool.*</code> reports in use, idle, max and, on Postgres, waiting. A routed client is refused.</p>
