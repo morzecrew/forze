@@ -178,6 +178,10 @@ class PasswordSession:
     _expires_at: float = attrs.field(default=0.0, init=False, repr=False)
     _retry_at: float = attrs.field(default=0.0, init=False, repr=False)
     _backoff: float = attrs.field(default=RETRY_FIRST_S, init=False, repr=False)
+    _pending: set[asyncio.Task[None]] = attrs.field(
+        factory=lambda: set[asyncio.Task[None]](), init=False, repr=False
+    )
+    """Sign-ins and refreshes under way, and those that failed: :meth:`settle` awaits them."""
 
     # ....................... #
 
@@ -186,9 +190,31 @@ class PasswordSession:
             # Shielded: a caller cancelled mid-refresh, by a storm's drop or a step's end, must
             # not abandon a refresh the server may already have rotated. The next one would
             # present the old token, and forze revokes the whole family on reuse.
-            await asyncio.shield(self._update(client))
+            task = asyncio.ensure_future(self._update(client))
+            self._pending.add(task)
+            task.add_done_callback(self._finished)
+            await asyncio.shield(task)
 
         return {"Authorization": f"Bearer {self._access}"}
+
+    async def settle(self) -> None:
+        """Wait for a sign-in or refresh still running, and raise the failure of any.
+
+        The run calls it before closing its clients: the work may have outlived a caller
+        cancelled under it, and its failure would otherwise be lost.
+
+        :raises CoreException: a sign-in or refresh failed.
+        """
+
+        while self._pending:
+            tasks = list(self._pending)
+            self._pending.clear()
+            await asyncio.gather(*tasks)
+
+    def _finished(self, task: asyncio.Task[None]) -> None:
+        # A failed one stays for `settle` to raise; reading it here marks it retrieved.
+        if task.cancelled() or task.exception() is None:
+            self._pending.discard(task)
 
     async def _update(self, client: httpx.AsyncClient) -> None:
         async with self._lock:

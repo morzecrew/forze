@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_load import (
     Call,
     ClosedRamp,
@@ -532,3 +532,54 @@ class TestRunState:
             first.rng.random()  # a scenario drawing from Call.rng
 
         assert first.arrival_rng.expovariate(5) == second.arrival_rng.expovariate(5)
+
+
+class _SettlingSession:
+    """A credential with work a cancelled caller left running: the run awaits it."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.settled = 0
+
+    async def headers(self, _client: httpx.AsyncClient) -> dict[str, str]:
+        return {}
+
+    async def settle(self) -> None:
+        self.settled += 1
+
+        if self.failure is not None:
+            raise self.failure
+
+
+class TestCredentialSettle:
+    async def test_the_run_waits_for_credential_work_and_raises_its_failure(self) -> None:
+        refused = exc.configuration("refresh failed", code="load_refresh_failed")
+        session = _SettlingSession(refused)
+        plan = _plan(principals=[Principal(name="viewer", mix={"get": 1}, auth=session)])
+
+        with pytest.raises(CoreException) as failed:
+            await run(plan, ClosedRamp(steps=[1], step_s=0.1), transport=_transport(_ok))
+
+        assert failed.value is refused
+        assert session.settled == 1
+
+    async def test_a_run_that_failed_first_keeps_its_own_failure(self) -> None:
+        async def broken(_call: Call) -> httpx.Response:
+            raise RuntimeError("scenario bug")
+
+        session = _SettlingSession(exc.configuration("refresh failed"))
+        plan = _plan(
+            principals=[Principal(name="viewer", mix={"get": 1}, auth=session)],
+            scenarios=[Scenario("get", broken, writes=False)],
+        )
+
+        with pytest.raises(RuntimeError, match="scenario bug"):
+            await run(plan, ClosedRamp(steps=[1], step_s=0.1), transport=_transport(_ok))
+
+        assert session.settled == 1
+
+
+def test_the_profile_alias_names_every_profile() -> None:
+    from forze_load import Realtime, Soak, engine
+
+    assert engine.Profile.__value__ == ClosedRamp | OpenRamp | Soak | Realtime

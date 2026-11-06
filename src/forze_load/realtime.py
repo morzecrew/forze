@@ -25,7 +25,7 @@ from forze.base.exceptions import exc
 from ._seams import seeded_random
 from ._target import no_cookies, require_path, target_guard
 from ._wire import Frame, SseParser, WsHandshakeError, WsRefused, sse_lines, ws_connect
-from .engine import _assignments  # pyright: ignore[reportPrivateUsage]
+from .plan import assignments
 from .stats import StepRecorder, _Series  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
@@ -99,7 +99,12 @@ class Realtime:
     """A realtime run: *subscribers* streams, writes at *rate*, then a reconnect storm.
 
     Pass it to :func:`forze_load.run` as the profile. The run opens the streams in batches,
-    spread over :attr:`principals` by weight, each with its own ``device_id``. It then
+    spread over :attr:`principals` by weight, each with its own ``device_id`` query parameter,
+    which keys the stream's stored cursor. forze's SSE route reads it; a WebSocket route
+    takes the cursor's key from the ``WsConnection.client`` its resolver returns, which
+    ``build_ws_connection_resolver`` fills from ``device_id``. A hand-written resolver must
+    do the same, or a principal's subscribers share one cursor and a stream that reopens
+    with no id replays from another's. It then
     sends writes for :attr:`duration_s`: open-model arrivals at :attr:`rate`, each a writer
     picked by weight and a scenario from its mix. A write's answer gives its key
     (:attr:`key_of`) and audience (:attr:`audience`), and each frame its key (:attr:`match`).
@@ -334,7 +339,7 @@ class _RealtimeRun:
     """Each principal's subscribers, as a bit set."""
 
     def __attrs_post_init__(self) -> None:
-        assign = _assignments(self._principals(self.spec.principals))
+        assign = assignments(self._principals(self.spec.principals))
         self.subscribers = [
             _Subscriber(index=i, principal=next(assign).name) for i in range(self.spec.subscribers)
         ]
@@ -358,27 +363,22 @@ class _RealtimeRun:
 
         try:
             await self._open()
-            # A batch stops waiting for streams that only fail; the run gives them, together,
-            # one `timeout_s` more to open before it stops.
-            await self._until(
-                lambda: (
-                    any(sub.ups for sub in self.subscribers)
-                    or all(sub.refused for sub in self.subscribers)
-                ),
-                time.perf_counter() + self.spec.timeout_s,
-            )
+            live = await self._live()
 
-            if not any(sub.ups for sub in self.subscribers):
+            if live:
+                await self._quiet()
+                live = await self._live()  # every stream may have dropped during the quiet
+
+            if not live:
                 self._start(self.phase)
                 self._end(self.phase)
                 stopped = {"phase": "steady", "reason": "no_stream"}
 
             else:
-                await self._quiet()
                 state.on_response = self._answered
                 self.writing = True
                 self._start(self.phase)
-                assign = _assignments(self._principals(self.spec.writers))
+                assign = assignments(self._principals(self.spec.writers))
                 arrivals = asyncio.create_task(
                     state.arrivals(self.spec.rate, "constant", inflight, assign)
                 )
@@ -497,6 +497,24 @@ class _RealtimeRun:
                 time.perf_counter() + self.spec.timeout_s,
             )
 
+    async def _live(self) -> bool:
+        """Whether a stream is open now, waiting up to ``timeout_s`` for one.
+
+        A batch stops waiting on streams that only fail, and a stream that opened may have
+        dropped since, so the writes begin only with a stream open to receive them. Gives up
+        at once when every stream is refused.
+        """
+
+        def open_now() -> bool:
+            return any(sub.ups and sub.ups[-1][1] == math.inf for sub in self.subscribers)
+
+        await self._until(
+            lambda: open_now() or all(sub.refused for sub in self.subscribers),
+            time.perf_counter() + self.spec.timeout_s,
+        )
+
+        return open_now()
+
     async def _quiet(self) -> None:
         """Let the first opens' replay pass before the first write: the kit never acks, so each
         first open replays the retained mailbox. Waits until no frame has come for
@@ -596,14 +614,16 @@ class _RealtimeRun:
         if last_id is not None:
             headers = {**headers, LAST_EVENT_ID_HEADER: last_id}
 
-        parser = SseParser()
+        # The last event ID outlives a connection: an id-only block on this one can move it.
+        parser = SseParser(last_id=sub.last_id)
 
         async with self.client.stream(
             "GET", self.spec.path, params=params, headers=headers
         ) as response:
             # `EventSource` gives up on any other status or type: a wrong path answering 200
             # with JSON would otherwise be reopened forever.
-            media_type = response.headers.get("content-type", "").partition(";")[0].strip()
+            content_type = response.headers.get("content-type", "")
+            media_type = content_type.partition(";")[0].strip().lower()
 
             if response.status_code >= 500:  # a balancer's 502 or 503 is passing: retried
                 self._error(sub)
@@ -631,6 +651,7 @@ class _RealtimeRun:
             with contextlib.suppress(httpx.TransportError):
                 async for line in lines:
                     frame = parser.feed(line)
+                    sub.last_id = parser.last_id
 
                     if frame is not None:
                         self._arrive(sub, frame)

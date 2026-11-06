@@ -13,7 +13,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import attrs
 import httpx
@@ -33,15 +33,14 @@ from .plan import (
     Principal,
     Sample,
     Scenario,
+    assignments,
     safe_target,
     validate_plan,
 )
+from .realtime import Realtime
 from .report import SCHEMA, RunWriter
 from .soak import MIN_FIT_WINDOWS, Fetched, ServerSeries, drift_report
 from .stats import StepRecorder, classify, error_share, find_knee
-
-if TYPE_CHECKING:
-    from .realtime import Realtime
 
 # ----------------------- #
 
@@ -388,11 +387,14 @@ async def run(
             if on_meta is not None:
                 on_meta(meta)
 
-            await state.sign_in()
-            await state.sample()
-            probe = asyncio.create_task(state.probe.run())
+            probe: asyncio.Task[None] | None = None
+            completed = False
 
             try:
+                await state.sign_in()
+                await state.sample()
+                probe = asyncio.create_task(state.probe.run())
+
                 if isinstance(profile, ClosedRamp):
                     rows, stopped = await _closed(state, profile, writer)
 
@@ -405,9 +407,16 @@ async def run(
                 else:
                     rows, stopped = await profile.drive(state, writer, transport)
 
+                completed = True
+
             finally:
-                probe.cancel()
-                await asyncio.gather(probe, return_exceptions=True)
+                if probe is not None:
+                    probe.cancel()
+                    await asyncio.gather(probe, return_exceptions=True)
+
+                # A sign-in or refresh a cancelled caller left running (D-269a) ends before
+                # the clients close under it; its failure is the run's unless one came first.
+                await state.settle(raise_errors=completed)
 
             if isinstance(profile, Soak):
                 summary = {
@@ -555,6 +564,27 @@ class _Run:
         self.catalog.pool.on_exhausted = self.retire
 
     # ....................... #
+
+    async def settle(self, *, raise_errors: bool) -> None:
+        """Wait for credential work a cancelled caller left running, and raise its failure.
+
+        A password session shields its sign-in and refresh from the caller's cancellation
+        (D-269a), so the work can outlive the caller; the run's clients must stay open until
+        it ends. A credential without ``settle`` has nothing to wait for.
+        """
+
+        for session in self.sessions.values():
+            settle = getattr(session.credential, "settle", None)
+
+            if settle is None:
+                continue
+
+            try:
+                await settle()
+
+            except Exception:
+                if raise_errors:
+                    raise
 
     async def sign_in(self) -> None:
         sessions = list(self.sessions.values())
@@ -830,7 +860,7 @@ async def _closed(
     writer: RunWriter,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     workers: list[asyncio.Task[None]] = []
-    assign = _assignments(state.plan.principals)
+    assign = assignments(state.plan.principals)
 
     async def prepare(key: Mapping[str, Any]) -> None:
         while len(workers) < key["workers"]:
@@ -857,7 +887,7 @@ async def _open(
     writer: RunWriter,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     inflight: set[asyncio.Task[None]] = set()
-    assign = _assignments(state.plan.principals)
+    assign = assignments(state.plan.principals)
     drivers: list[asyncio.Task[None]] = []
 
     async def prepare(key: Mapping[str, Any]) -> None:
@@ -907,7 +937,7 @@ async def _soak(
 
     model, (level,) = _levels(profile)
     key: dict[str, Any] = {"workers": int(level)} if model == "closed" else {"rate": level}
-    assign = _assignments(state.plan.principals)
+    assign = assignments(state.plan.principals)
     inflight: set[asyncio.Task[None]] = set()
     load = (
         [
@@ -1063,22 +1093,6 @@ async def _window_row(
 
 
 # ....................... #
-
-
-def _assignments(principals: Sequence[Principal]) -> Iterator[Principal]:
-    """Principals by smooth weighted round robin: their shares hold at every count."""
-
-    total = sum(principal.weight for principal in principals)
-    current = [0] * len(principals)
-
-    while True:
-        for index, principal in enumerate(principals):
-            current[index] += principal.weight
-
-        chosen = max(range(len(principals)), key=current.__getitem__)
-        current[chosen] -= total
-
-        yield principals[chosen]
 
 
 def _cumulative(weights: Mapping[str, float]) -> tuple[list[str], list[float]]:

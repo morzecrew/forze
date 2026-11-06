@@ -113,6 +113,28 @@ class TestEventStreamFrames:
 
         assert parser.retry_s == 1.5
 
+    @pytest.mark.parametrize("digits", [400, 5000], ids=["overflows-a-float", "past-int-limit"])
+    def test_a_retry_too_large_to_use_is_ignored(self, digits: int) -> None:
+        parser = SseParser()
+        _frames(f"retry: 1500\n\nretry: {'9' * digits}\n", parser)
+
+        assert parser.retry_s == 1.5
+
+    def test_an_id_only_block_sets_the_resume_id_and_an_empty_one_clears_it(self) -> None:
+        parser = SseParser(last_id="e0")
+
+        assert _frames("data: {}\n", parser) and parser.last_id == "e0"  # kept across events
+        assert _frames("id: e5\n", parser) == [] and parser.last_id == "e5"  # no data, still
+        assert _frames("id:\n", parser) == [] and parser.last_id is None
+
+    def test_an_id_counts_only_once_its_block_is_dispatched(self) -> None:
+        parser = SseParser()
+        parser.feed("id: e1")
+
+        assert parser.last_id is None
+        parser.feed("")
+        assert parser.last_id == "e1"
+
     def test_an_event_past_the_limit_breaks_the_stream(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

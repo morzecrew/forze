@@ -26,7 +26,8 @@ A ``Soak`` holds one load level for hours, writes a row per window, and flags up
 in client latency and in the server's ``forze_*`` and process series scraped from
 ``/metrics``. ``Realtime`` holds SSE or WebSocket subscribers instead, writes at a set rate,
 times each write's frame at every subscriber it addresses, and drops every stream at once to
-measure the resume from ``Last-Event-ID``.
+measure the resume from the last durable id each saw: ``Last-Event-ID`` on SSE, the
+``last_event_id`` query parameter on a WebSocket.
 
 Writes are off by default: a scenario declared ``writes=True`` is refused unless the plan
 allows writes and its host is loopback or allowlisted. Credentials come from environment

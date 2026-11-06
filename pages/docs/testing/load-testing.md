@@ -403,10 +403,15 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
 - **Subscribers** are spread over `principals` (every principal by default) by weight, each
   stream signed in as its principal, with its own `device_id` and the `topics` you name. The
   app must grant the topics. A WebSocket carries the credential on its upgrade request, and
-  the route's resolver reads it and the `device_id` from there. Streams open in batches of
-  `batch`. The kit never acks, so no cursor moves and nothing is trimmed, and every first open
-  replays the principal's retained mailbox, up to 1,000 entries. The first write waits until
-  no frame has come for a quarter of a second, at most `timeout_s`, so that replay is over.
+  the route's resolver reads it there. The `device_id` keys the stream's stored cursor: the
+  SSE route reads it itself, while the WebSocket route takes the key from the
+  `WsConnection.client` the resolver returns. `build_ws_connection_resolver` fills it from
+  `device_id`; a hand-written resolver must do the same, or a principal's subscribers share
+  one cursor, and a stream that reopens with no id replays from another's. Streams open in
+  batches of `batch`. The kit never acks, so no cursor moves and nothing is trimmed, and every
+  first open replays the principal's retained mailbox, up to 1,000 entries. The first write
+  waits until no frame has come for a quarter of a second, at most `timeout_s`, so that
+  replay is over. It also waits, `timeout_s` at most, until a stream is open.
 - **Writes** run for `duration_s` as open-model arrivals at `rate`: each picks one of
   `writers` (every principal by default) by weight, then a scenario from its mix. The write
   guard applies as it does to a ramp.
@@ -447,9 +452,9 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
   another code than 1008 or 1012 before it answered the kit's first ping counts under
   `errors`, and the stream retries. Any other
   status than 200, an answer that is not `text/event-stream`, or a WebSocket closed with 1008
-  before that ping is `refused`, and that stream stays closed. When no stream has opened
-  `timeout_s` after the last batch, every one refused or still failing, the run stops before
-  its first write with `stopped.reason: "no_stream"`.
+  before that ping is `refused`, and that stream stays closed. When no stream is open
+  `timeout_s` after the last batch or after the replay's quiet, every one refused, failing or
+  dropped, the run stops before its first write with `stopped.reason: "no_stream"`.
 - **Retries spread out.** A stream waits the server's `retry:`, or one second, doubled for
   each failure in a row up to 30 seconds, then jittered by half either way, so the streams do
   not return in lockstep; never less than 50 ms.

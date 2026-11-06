@@ -80,6 +80,18 @@ class _Fake:
     welcome: bool = True
     """Each stream starts with a frame no write caused."""
 
+    content_type: str | None = None
+    """The stream's own ``Content-Type``, in place of ``text/event-stream``."""
+
+    id_blocks: tuple[str, ...] = ()
+    """``id:`` blocks with no data, sent on a stream that opened with no id."""
+
+    end_on_open: bool = False
+    """Each stream ends as soon as it opens."""
+
+    open_limit: int = 0
+    """Opens past this many fail in transport, as a server gone down would."""
+
     history: int = 0
     """A first open with no id replays this many frames of earlier traffic, one every 20 ms."""
 
@@ -187,6 +199,9 @@ class _Fake:
     async def _open(self, request: httpx.Request) -> httpx.Response:
         self.opens += 1
 
+        if self.open_limit and self.opens > self.open_limit:
+            raise httpx.ConnectError("the server is down")
+
         if self.opens > self.initial and self.reopen_delay_s:
             await asyncio.sleep(self.reopen_delay_s)
 
@@ -220,9 +235,18 @@ class _Fake:
         if self.welcome:
             conn.queue.put_nowait(b"event: welcome\ndata: {}\n\n")  # a frame no write caused
 
+        if conn.resumed_from is None:
+            for block in self.id_blocks:
+                conn.queue.put_nowait(f"{block}\n\n".encode())
+
         self._replay(conn)
 
-        return httpx.Response(200, headers=_EVENT_STREAM, content=self._body(conn))
+        if self.end_on_open:
+            conn.queue.put_nowait(None)
+
+        headers = {"content-type": self.content_type} if self.content_type else _EVENT_STREAM
+
+        return httpx.Response(200, headers=headers, content=self._body(conn))
 
     def _ws(self, conn: _Conn, request: httpx.Request) -> httpx.Response:
         if self.upgrade_status != 101:
@@ -835,6 +859,39 @@ class TestReconnects:
         streams = result.rows[0]["streams"]
         assert streams["ended"] >= 4
         assert streams["errors"] == streams["refused"] == 0
+
+    async def test_streams_that_all_dropped_before_the_first_write_stop_the_run(self) -> None:
+        # Both open, end at once, and cannot come back: no write may go out to nobody.
+        fake = _Fake(end_on_open=True, open_limit=2)
+        result = await _run(fake, _realtime(subscribers=2, timeout_s=0.3))
+
+        (row,) = result.rows
+        assert result.summary["stopped"] == {"phase": "steady", "reason": "no_stream"}
+        assert row["streams"]["opened"] == row["streams"]["ended"] == 2
+        assert fake.writes == 0
+
+    async def test_the_media_type_is_compared_as_a_type_not_a_string(self) -> None:
+        fake = _Fake(content_type="Text/Event-Stream; Charset=UTF-8")
+        result = await _run(fake, _realtime())
+
+        streams = result.rows[0]["streams"]
+        assert streams["opened"] == 4
+        assert streams["refused"] == 0
+
+    @pytest.mark.parametrize(
+        ("blocks", "resumed_from"),
+        [(("id: marker-1",), "marker-1"), (("id: marker-1", "id:"), None)],
+        ids=["id-only", "cleared"],
+    )
+    async def test_an_id_only_block_moves_the_resume_and_an_empty_id_clears_it(
+        self, blocks: tuple[str, ...], resumed_from: str | None
+    ) -> None:
+        fake = _Fake(emit=False, id_blocks=blocks)
+        await _run(fake, _realtime(subscribers=1, storm=True))
+
+        first, second = fake.conns
+        assert first.resumed_from is None
+        assert second.resumed_from == resumed_from
 
     async def test_a_transport_error_on_open_is_retried(self) -> None:
         fake = _Fake()

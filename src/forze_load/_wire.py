@@ -138,7 +138,10 @@ class SseParser:
     """The event-stream format, one line at a time: ``id``, ``event``, ``data``, ``retry``."""
 
     last_id: str | None = None
-    """The last ``id:`` the stream set: what a resume sends as ``Last-Event-ID``."""
+    """The last event ID string: what a resume sends as ``Last-Event-ID``. Each dispatch sets
+    it from the last ``id:`` the stream sent, whether the event carried data or not, and an
+    empty ``id:`` clears it (WHATWG). It outlives a connection, so a parser starts from the
+    subscriber's."""
 
     retry_s: float | None = None
     """The last ``retry:`` the stream set, in seconds."""
@@ -147,6 +150,11 @@ class SseParser:
     _id: str | None = None
     _data: list[str] = attrs.field(factory=lambda: list[str]())
     _size: int = 0
+    _buffer: str | None = attrs.field(init=False)
+    """The last event ID buffer: set by each ``id:``, copied to :attr:`last_id` at dispatch."""
+
+    def __attrs_post_init__(self) -> None:
+        self._buffer = self.last_id
 
     def feed(self, line: str) -> Frame | None:
         """Take one line; return the frame a blank line completes, if it carried data.
@@ -155,6 +163,7 @@ class SseParser:
         """
 
         if not line:
+            self.last_id = self._buffer  # before the data check: an id-only block counts too
             frame = (
                 Frame(event=self._event or "message", id=self._id, text="\n".join(self._data))
                 if self._data
@@ -183,11 +192,12 @@ class SseParser:
                 self._event = value
 
             case "id" if "\0" not in value:
-                self._id = value or None
-                self.last_id = self._id
+                self._id = self._buffer = value or None  # an empty id clears the buffer
 
             case "retry" if value.isascii() and value.isdigit():
-                self.retry_s = int(value) / 1000
+                # A hint past what a number holds is unusable, and ignored: the last one stands.
+                with contextlib.suppress(ValueError, OverflowError):
+                    self.retry_s = int(value) / 1000
 
             case _:  # an unknown field is ignored, as the format says
                 pass
