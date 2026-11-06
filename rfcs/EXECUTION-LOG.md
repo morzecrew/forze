@@ -6247,12 +6247,17 @@ row 14), the §6 Guards, Sampling and `x-forze-kind` tests, the §7 docs and the
 built, as §12 assigns them to later phases: realtime (P3), the soak (P4). Rows 1–4, 9–13 and
 15–41 hold as written or do not apply to P2. Row 6 holds: the catalog source is the document
 plus the new key. Row 8 holds (D-234). Rows 7 and 14 are refined by D-234 to D-241
-and D-245; row 5's timeout is left as P1 built it (D-242).
+and D-245; row 5's timeout is left as P1 built it (D-242); rows 16 and 28 are refined by
+D-247 and D-248.
 
-**Drift count: 2.** Fourteen entries, D-233 to D-246: two `drift` (D-240, D-246), twelve
+**Drift count: 2.** Sixteen entries, D-233 to D-248: two `drift` (D-240, D-246), fourteen
 `spec-gap`. D-240 departs from §5.5's wording, D-246 from §7's; no decision row is departed
-from. A fresh-eyes review of the working tree that became `ab9ddcf86` raised fifteen findings;
-four were refuted. The table at the end records each and where it was fixed.
+from. A fresh-eyes review of the working tree that became `b6375b5bc` raised fifteen findings;
+four were refuted. The PR #865 reviews raised eighteen inline findings, three of them raised
+by both reviewers, and all fifteen were fixed; of the two checks beside them, coverage was
+fixed and docstring coverage refuted. The tables at the end record each and where it was
+fixed. Commit hashes are
+those after the branch was rebased for PR #865.
 
 **Where each item lives.** `x-forze-kind` in
 [`forze_fastapi/routes/_attach.py`](../src/forze_fastapi/routes/_attach.py)
@@ -6279,8 +6284,9 @@ imports it.
   `/openapi.json`, refused unless a path, as D-227), a local file, or the parsed document.
   It is read only when the plan names an operation, through the credential client and its
   target guard (D-231). A failed fetch, a non-200 answer, a document with no `paths` object,
-  or an operation whose `parameters`, `requestBody` or `content` has the wrong shape stops
-  the run as `load_openapi_unavailable` (exit 2). `openapi_sha256` is the SHA-256 of the
+  an operation whose `parameters`, `requestBody` or `content` has the wrong shape, or a path
+  item, parameter or `requestBody` whose `$ref` cannot be followed (missing, external or
+  circular; R-21) stops the run as `load_openapi_unavailable` (exit 2). `openapi_sha256` is the SHA-256 of the
   document as canonical JSON (sorted keys, compact), so a served copy, a file and a mapping
   of one document agree; it is `null` when no document was read.
 - **Class:** `spec-gap`.
@@ -6321,9 +6327,13 @@ imports it.
   start. An `operationId` can also appear twice; FastAPI only warns.
 - **Built:** before sign-in, `load_plan_invalid` when a reference's `path` keys are not
   exactly the path's placeholders, a `params` name is not a query parameter the route
-  declares, a required query parameter or body is missing, or a body goes to a route that
-  takes none; `load_op_ambiguous` when the key appears more than once. Local `$ref`s,
-  path-level parameters and path items given by `$ref` are followed.
+  declares, a required query parameter or body is missing, a body goes to a route that takes
+  no JSON (`application/json` or another `application/*+json` type; R-23), or a body lacks a
+  field its schema requires at the top level (R-24); `load_op_ambiguous` when the key appears
+  more than once. Local `$ref`s are followed, their JSON Pointer escapes decoded (R-22), and
+  path items given by `$ref` too. An operation's parameter replaces the path item's of the
+  same name and location, as OpenAPI says (R-20). Header and cookie parameters are not
+  checked for an explicit reference: the principal's credential may supply them.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — an operation reference whose path, query or body
   does not fit the route's OpenAPI declaration, or whose key the document lists more than
@@ -6338,15 +6348,17 @@ imports it.
 - **Found:** silent on where `size` goes, on the answer's shape, on a sample of an operation
   that writes, and on a sample request that fails.
 - **Built:** a sample's operation must be a `query` (`load_op_mismatch` otherwise, whatever
-  `allow_writes` says: sampling never writes) that needs no input (`load_plan_invalid`).
-  `size` goes in the JSON body when the body schema has a `size` property (`{}` otherwise),
-  or in the query when the route takes no body and declares `size`. Values come from the
-  answer's `hits` (forze's `Paginated` and `CursorPaginated`) or a bare JSON array; strings
-  and integers only, deduplicated. A transport error, a non-2xx answer or an answer with no
-  list stops the run as `load_sample_failed`; no value at all is `load_sample_empty`. Both
-  name the principal and the operation, never a value. A `size` outside 1–10,000 is refused
-  when the `Sample` is built. Samples run one after another, after sign-in, on the request
-  client, outside every measurement.
+  `allow_writes` says: sampling never writes) that needs no input, a required header or
+  cookie included (`load_plan_invalid`; R-16). `size` goes in the JSON body when the body
+  schema has a `size` property (`{}` otherwise), and in the query when the route declares
+  `size` there and the body has none (R-26). Values come from the answer's `hits` (forze's
+  `Paginated` and `CursorPaginated`) or a bare JSON array; strings and integers only,
+  deduplicated, and at most `size` of them, whatever the route answered (R-17). A transport
+  error, a non-2xx answer or an answer with no list stops the run as `load_sample_failed`;
+  no value at all is `load_sample_empty`. Both name the principal and the operation, never a
+  value. A `size` outside 1–10,000 is refused when the `Sample` is built. Samples run one
+  after another, after sign-in, on the request client, outside every measurement, each with
+  the principal's credential read again, so a long sampling phase refreshes it (R-27).
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a sample reads a `query` operation that needs no
   input, sending `size` as the body's or the query's `size`, and keeps the field's string and
@@ -6381,13 +6393,20 @@ imports it.
   - a step whose window a stop ended early says `"cut_short": true` and is left out of the
     knee search: it measured a shorter window and a smaller mix. A stop that lands while a
     whole step drains leaves that step whole (R-8);
-  - a call that finds its sample empty when it sends sends nothing and is not counted.
+  - a call that finds its sample empty when it sends sends nothing and is not counted;
+  - a 404 drops a sampled value only from a request that carried exactly one: with two, the
+    answer does not say which is gone, and dropping both could retire scenarios whose ids
+    still exist (R-19). Such a scenario then keeps answering `not_found`, counted in the row,
+    and is never retired;
+  - once the run halts, the open model's arrivals stop, so the halted step's drain sends
+    nothing no row would count (R-29).
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — scenarios with an equal sample share it per
   principal; `sample_exhausted` lists `{principal, scenario}` in the row of the step it
   happened in; a principal left with nothing ends that step and stops the run with
   `stopped.reason: "sample_exhausted"`, a finished run; a step a stop cut short says
-  `cut_short` and is never a knee.
+  `cut_short` and is never a knee; a 404 drops a sampled value only when the request carried
+  one.
 
 ## D-239 — A generated id route samples the `list` of its namespace
 
@@ -6414,12 +6433,14 @@ imports it.
   `size`, or `size`, `after` and `before`, with `filters` and `sorts`) require no field, and
   `{}` is valid for each; `agg_list` requires `aggregates`.
 - **Built:** a `query` route is generated when its required parameters are at most `id`
-  (path, REST style; or query, RPC style) and its JSON body, if any, requires no field and
-  is not an `allOf`, `anyOf` or `oneOf` (R-3). The body is sent as `{}`, so the route's
-  default page size applies; `rev` is never sent. Every other `query` route the prefix
-  matches is skipped with its reason: `needs ['q']`, `its body requires ['aggregates']`,
-  `takes a body that is not JSON`, `its body schema is composed (…)`, `appears 2 times in
-  the document`. This is wider than "paginated": a body whose fields are all optional is
+  (path, REST style; or query, RPC style), with no required header or cookie (R-16), and its
+  JSON body, if any, requires no field, is not an `allOf`, `anyOf` or `oneOf` (R-3), resolves
+  (R-21), and takes an empty object: no non-object `type`, no `minProperties` (R-18). The
+  body is sent as `{}`, so the route's default page size applies; `rev` is never sent. Every
+  other `query` route the prefix matches is skipped with its reason: `needs ['q']`,
+  `needs ['header X-Region']`, `its body requires ['aggregates']`, `takes a body that is not
+  JSON`, `its body schema is composed (…)`, `its body schema cannot be resolved`, `its body
+  cannot be an empty object`, `appears 2 times in the document`. This is wider than "paginated": a body whose fields are all optional is
   generated even when it does not paginate. The request is one the schema accepts, not a
   guess.
 - **Class:** `drift`. §5.5 names an input class; the build tests a wider one, because the
@@ -6439,9 +6460,10 @@ imports it.
   of plain scenarios keeps its integer weights, so P1's picks are unchanged. `plan.scenarios`
   in the meta line gives each scenario `writes`, a reference its `operation`, and a
   generated one its `group`; `plan.skipped` maps each skipped key to its reason, and
-  `forze load run` prints them. An operation another scenario of the plan names, explicitly
-  or through an earlier sweep, is skipped as `named by another scenario`. A sweep that
-  generates nothing stops the run as `load_op_missing`.
+  `forze load run` prints them. An operation another scenario of the plan names, by its
+  scenario name, as the operation of a `Scenario.op` under another name (R-25), or through
+  an earlier sweep, is skipped as `named by another scenario`, so a mix never calls it twice
+  over. A sweep that generates nothing stops the run as `load_op_missing`.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a read sweep is one mix entry whose weight is split
   evenly between its generated scenarios, named by operation key; skipped routes are recorded
@@ -6513,28 +6535,84 @@ imports it.
   AGENTS.md gives the changelog's format to that skill.
 - **Class:** `drift`.
 
+## D-247 — A step that retired scenarios stops the knee search
+
+- **Touches:** row 16 (`ASSUMED`), as amended by rows 34, 35 and 41; §5.6; D-238.
+- **RFC said:** a `client_saturated` or `misconfigured` step is never the knee and never
+  confirms one. Nothing is said of a step whose mix changed.
+- **Found (PR #865 review, R-28):** when a sample empties and the principal keeps other
+  scenarios, the ramp carries on with another mix. Goodput across that step compares two
+  mixes, so a knee named or confirmed there may be the mix's, not the server's.
+- **Built:** a row with `sample_exhausted` blocks the search as a saturated or misconfigured
+  row does: never named, never a confirmation, and the summary's note reads
+  `mix changed at {…}` (or `unconfirmed: the next step was mix changed at {…}`). A
+  retirement in a step's drain counts too, since the steps after it run the new mix.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a step that retired scenarios (`sample_exhausted`)
+  is never the knee and never confirms one, and the search stops there; it amends row 16.
+
+## D-248 — `compare` never gates on a step a stop cut short
+
+- **Touches:** §5.9 (`compare`), row 28 (`ASSUMED`), row 36, D-238.
+- **RFC said:** `compare` matches rows by kind and workers or rate, and `--fail-on` exits 1
+  past a threshold.
+- **Found (PR #865 review, R-30):** a `cut_short` row measured a shorter window and a smaller
+  mix. Matched against a whole step it gives deltas that can fail a gate on their own.
+- **Built:** a matched step either run cut short is printed, with a warning
+  `workers=…: cut short in head, not gated`, and no threshold is applied to it. A gate left
+  with only such steps compared nothing and is refused as `load_compare_empty`, exit 2, as a
+  gate with no matched step already was (Unit 20, R-36).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — `compare` reports a step either run cut short and
+  never gates on it; a `--fail-on` with no whole step in both runs is refused.
+
 ## Review findings — 2026-11-05
 
-Fresh-eyes review of the working tree that became `ab9ddcf86`. Every fix has a test that
+Fresh-eyes review of the working tree that became `b6375b5bc`. Every fix has a test that
 fails without it; R-12's was checked by removing the branch it covers.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
-| R-1 | Risk | A key the document lists twice under two kinds vanished from the sweep | Fixed in `5f98aa4d0`: skipped as `appears 2 times in the document` |
-| R-2 | Bug | `"parameters": null`, a parameter without a name, or a `requestBody` or `content` that is not an object raised `TypeError`: exit 1 with a traceback | Fixed in `5f98aa4d0`: `load_openapi_unavailable`, exit 2 (D-233) |
-| R-3 | Risk | A body schema built from `allOf`, `anyOf` or `oneOf` looked as if it required nothing, so the sweep would send `{}` into 422s | Fixed in `5f98aa4d0`: skipped with its reason (D-240) |
-| R-4 | Risk | A path item given by `$ref` was ignored, and a server path missing from the base URL turned every request into a 404 that drained the samples | Fixed in `5f98aa4d0`: the `$ref` is followed (D-235); the server path is checked (D-245) |
+| R-1 | Risk | A key the document lists twice under two kinds vanished from the sweep | Fixed in `c4523113c`: skipped as `appears 2 times in the document` |
+| R-2 | Bug | `"parameters": null`, a parameter without a name, or a `requestBody` or `content` that is not an object raised `TypeError`: exit 1 with a traceback | Fixed in `c4523113c`: `load_openapi_unavailable`, exit 2 (D-233) |
+| R-3 | Risk | A body schema built from `allOf`, `anyOf` or `oneOf` looked as if it required nothing, so the sweep would send `{}` into 422s | Fixed in `c4523113c`: skipped with its reason (D-240) |
+| R-4 | Risk | A path item given by `$ref` was ignored, and a server path missing from the base URL turned every request into a 404 that drained the samples | Fixed in `c4523113c`: the `$ref` is followed (D-235); the server path is checked (D-245) |
 | R-5 | Design | A `query` route on `PUT`, `PATCH` or `DELETE` would run while writes are off | Refuted: rows 6 and 8 make the catalog's kind, as `x-forze-kind`, the test; forze binds no `query` to those verbs, and a verb rule would second-guess the key the RFC chose because the verb cannot tell (§3.1) |
 | R-6 | Risk | An undotted key `get` samples `list` | Refuted: the namespace rule (D-239) at the root namespace, applied as it is to `orders.get` |
 | R-7 | Question | Does a sample request go through the guarded client | Confirmed: both clients carry the target guard (D-231), so a document path naming a host is refused before sending |
-| R-8 | Bug | The knee left out the last row on any stop, a whole step when the stop landed in its drain | Fixed in `34519ff43`: only a row whose window a stop ended early says `cut_short` and is left out (D-238) |
-| R-9 | Question | A stop during warm-up wrote a zero-length row as an ordinary step | Fixed in `34519ff43`: the row says `cut_short` |
+| R-8 | Bug | The knee left out the last row on any stop, a whole step when the stop landed in its drain | Fixed in `ef1ceb8aa`: only a row whose window a stop ended early says `cut_short` and is left out (D-238) |
+| R-9 | Question | A stop during warm-up wrote a zero-length row as an ordinary step | Fixed in `ef1ceb8aa`: the row says `cut_short` |
 | R-10 | Risk | A retirement after the last row is written never reaches a row | Refuted: calls answering after the last row were sent outside every step's window (D-229), and the run is over |
 | R-11 | Risk | A failed sample leaves a file with only its meta line | Refuted: a failed sign-in has done so since P1; `read_run` reads a file with no summary, and `compare` refuses a gate that matched no step (Unit 20, R-36) |
-| R-12 | Test | No test reached the branch where a call's sample empties while it waits on its credential | Fixed in `34519ff43`: two workers and a credential that waits; the test fails with the branch removed |
-| R-13 | Test | No cases for path-level parameters, a path item `$ref`, servers, mixed kinds or malformed shapes | Fixed in `5f98aa4d0`; undotted keys stay as R-6 says |
-| R-14 | Test | The ids test passed even if the run never reached load | Fixed in `34519ff43`: it asserts the sampled ids were called |
-| R-15 | Test | `importorskip("fastapi")` skipped the wire-name pins where fastapi is absent | Fixed in `34519ff43`: imported directly, as Unit 20's R-11 did for uvicorn |
+| R-12 | Test | No test reached the branch where a call's sample empties while it waits on its credential | Fixed in `ef1ceb8aa`: two workers and a credential that waits; the test fails with the branch removed |
+| R-13 | Test | No cases for path-level parameters, a path item `$ref`, servers, mixed kinds or malformed shapes | Fixed in `c4523113c`; undotted keys stay as R-6 says |
+| R-14 | Test | The ids test passed even if the run never reached load | Fixed in `ef1ceb8aa`: it asserts the sampled ids were called |
+| R-15 | Test | `importorskip("fastapi")` skipped the wire-name pins where fastapi is absent | Fixed in `ef1ceb8aa`: imported directly, as Unit 20's R-11 did for uvicorn |
+
+## Review findings — 2026-11-06 (PR #865)
+
+CodeRabbit's and CodeAnt's reviews of `ffd097bd7`. Findings raised by both are one row. Every
+fix has a test that fails without it.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-16 | Bug | A sweep or a sample sent no required header or cookie, so the route refused every call | Fixed in `6eea27d8c`: skipped as `needs ['header X-Region']`, or refused for a sample (D-236, D-240) |
+| R-17 | Bug | A sample kept every id a route answered, past `size`, when the route ignored `size` | Fixed in `1706a93a4`: at most `size` values (D-236) |
+| R-18 | Bug | A required body whose schema is an array, a scalar or has `minProperties` got `{}` from the sweep | Fixed in `6eea27d8c`: skipped as `its body cannot be an empty object` (D-240) |
+| R-19 | Bug | A 404 on a request with two sampled values dropped both, which could retire scenarios whose ids still exist | Fixed in `1706a93a4`: a 404 drops a value only from a request that carried one (D-238) |
+| R-20 | Bug | An operation's parameter did not replace the path item's of the same name and location, so a required flag the operation relaxed still held | Fixed in `6eea27d8c`; raised by both reviewers (D-235) |
+| R-21 | Bug | A `$ref` that is missing, external or circular read as a schema that requires nothing | Fixed in `6eea27d8c`: a body schema like that is skipped; a parameter, `requestBody` or path item like that refuses the document (D-233, D-240) |
+| R-22 | Bug | A `$ref` with `~1`, `~0` or percent escapes did not resolve | Fixed in `6eea27d8c`: JSON Pointer tokens are decoded (D-235) |
+| R-23 | Bug | `Scenario.op` sent a JSON body to a route that takes only a form or multipart | Fixed in `6eea27d8c`: refused; `application/*+json` counts as JSON. Raised by both reviewers (D-235) |
+| R-24 | Bug | An explicit body was checked for presence only, not for the fields its schema requires | Fixed in `6eea27d8c`: the top-level required fields are checked when the schema states them plainly (D-235) |
+| R-25 | Bug | A sweep generated an operation a `Scenario.op` already called under another name, so a mix sent it twice the traffic | Fixed in `6eea27d8c`; raised by both reviewers (D-241) |
+| R-26 | Bug | A sample sent no `size` query when the route had a body without a `size` field | Fixed in `1706a93a4` (D-236) |
+| R-27 | Risk | Sampling read the credential once per principal, so a long sampling phase could outlive the token | Fixed in `1706a93a4`: read again for each sample (D-236) |
+| R-28 | Bug | A knee could be named or confirmed across a step that retired scenarios, comparing two mixes | Fixed in `a92b81490` (D-247) |
+| R-29 | Risk | The open model's arrivals kept sending while a halted step drained | Fixed in `a92b81490`: they stop at the halt (D-238) |
+| R-30 | Bug | `compare --fail-on` gated a step one run had cut short against a whole one | Fixed in `a92b81490` (D-248) |
+| R-31 | Docs | The review body's docstring-coverage pre-merge check | Refuted, as Unit 20's R-34: no repository gate sets a threshold. The public methods of `SamplePool` gained docstrings in `6eea27d8c` |
+| R-32 | Test | Codecov's patch check: refusal paths in `catalog.py` and three guards in `engine.py` untested | Fixed in `36bfab79f`. Three `engine.py` lines stay uncovered, all from P1 and outside this patch: `inflight_cap`'s guard for a rate or timeout at or below zero, which validated profiles never reach; a scenario error raised during a step's drain; and a ramp whose worker count falls |
 
 ---
 
