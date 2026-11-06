@@ -7845,7 +7845,7 @@ writes a route without a response model. Either way an infinite or NaN float is 
   <code>snapshots</code>, it serves every worker of a pre-fork group from their shared
   directory, renders nothing itself, and answers <code>503</code> when nothing is fresh — see
   <a href="../../running-in-prod/grafana-stack/#several-workers-one-scrape">Several workers, one scrape</a>.</li>
-<li><code>MetricsSnapshots(directory, *, interval=10s, ttl=3 × interval, max_snapshot_bytes=16 MiB)</code>
+<li><code>MetricsSnapshots(*, directory, interval=10s, ttl=3 × interval, max_snapshot_bytes=16 MiB)</code>
   — the shared directory, checked once and then held open, and how fresh a snapshot must
   be. <code>writer_step(reader)</code> is the lifecycle step each worker runs to write its own, from
   the per-worker build that also calls <code>bootstrap_telemetry</code>; a <code>ttl</code> under two intervals,

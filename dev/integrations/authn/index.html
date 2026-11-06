@@ -6904,8 +6904,9 @@ its key row. With <code>revocation_states</code> on the kernel, a token carries 
 (<code>fam</code>) and the principal's epoch (<code>pep</code>), and the verifier checks them against states cached
 in Redis, reading Postgres only for what Redis misses. With <code>key_mac</code> too, every live cached
 state is signed, and API keys are checked the same way, from a state cached under the key's
-digest. The eligibility read stays for both, except that a token's is skipped when the authz
-kernel carries the same configuration (<a href="#skip-the-eligibility-read">below</a>).</p>
+digest. The eligibility read stays for both, except that a token's, and a cached API key's,
+is skipped when the authz kernel carries the same configuration
+(<a href="#skip-the-eligibility-read">below</a>).</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">RevocationStatesDepKey</span>

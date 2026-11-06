@@ -6688,7 +6688,8 @@ on each integration's page. Two key backends need no extra at all: the
 (<a href="../dst/overview/">deterministic simulation testing</a> and the <code>forze</code>
 command-line tool, whose <a href="../running-in-prod/operations-cli/"><code>ops</code> group</a> runs your
 operations from a terminal or a Job), <code>mock-server</code> serves the in-memory mock over HTTP,
-<code>sandbox-container</code> is the container tier of the
+<code>load</code> drives a running app for <a href="../testing/load-testing/">load testing</a>, from Python
+or, with <code>cli</code>, as <code>forze load</code>, <code>sandbox-container</code> is the container tier of the
 <a href="../data-events/sandbox/">sandbox execution plane</a>, <code>observability</code> adds the OTLP
 exporter for <a href="../running-in-prod/observability/">telemetry</a>, and <code>zstd</code> adds the zstd
 codec for <a href="../running-in-prod/portability/">portable archives</a>.</p>

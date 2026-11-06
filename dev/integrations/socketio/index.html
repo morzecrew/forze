@@ -7224,7 +7224,10 @@ never stores the row. In one process the second to start is refused
   <code>forze.realtime.gateway.poisoned</code> and on <code>emit_failed</code> climbing while <code>emitted</code> is
   flat. Backlog is a property of the consumer group, not the process: poll
   <code>AckStreamGroupAdminPort.depth(group, stream)</code> for undelivered/pending/oldest-idle —
-  the same surface <code>quiesce(ack_streams=[(stream_spec, group)])</code> attests at standstill.</li>
+  the same surface <code>quiesce(ack_streams=[(stream_spec, group)])</code> attests at standstill.
+  For the mailbox, call <a href="../../reference/metrics/#realtime-mailbox"><code>instrument_realtime_mailbox()</code></a>
+  once too: it counts every mailbox built in the process, the gateway's included. Alarm on
+  <code>forze.realtime.mailbox.overflowed</code>.</li>
 <li><strong>Backplane heartbeat</strong> — <code>realtime_backplane_heartbeat_lifecycle_step(sio, health)</code>
   pushes a probe frame through the Redis manager on an interval and
   <code>instrument_realtime_backplane(health)</code> exports its freshness; a dead manager listener

@@ -7173,6 +7173,9 @@ it is a server setting forze cannot check.</p>
   worker that can handle an operation must share the same namespace.</li>
 <li><strong>Routed clients</strong> use <code>routed_client_lifecycle_step</code> — don't mix routed and
   non-routed lifecycle steps for one client.</li>
+<li><strong>Pool metrics.</strong> <code>instrument_connection_pools({"redis": client})</code> exports the pool's
+  connections in use and idle, and its cap; Redis reports no waiting callers, and a routed
+  client is refused. See <a href="../../reference/metrics/#connection-pools">Connection pools</a>.</li>
 </ul>
 
 

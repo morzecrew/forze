@@ -6955,6 +6955,9 @@ leaves the way a declared operation does:</p>
 connection error, with forze's exception as the cause. Closing the SDK's client leaves the
 pooled client open, because the lifecycle owns it. <code>HttpServiceTransport</code> is the class, if
 you build one yourself from a client and a config.</p>
+<p>A stream or an SDK response that nobody closes holds its request open. To see it, export
+each pooled client's requests in flight with
+<a href="../../reference/metrics/#outbound-http"><code>instrument_http_clients</code></a>.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <p>A failed call raises a <code>CoreException</code> whose kind follows the counterparty's answer:</p>
 <table>

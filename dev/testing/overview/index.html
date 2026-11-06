@@ -7033,7 +7033,7 @@
 <li><strong>Rolls back</strong> — documents, outbox rows, inbox marks, and document-backed identity stores. A handler that stages an outbox event and then fails leaves no rows behind.</li>
 <li><strong>Survives rollback</strong> — queues, streams, storage blobs, caches, counters, idempotency keys, locks, search and analytics state (these aren't transactional in production either).</li>
 </ul>
-<p>The default journal mode is atomic <em>without</em> serializing, so concurrent transactions still interleave. Two modes are opt-in — <code>MockDepsModule(transactions="strict")</code> (a serializing global-snapshot manager) and <code>transactions="none"</code> (the legacy no-op). See <a href="../../writing-operation/transactions/#transactions-under-the-mock">Transactions</a> for the full picture, and <a href="../../dst/overview/">Deterministic simulation</a> for exploring concurrency and isolation under the faithful default.</p>
+<p>The default journal mode is atomic <em>without</em> serializing, so concurrent transactions still interleave. Two modes are opt-in — <code>MockDepsModule(transactions="strict")</code> (a serializing global-snapshot manager, and the only mock mode with savepoints, so a test of a nested <a href="../../writing-operation/transactions/#dry-runs-roll-back-on-purpose"><code>rollback_only()</code></a> needs it) and <code>transactions="none"</code> (the legacy no-op). See <a href="../../writing-operation/transactions/#transactions-under-the-mock">Transactions</a> for the full picture, and <a href="../../dst/overview/">Deterministic simulation</a> for exploring concurrency and isolation under the faithful default.</p>
 <h2 id="testing-with-identity-context">Testing with identity context<a class="headerlink" href="#testing-with-identity-context" title="Permanent link">&para;</a></h2>
 <p>A handler reads <code>ctx.authn</code> / <code>ctx.tenancy</code> from the identity plane, resolved during operation execution — not from a value you set by hand. To test such a handler, wire the mock's identity stubs and drive the authn flow (seed an account, authenticate) rather than constructing an identity directly. See <a href="../../identity-tenancy-enc/identity/">Identity</a> and the <a href="../../recipes/authn-authz-tenancy-fastapi/">authn, authz &amp; tenancy recipe</a> for the wiring.</p>
 <h2 id="what-the-mock-cant-model">What the mock can't model<a class="headerlink" href="#what-the-mock-cant-model" title="Permanent link">&para;</a></h2>
@@ -7166,6 +7166,7 @@ matches nothing fails, so the list can only shrink.</p>
 <li><a href="../../dst/overview/">Deterministic simulation</a> — seed-driven exploration of concurrency, faults, and crashes</li>
 <li><a href="../../core-concepts/contracts/">Contracts</a> — ports and adapters overview</li>
 <li><a href="../../writing-operation/transactions/">Transactions</a> — strict mode details</li>
+<li><a href="../load-testing/">Load testing</a> — ramp and soak a running app as the principals that use it</li>
 </ul>
 
 

@@ -7568,6 +7568,10 @@ graceful timeout, the lifespan sets it to 10 seconds.</p>
 <li><strong>Gunicorn.</strong> Its uvicorn worker runs the same server, so the same lifespan drains
   there. Set gunicorn's <code>--graceful-timeout</code> above the logged worst case: past it,
   the master kills the worker.</li>
+<li><strong>Metrics.</strong> A plain <code>/metrics</code> route answers from whichever worker took the scrape.
+  Give <code>attach_metrics_route</code> a <code>MetricsSnapshots</code> and a <code>worker_metrics_reader()</code>, so one
+  scrape covers every worker: see
+  <a href="../../running-in-prod/grafana-stack/#several-workers-one-scrape">Several workers, one scrape</a>.</li>
 <li><strong>Under <code>serve_uvicorn</code>,</strong> the lifespan leaves the signals to <code>serve_uvicorn</code>.</li>
 <li><strong>Under another server,</strong> or a uvicorn off the main thread that installs no
   handler, the lifespan logs a warning. The drain phases then run only in the
@@ -7983,6 +7987,10 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>attach_readiness_route</code></td>
 <td>a drain-aware <code>GET /readyz</code> probe, optionally sweeping dependency <code>health()</code></td>
+</tr>
+<tr>
+<td><code>attach_metrics_route</code> / <code>MetricsSnapshots</code> / <code>worker_metrics_reader</code></td>
+<td>a Prometheus <code>GET /metrics</code> pull endpoint; with snapshots, one scrape for every worker of a pre-fork group</td>
 </tr>
 <tr>
 <td><code>attach_document_routes</code> / <code>attach_search_routes</code> / <code>attach_storage_routes</code> / <code>attach_authn_routes</code></td>

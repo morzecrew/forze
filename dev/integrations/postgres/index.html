@@ -7101,6 +7101,10 @@ until then, a row indexed earlier with <code>ё</code> matches neither spelling.
   blank query; a text query is refused as a <code>precondition</code> error with code
   <code>search_query_vector_required</code>, before any SQL runs. Hub and federated searches take no
   <code>query_vector</code>, so their vector legs still require <code>embeddings_name</code>.</li>
+<li><strong>Pool metrics.</strong> <code>instrument_connection_pools({"postgres": client})</code> exports the pool's
+  connections in use and idle, its cap, and the callers waiting for one; a routed client is
+  refused. Alert on <code>in_use</code> pinned at <code>max</code>. See
+  <a href="../../reference/metrics/#connection-pools">Connection pools</a>.</li>
 </ul>
 
 

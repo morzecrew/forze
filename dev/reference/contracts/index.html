@@ -6933,7 +6933,7 @@ the name a resolution error prints. Handlers should keep to the accessor.</p>
 <tr>
 <td>Transactions</td>
 <td>tx route</td>
-<td><code>ctx.transaction(route)</code> for the manager; <code>ctx.tx_ctx.scope(route)</code> for the ambient scope</td>
+<td><code>ctx.transaction(route)</code> for the manager; <code>ctx.tx_ctx.scope(route)</code> for the ambient scope, whose handle's <code>rollback_only()</code> makes it roll back (<a href="../../writing-operation/transactions/#dry-runs-roll-back-on-purpose">dry runs</a>)</td>
 <td><code>TransactionManagerDepKey</code></td>
 </tr>
 <tr>

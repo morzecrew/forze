@@ -6965,6 +6965,10 @@ models follows.</p>
   code <code>search_query_vector_required</code>, before any database call.</li>
 <li>Relations accept a static <code>(database, collection)</code> tuple or a per-tenant
   resolver; routed clients handle database-per-tenant.</li>
+<li><strong>Pool metrics.</strong> <code>instrument_connection_pools({"mongo": client})</code> exports the connections
+  in use and idle, and the cap, of the server pool with the most in use; MongoDB reports no
+  waiting callers, and a routed client is refused. See
+  <a href="../../reference/metrics/#connection-pools">Connection pools</a>.</li>
 </ul>
 
 
