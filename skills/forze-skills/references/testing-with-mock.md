@@ -32,6 +32,13 @@ from forze_postgres import PostgresDepsModule
 DepsRegistry.from_modules(PostgresDepsModule(...), MockDepsModule(state=shared_state))
 ```
 
+**Transactions** — `MockDepsModule(transactions=...)` picks the manager. The default
+`"journal"` keeps writes atomic without serializing transactions, but a nested scope shares
+the root's transaction, so a nested `tx.rollback_only()` (a dry run inside a scope) raises
+`tx_nested_rollback_unsupported`. Test that with `transactions="strict"`, whose nested scopes
+are savepoints; it serializes root transactions. See
+[execution context](execution-context.md) for the dry-run rules.
+
 ## Running the mock as a server
 
 In-process wiring covers your own tests. When something *outside* the process needs to talk to the app — a frontend in development, a contract test in another language — `forze_mock.server` serves the same mock-backed app over HTTP, with the same fallback rule:

@@ -60,6 +60,9 @@ app.include_router(router)
 - An operation with a plan-declared deadline surfaces it as an
   `x-deadline-seconds` OpenAPI extension and a "Time budget" description line —
   see [resilience and deadlines](resilience.md).
+- Every generated route carries an `x-forze-kind` OpenAPI extension: `query` for a
+  read-only operation, `command` otherwise. A client, such as a load-test plan, tells reads
+  from writes by it, since list and search routes are `POST`.
 - `apply_openapi_security(app, requirement)` (from `forze_fastapi.security`) makes
   the generated OpenAPI honest about auth: it derives `securitySchemes` from the
   same `AuthnRequirement` you give `SecurityContextMiddleware` (bearer for an

@@ -41,6 +41,7 @@ reaches for the wrong things. Start from the table below and read the whole row.
 | Run operations from a shell, cron or a Job | `fastapi-generated-routes` → `runtime-lifecycle` → `authn` |
 | Encrypt a field | `field-encryption` → `kms-backends` → `spec-to-backend-config` |
 | Simulate my service under faults | `dst-simulation` → `dst-invariants` → `testing-with-mock` |
+| Instrument it for production | `logging-metrics` → `connection-settings` → `fastapi-setup` → `resilience` |
 
 If the task is not one of these, pick from the index below — but check whether it decomposes into
 a row first.
@@ -52,7 +53,7 @@ a row first.
 | Reference | Covers |
 |---|---|
 | [architecture](references/architecture.md) | Layered architecture, contracts and adapters, what may import what |
-| [execution-context](references/execution-context.md) | `ExecutionContext`, the ports on it, transactions, identity and tenancy in a handler |
+| [execution-context](references/execution-context.md) | `ExecutionContext`, the ports on it, transactions and dry runs, identity and tenancy in a handler |
 | [handlers](references/handlers.md) | Handler patterns for the common operation shapes, and the gotchas |
 
 ### Specs, deps and wiring
@@ -114,7 +115,7 @@ a row first.
 
 | Reference | Covers |
 |---|---|
-| [authn](references/authn.md) | Boundary binding, the verify-then-resolve pipeline, authn deps, authz |
+| [authn](references/authn.md) | Boundary binding, the verify-then-resolve pipeline, authn deps, authz, revocation states shared by both |
 | [oidc](references/oidc.md) | External IdPs, token verifiers, principal resolution |
 | [tenancy](references/tenancy.md) | Tenant identity, routed clients, isolation tiers, the admin plane, provisioning |
 | [secrets](references/secrets.md) | Secret-backed configuration and its backends |
@@ -148,7 +149,7 @@ a row first.
 | Reference | Covers |
 |---|---|
 | [errors](references/errors.md) | `CoreException`, adapter exception mapping, FastAPI error responses |
-| [logging-metrics](references/logging-metrics.md) | Structured logging, call context, operation and resilience metrics |
+| [logging-metrics](references/logging-metrics.md) | Structured logging, call context, operation, resilience, pool, process and HTTP metrics; one scrape for every pre-fork worker |
 | [resilience](references/resilience.md) | Retry, breaker, bulkhead, rate limit, hedging; invocation deadlines |
 | [shutdown-fleet](references/shutdown-fleet.md) | Graceful drain, quiesce, readiness, fleet posture across replicas |
 
