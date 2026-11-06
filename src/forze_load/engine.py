@@ -573,6 +573,9 @@ class _Run:
         it ends. A credential without ``settle`` has nothing to wait for.
         """
 
+        failure: Exception | None = None
+
+        # Every session settles before a failure is raised: the clients close after this.
         for session in self.sessions.values():
             settle = getattr(session.credential, "settle", None)
 
@@ -582,9 +585,11 @@ class _Run:
             try:
                 await settle()
 
-            except Exception:
-                if raise_errors:
-                    raise
+            except Exception as error:
+                failure = failure or error
+
+        if failure is not None and raise_errors:
+            raise failure
 
     async def sign_in(self) -> None:
         sessions = list(self.sessions.values())

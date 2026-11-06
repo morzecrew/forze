@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 import forze_load.auth as auth_module
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_load import api_key, bearer, password_login
 from forze_load.auth import RETRY_FIRST_S, PasswordLogin, PasswordSession
 
@@ -197,6 +197,25 @@ class TestPasswordSession:
                 await session.settle()
 
         assert failed.value.code == "load_refresh_failed"
+
+    async def test_settle_waits_for_every_pending_update_before_raising(self) -> None:
+        session = password_login("ada", password_env="LOAD_PW").session()
+        finished = asyncio.Event()
+
+        async def fails() -> None:
+            raise exc.configuration("refresh failed", code="load_refresh_failed")
+
+        async def slow() -> None:
+            await asyncio.sleep(0.05)
+            finished.set()
+
+        session._pending.update({asyncio.create_task(fails()), asyncio.create_task(slow())})
+
+        with pytest.raises(CoreException) as failed:
+            await session.settle()
+
+        assert failed.value.code == "load_refresh_failed"
+        assert finished.is_set()  # the slow one ended before the failure was raised
 
     async def test_settle_returns_at_once_with_nothing_pending(self, password: str) -> None:
         server = _AuthServer(password=password)

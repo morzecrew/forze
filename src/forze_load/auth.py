@@ -206,10 +206,19 @@ class PasswordSession:
         :raises CoreException: a sign-in or refresh failed.
         """
 
+        failure: BaseException | None = None
+
+        # Every task is awaited before any failure is raised: the clients close after this.
         while self._pending:
             tasks = list(self._pending)
             self._pending.clear()
-            await asyncio.gather(*tasks)
+
+            for outcome in await asyncio.gather(*tasks, return_exceptions=True):
+                if isinstance(outcome, BaseException) and failure is None:
+                    failure = outcome
+
+        if failure is not None:
+            raise failure
 
     def _finished(self, task: asyncio.Task[None]) -> None:
         # A failed one stays for `settle` to raise; reading it here marks it retrieved.

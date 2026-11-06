@@ -578,6 +578,28 @@ class TestCredentialSettle:
 
         assert session.settled == 1
 
+    async def test_every_session_settles_before_the_first_failure_is_raised(self) -> None:
+        first_failure = exc.configuration("refresh failed", code="load_refresh_failed")
+        sessions = [
+            _SettlingSession(first_failure),
+            _SettlingSession(exc.configuration("second")),
+            _SettlingSession(),
+        ]
+        principals = [
+            Principal(name=f"p{i}", mix={"get": 1}, auth=session)
+            for i, session in enumerate(sessions)
+        ]
+
+        with pytest.raises(CoreException) as failed:
+            await run(
+                _plan(principals=principals),
+                ClosedRamp(steps=[1], step_s=0.1),
+                transport=_transport(_ok),
+            )
+
+        assert failed.value is first_failure
+        assert [session.settled for session in sessions] == [1, 1, 1]
+
 
 def test_the_profile_alias_names_every_profile() -> None:
     from forze_load import Realtime, Soak, engine
