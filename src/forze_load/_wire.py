@@ -368,22 +368,23 @@ def _unmask(payload: bytes, mask: bytes) -> bytes:
     return bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
 
 
-def accept_for(key: str) -> str:
-    """The ``Sec-WebSocket-Accept`` a server answers *key* with (RFC 6455 §4.2.2)."""
+def accept_for(nonce: str) -> str:
+    """The ``Sec-WebSocket-Accept`` a server answers the *nonce* sent as ``Sec-WebSocket-Key``
+    with (RFC 6455 §4.2.2)."""
 
-    # SHA-1 is what the RFC mandates here: a proof the server read the key, not a secret.
-    digest = hashlib.sha1((key + _WS_GUID).encode(), usedforsecurity=False).digest()
+    # SHA-1 is what the RFC mandates here: a proof the server read the nonce, not a secret.
+    digest = hashlib.sha1((nonce + _WS_GUID).encode(), usedforsecurity=False).digest()
 
     return base64.b64encode(digest).decode()
 
 
-def _accepted(headers: httpx.Headers, key: str) -> bool:
+def _accepted(headers: httpx.Headers, nonce: str) -> bool:
     connection = {token.strip().lower() for token in headers.get("connection", "").split(",")}
 
     return (
         headers.get("upgrade", "").lower() == "websocket"
         and "upgrade" in connection
-        and headers.get("sec-websocket-accept") == accept_for(key)
+        and headers.get("sec-websocket-accept") == accept_for(nonce)
     )
 
 
@@ -400,23 +401,23 @@ async def ws_connect(
 
     :raises WsRefused: the server answered the upgrade with another status than 101.
     :raises WsHandshakeError: a 101 without ``Upgrade: websocket``, ``Connection: upgrade``
-        or the ``Sec-WebSocket-Accept`` the key calls for.
+        or the ``Sec-WebSocket-Accept`` the nonce calls for.
     """
 
-    key = base64.b64encode(secure_random_bytes(16)).decode()
+    nonce = base64.b64encode(secure_random_bytes(16)).decode()
     upgrade = {
         **headers,
         "Connection": "Upgrade",
         "Upgrade": "websocket",
         "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Key": key,
+        "Sec-WebSocket-Key": nonce,
     }
 
     async with client.stream("GET", path, params=params, headers=upgrade) as response:
         if response.status_code != 101:
             raise WsRefused(response.status_code)
 
-        if not _accepted(response.headers, key):
+        if not _accepted(response.headers, nonce):
             raise WsHandshakeError("The 101 does not complete the WebSocket handshake")
 
         stream: _Stream = response.extensions["network_stream"]
