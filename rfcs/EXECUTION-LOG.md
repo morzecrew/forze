@@ -6255,8 +6255,8 @@ D-247 and D-248.
 from. A fresh-eyes review of the working tree that became `b6375b5bc` raised fifteen findings;
 four were refuted. The PR #865 reviews raised eighteen inline findings, three of them raised
 by both reviewers, and all fifteen were fixed; of the two checks beside them, coverage was
-fixed and docstring coverage refuted; a second round raised two edge cases on fixed threads,
-both fixed. The tables at the end record each and where it was fixed. Commit hashes are
+fixed and docstring coverage refuted; later rounds raised three edge cases on fixed threads,
+all fixed, the last by making the body check conservative by construction. The tables at the end record each and where it was fixed. Commit hashes are
 those after the branch was rebased for PR #865.
 
 **Where each item lives.** `x-forze-kind` in
@@ -6354,7 +6354,10 @@ imports it.
   `allow_writes` says: sampling never writes) that needs no input, a required header or
   cookie included (`load_plan_invalid`; R-16). `size` goes in the JSON body when the body
   schema has a `size` property (`{}` otherwise), and in the query when the route declares
-  `size` there and the body has none (R-26). Values come from the answer's `hits` (forze's
+  `size` there and the body has none (R-26). The body the sample sends, `{"size": n}` or
+  `{}`, must fit the route's schema by D-240's allowlist rule, the `size` property's own
+  `type`, bounds, `enum` and `const` included; otherwise the run is refused before load as
+  `load_plan_invalid` (R-35). Values come from the answer's `hits` (forze's
   `Paginated` and `CursorPaginated`) or a bare JSON array; strings and integers only,
   deduplicated, and at most `size` of them, whatever the route answered (R-17). A transport
   error, a non-2xx answer or an answer with no list stops the run as `load_sample_failed`;
@@ -6436,23 +6439,28 @@ imports it.
   `size`, or `size`, `after` and `before`, with `filters` and `sorts`) require no field, and
   `{}` is valid for each; `agg_list` requires `aggregates`.
 - **Built:** a `query` route is generated when its required parameters are at most `id`
-  (path, REST style; or query, RPC style), with no required header or cookie (R-16), and its
-  JSON body, if any, requires no field, is not an `allOf`, `anyOf` or `oneOf` (R-3), resolves
-  (R-21), and takes an empty object: no non-object `type`, no `minProperties` (R-18), and no
-  `enum` that leaves `{}` out or `const` other than `{}` (R-33). The
-  body is sent as `{}`, so the route's default page size applies; `rev` is never sent. Every
-  other `query` route the prefix matches is skipped with its reason: `needs ['q']`,
-  `needs ['header X-Region']`, `its body requires ['aggregates']`, `takes a body that is not
-  JSON`, `its body schema is composed (…)`, `its body schema cannot be resolved`, `its body
-  cannot be an empty object`, `appears 2 times in the document`. This is wider than "paginated": a body whose fields are all optional is
-  generated even when it does not paginate. The request is one the schema accepts, not a
-  guess.
+  (path, REST style; or query, RPC style), with no required header or cookie (R-16), and a
+  required JSON body, if any, resolves (R-21) and accepts `{}`, the exact body sent. An
+  optional body is left out. The body check is conservative by construction (R-35): it
+  reads only `type`, `properties`, `required`, `minProperties`, `maxProperties`, `enum`,
+  `const`, `additionalProperties` and `nullable`, plus annotations (`title`, `description`,
+  `default`, `example`, `examples`, `deprecated`, `readOnly`, `writeOnly`, `format`,
+  `$comment`). A schema with any other keyword at its top level (`allOf`, `anyOf`, `oneOf`,
+  `not`, `if`, `patternProperties` and the rest) is skipped rather than half read, which
+  replaces the keyword-by-keyword checks of R-3, R-18 and R-33. The body is sent as `{}`, so
+  the route's default page size applies; `rev` is never sent. Every other `query` route the
+  prefix matches is skipped with its reason: `needs ['q']`, `needs ['header X-Region']`,
+  `its body requires ['aggregates']`, `takes a body that is not JSON`, `its body schema
+  cannot be resolved`, `its body schema uses keywords the kit does not evaluate: not`,
+  `its body cannot be an empty object`, `appears 2 times in the document`. This is wider
+  than "paginated": a body whose fields are all optional is generated even when it does
+  not paginate. The request is one the schema accepts, not a guess.
 - **Class:** `drift`. §5.5 names an input class; the build tests a wider one, because the
   named class cannot be read off the document.
 - **Proposed row (RFC 0084):** `ASSUMED` — the read sweep generates a `query` route whose
-  required parameters are at most `id` (path or query) and whose JSON body requires no field,
-  sent as `{}`; every other `query` route the prefix matches is recorded as skipped with its
-  reason.
+  required parameters are at most `id` (path or query) and whose required JSON body schema,
+  read only through an allowlist of keywords, accepts `{}`; every other `query` route the
+  prefix matches is recorded as skipped with its reason.
 
 ## D-241 — A sweep is one mix entry, and skipped routes go in the meta line
 
@@ -6620,12 +6628,13 @@ fix has a test that fails without it.
 
 ## Review findings — 2026-11-06 (PR #865, second round)
 
-CodeRabbit's re-review of `73c2d1742`, on two threads the first round fixed.
+CodeRabbit's re-reviews of `73c2d1742` and `c8544032e`, on two threads the first round fixed.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | R-33 | Bug | A body schema with an `enum` that leaves `{}` out, or a `const` other than `{}`, still passed as taking an empty object, so a sweep or sample could send `{}` | Fixed in `7d1f30b09`: skipped as `its body cannot be an empty object`; an `enum` listing `{}` or a `const` of `{}` is generated (D-240) |
 | R-34 | Bug | A route that declares only `application/merge-patch+json` or another `application/*+json` passed resolution, but its body went out as `application/json`, which such a server may refuse with 415 | Fixed in `3a2dc88eb`: the body carries the route's own JSON type as its `Content-Type`; a route that also offers `application/json` gets that (D-235) |
+| R-35 | Bug | Two more bodies passed the empty-object check: a schema with `not` that refuses `{}`, and a sample's `{"size": 500}` against a `const` of `{}` or an `enum` that lacks it. Patching keyword by keyword would not converge | Fixed in `6217bff32`, by construction: only an allowlist of keywords is evaluated, a schema with any other top-level keyword is skipped as `its body schema uses keywords the kit does not evaluate: …`, and the exact body sent is judged, a sample's `size` included (D-236, D-240) |
 
 ---
 
