@@ -62,7 +62,12 @@ class HttpOperationSpec(Generic[In, Out]):
     """Response model validated from JSON."""
 
     query_from: frozenset[str] = attrs.field(factory=frozenset[str])
-    """Request fields serialized as query parameters."""
+    """Request fields serialized as query parameters.
+
+    On a ``GET`` an empty set means every field outside the path. A query field goes out
+    with its declared default when the caller leaves it unset, and stays out when its value
+    is ``None``. Body fields are sent only when the caller set them. See
+    :func:`~forze.application.integrations.http.request_parts`."""
 
     idempotent: bool = False
     """Whether the operation is safe to retry."""

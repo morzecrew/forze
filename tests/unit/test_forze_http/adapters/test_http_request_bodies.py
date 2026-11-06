@@ -143,8 +143,8 @@ class TestFormEncoding:
         assert seen["type"] == "application/x-www-form-urlencoded"
         # Parsed rather than string-compared: field order is httpx's business, the pairs
         # are the contract.
-        # `exclude_unset` is the plane's existing rule: a field the caller never set is
-        # not sent. `offline` has a default and was not passed, so it is absent — which is
+        # `exclude_unset` is the body's rule (query parameters send their defaults): a
+        # body field the caller never set is not sent. `offline` has a default and was not passed, so it is absent — which is
         # also why the boolean spelling is pinned in the parts tests, where it is reachable.
         assert parse_qs(str(seen["body"])) == {
             "grant_type": ["authorization_code"],
