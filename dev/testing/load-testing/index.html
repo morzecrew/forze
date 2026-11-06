@@ -6932,7 +6932,9 @@ the run reads the method and path from the app's OpenAPI document when it starts
   that serves no docs, or guards them, save the document and pass
   <code>openapi=Path("openapi.json")</code>, or the parsed document itself. When the document's first
   server is a path, as FastAPI writes a <code>root_path</code> (<code>/api/v1</code>), <code>base_url</code> must end with
-  it. The meta line records the document's digest as <code>openapi_sha256</code>, so <code>compare</code> warns
+  it. Every request goes under <code>base_url</code>, so an operation or path that names a server of
+  its own, neither the document's nor <code>base_url</code>, is refused when referenced and skipped by
+  a sweep. Server variables are read at their defaults. The meta line records the document's digest as <code>openapi_sha256</code>, so <code>compare</code> warns
   when two runs read different documents.</li>
 </ul>
 <h3 id="sample-ids-from-live-data">Sample ids from live data<a class="headerlink" href="#sample-ids-from-live-data" title="Permanent link">&para;</a></h3>
