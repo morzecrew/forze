@@ -10,6 +10,7 @@ preventive.
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 import attrs
@@ -571,3 +572,23 @@ class TestPropose:
 
         assert verdict.holds
         assert verdict.failed == ()
+
+    async def test_the_dry_run_rollback_logs_no_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The rollback is a dry run's normal end, not a failure: nothing logs an error for it.
+        ctx = _ctx()
+
+        async def _apply(c: ExecutionContext) -> None:
+            await c.document.command(ACCOUNTS).create(
+                AccountCreate(ledger_id="L1", balance=5)
+            )
+
+        with caplog.at_level(logging.DEBUG):
+            verdict = await propose(ctx, _apply, [], route="mock", isolation=_SER)
+
+        assert verdict.holds
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+        assert (
+            await evaluate(LEDGER_BALANCED, ctx, {"ledger_id": "L1"})
+        ).observed == 0.0

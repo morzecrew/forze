@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Resilience gauges no longer fail a scrape that lands while a call is admitted.** The bulkhead queue-depth and hedge-delay callbacks of `instrument_resilience` could raise `RuntimeError: OrderedDict mutated during iteration` in the exporter thread and lose that sample.
 
+- **`propose` no longer logs an ERROR traceback on Postgres for every dry run**, and a scope its `apply` opens on another client's route now rolls back with it instead of committing.
+
 ## [0.22.0] - 2026-11-04
 
 ### Added

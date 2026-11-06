@@ -13,7 +13,6 @@ only a filter against.
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, final
 
@@ -343,10 +342,6 @@ def bind_invariants(
 # propose — a rollback-only dry-run filter for agent-authoring verdicts ("would this write be accepted?").
 
 
-class _ProposalRollback(Exception):
-    """Forces the propose dry-run's transaction to roll back after the checks (nothing persists)."""
-
-
 @final
 @attrs.define(frozen=True, kw_only=True, slots=True)
 class ProposalVerdict:
@@ -402,7 +397,10 @@ async def propose(
 
     **This is a filter, not a proof** — TOCTOU under concurrency, mock-horizon bounded. Never read
     ``holds=True`` as a guarantee; the DST oracle (:func:`~forze_dst.oracle.compile_oracle`) is the
-    proof. The rollback is forced by raising an internal sentinel inside the scope.
+    proof. The scope is marked
+    :meth:`~forze.application.execution.TransactionScopeHandle.rollback_only` before *apply*
+    runs, so a scope *apply* opens on another client's route rolls back too, and the rollback
+    logs no error.
     """
 
     if ctx.tx_ctx.depth() > 0:
@@ -416,16 +414,16 @@ async def propose(
     results: list[InvariantResult] = []
     apply_error: list[str] = []
 
-    with contextlib.suppress(_ProposalRollback):
-        async with ctx.tx_ctx.scope(route, isolation=isolation):
-            try:
-                await apply(ctx)
-            except CoreException as rejection:
-                apply_error.append(str(rejection))
-            else:
-                results.extend([await evaluate(law, ctx, params) for law, params in checks])
+    async with ctx.tx_ctx.scope(route, isolation=isolation) as tx:
+        # Marked before apply, so a scope apply opens on another client's route rolls back too.
+        tx.rollback_only()
 
-            raise _ProposalRollback()  # always roll back — a dry-run persists nothing
+        try:
+            await apply(ctx)
+        except CoreException as rejection:
+            apply_error.append(str(rejection))
+        else:
+            results.extend([await evaluate(law, ctx, params) for law, params in checks])
 
     error = apply_error[0] if apply_error else None
     holds = error is None and all(result.held for result in results)
