@@ -14,6 +14,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import attrs
@@ -23,6 +24,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from forze_load import Call, Frame, LoadPlan, Principal, Realtime, Scenario, read_run, run, sample
 from forze_load import realtime as realtime_module
+from forze_load.realtime import _RealtimeRun
 
 pytestmark = pytest.mark.unit
 
@@ -54,8 +56,18 @@ class _Fake:
     """The next opens get the draining answer."""
 
     refuse: bool = False
+    not_a_stream: bool = False
+    """The stream route answers 200 with JSON, as a wrong path might."""
+
     end_after: int = 0
     """End every open stream, as a drain does, when this write arrives."""
+
+    slow_device: str | None = None
+    """This subscriber's stream opens only after ``slow_open_s``."""
+
+    slow_open_s: float = 0.0
+    break_after: int = 0
+    """Break every open stream's connection mid-read when this write arrives."""
 
     upgrade_status: int = 101
     close_first: list[int] = attrs.field(factory=list)
@@ -97,6 +109,9 @@ class _Fake:
 
         if self.writes == self.end_after:
             self.end_all()
+
+        if self.writes == self.break_after:
+            self.end_all(broken=True)
 
         body = json.loads(request.content)
         to, n = body.get("to"), self.writes
@@ -151,6 +166,9 @@ class _Fake:
         if self.opens > self.initial and self.reopen_delay_s:
             await asyncio.sleep(self.reopen_delay_s)
 
+        if request.url.params["device_id"] == self.slow_device:
+            await asyncio.sleep(self.slow_open_s)
+
         principal = request.headers["X-User"]
         resumed_from = request.headers.get("Last-Event-ID") or request.url.params.get(
             "last_event_id"
@@ -163,17 +181,19 @@ class _Fake:
         if self.refuse:
             return httpx.Response(401)
 
+        if self.not_a_stream:
+            return httpx.Response(200, json={})
+
         if self.draining:
             self.draining -= 1
+            headers = {**_EVENT_STREAM, "X-Error-Code": "realtime_draining"}
 
-            return httpx.Response(
-                200, headers={"X-Error-Code": "realtime_draining"}, content=b"retry: 20\n\n"
-            )
+            return httpx.Response(200, headers=headers, content=b"retry: 20\n\n")
 
         conn.queue.put_nowait(b"event: welcome\ndata: {}\n\n")  # a frame no write caused
         self._replay(conn)
 
-        return httpx.Response(200, content=self._body(conn))
+        return httpx.Response(200, headers=_EVENT_STREAM, content=self._body(conn))
 
     def _ws(self, conn: _Conn) -> httpx.Response:
         if self.upgrade_status != 101:
@@ -210,21 +230,27 @@ class _Fake:
     async def _body(self, conn: _Conn) -> AsyncIterator[bytes]:
         try:
             while (chunk := await conn.queue.get()) is not None:
+                if chunk == _BREAK:
+                    raise httpx.ReadError("connection reset")
+
                 yield chunk
 
         finally:
             conn.closed = True
 
-    def end_all(self) -> None:
-        """What the drain step does to open streams."""
+    def end_all(self, *, broken: bool = False) -> None:
+        """What the drain step does to open streams, or, *broken*, a reset connection."""
+
+        ended = None if self.kind == "sse" else bytes([0x88, 2]) + (1012).to_bytes(2)
 
         for conn in self.conns:
             if not conn.closed:
                 conn.closed = True
-                conn.queue.put_nowait(
-                    None if self.kind == "sse" else bytes([0x88, 2]) + (1012).to_bytes(2)
-                )
+                conn.queue.put_nowait(_BREAK if broken else ended)
 
+
+_EVENT_STREAM = {"content-type": "text/event-stream; charset=utf-8"}
+_BREAK = b"<connection reset>"
 
 _DOC: dict[str, Any] = {
     "openapi": "3.1.0",
@@ -255,6 +281,9 @@ class _FakeStream:
     async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
         chunk = await self.conn.queue.get()
 
+        if chunk == _BREAK:
+            raise ConnectionResetError("connection reset")
+
         return chunk or b""
 
     async def write(self, buffer: bytes, timeout: float | None = None) -> None:
@@ -273,6 +302,10 @@ def _user(name: str) -> Any:
         return {"X-User": name}
 
     return headers
+
+
+async def _to_ada(call: Call) -> httpx.Response:
+    return await call.request("POST", "/notify", json={"to": "ada"})
 
 
 async def _notify_alternately(call: Call) -> httpx.Response:
@@ -400,6 +433,19 @@ class TestMatching:
         assert delivery["delivered"] == delivery["expected"] > 0
         assert delivery["late"] == 0
 
+    async def test_a_stream_that_first_opens_after_a_write_is_sent_is_not_expected_for_it(
+        self,
+    ) -> None:
+        # The open phase waits 0.1 s for the batch; ada's first stream opens later, with
+        # writes to ada in flight, and misses the frames of the writes sent before it opened.
+        fake = _Fake(slow_device="forze-load-0", slow_open_s=0.2, answer_after_s=0.15)
+        result = await _run(fake, _realtime(timeout_s=0.1, duration_s=0.3), plan={"send": _to_ada})
+
+        (row,) = result.rows
+        assert row["streams"]["opened"] == 4
+        assert row["delivery"]["delivered"] == row["delivery"]["expected"] > 0
+        assert row["delivery"]["missing"] == row["delivery"]["gaps"] == 0
+
     async def test_a_write_whose_key_is_none_is_expected_nowhere(self) -> None:
         fake = _Fake(emit=False)
         result = await _run(fake, _realtime())
@@ -418,14 +464,56 @@ class TestMatching:
         assert delivery["delivered"] == delivery["expected"]
         assert delivery["duplicates"] == delivery["delivered"]
 
-    async def test_a_frame_after_its_key_timed_out_is_late_and_the_key_missing(self) -> None:
-        fake = _Fake(frames_after_s=0.2)
+    @pytest.mark.parametrize("duplicate", [False, True])
+    async def test_a_frame_after_its_key_timed_out_is_late_and_the_key_missing(
+        self, duplicate: bool
+    ) -> None:
+        fake = _Fake(frames_after_s=0.2, duplicate=duplicate)
         result = await _run(fake, _realtime(timeout_s=0.03, duration_s=0.3))
 
         delivery = result.rows[0]["delivery"]
         assert delivery["missing"] == delivery["expected"] > 0
-        assert delivery["late"] > 0
-        assert delivery["delivered"] == 0
+        # Once per stream and key: a late frame's duplicate is not late again.
+        assert 0 < delivery["late"] <= delivery["missing"]
+        assert delivery["delivered"] == delivery["duplicates"] == 0
+
+    def test_frames_of_other_traffic_are_let_go_oldest_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(realtime_module, "_HOLD_S", 0.0)
+        state = SimpleNamespace(plan=_plan(timeout_s=0.5))
+        rt = _RealtimeRun(spec=_realtime(subscribers=1), state=state, client=None)  # type: ignore[arg-type]
+
+        rt._hold("a", 0, 1.0)
+        rt._hold("b", 0, 1.2)
+        rt._hold("b", 0, 1.3)
+        rt._hold("c", 0, 1.6)
+
+        assert list(rt.early) == ["b", "c"]  # "a" is older than a request can take
+        assert rt.early["b"][1][0] == [1.2, 1]  # first arrival, one repeat
+
+    def test_a_late_frame_counts_once_and_only_at_a_stream_that_missed_it(self) -> None:
+        state = SimpleNamespace(plan=_plan())
+        rt = _RealtimeRun(spec=_realtime(subscribers=2), state=state, client=None)  # type: ignore[arg-type]
+        rt.finished["key-1"] = 1 << 0  # closed: stream 0 never got it, stream 1 did
+        frame = Frame(event="notified", id=None, text='{"data": {"key": "key-1"}}')
+
+        rt._arrive(rt.subscribers[0], frame)
+        rt._arrive(rt.subscribers[0], frame)  # its duplicate
+        rt._arrive(rt.subscribers[1], frame)  # a re-send to a stream that had it
+
+        assert rt.phase.late == 1
+        assert rt.finished["key-1"] == 0
+
+    def test_a_frame_before_the_first_write_is_not_held(self) -> None:
+        state = SimpleNamespace(plan=_plan())
+        rt = _RealtimeRun(spec=_realtime(subscribers=1), state=state, client=None)  # type: ignore[arg-type]
+        frame = Frame(event="notified", id="event-0", text='{"data": {"key": "old"}}')
+
+        rt._arrive(rt.subscribers[0], frame)
+
+        assert rt.early == {}  # an earlier run's mailbox, replayed on the first open
+        assert rt.subscribers[0].last_id == "event-0"
 
 
 class TestTwoLatencies:
@@ -499,6 +587,25 @@ class TestStorm:
         assert streams["resumed"] == 0
         assert all(conn.resumed_from is None for conn in fake.conns)
 
+    async def test_a_stream_that_never_opened_does_not_hold_back_in_s_open(self) -> None:
+        fake = _Fake()
+
+        async def first_never_opens(request: httpx.Request) -> httpx.Response:
+            if request.url.params.get("device_id") == "forze-load-0":
+                raise httpx.ConnectError("refused")
+
+            return await fake.handle(request)
+
+        result = await run(
+            _plan(), _realtime(storm=True), transport=httpx.MockTransport(first_never_opens)
+        )
+
+        steady, storm = result.rows
+        assert steady["streams"]["opened"] == 3
+        assert steady["streams"]["errors"] > 0
+        assert storm["streams"]["back"] == 3
+        assert storm["streams"]["back_in_s"] is not None
+
     async def test_a_stream_still_away_leaves_back_in_s_unknown(self) -> None:
         fake = _Fake(initial=4, reopen_delay_s=1.0)
         result = await _run(fake, _realtime(storm=True, duration_s=0.15, timeout_s=0.1))
@@ -534,8 +641,13 @@ class TestReconnects:
 
     @pytest.mark.parametrize(
         "fake",
-        [_Fake(refuse=True), _Fake(kind="ws", refuse=True), _Fake(kind="ws", upgrade_status=403)],
-        ids=["sse-401", "ws-1008", "ws-403"],
+        [
+            _Fake(refuse=True),
+            _Fake(not_a_stream=True),
+            _Fake(kind="ws", refuse=True),
+            _Fake(kind="ws", upgrade_status=403),
+        ],
+        ids=["sse-401", "sse-not-a-stream", "ws-1008", "ws-403"],
     )
     async def test_every_stream_refused_stops_the_run_before_any_write(self, fake: _Fake) -> None:
         result = await _run(fake, _realtime(fake.kind, storm=True))
@@ -544,6 +656,16 @@ class TestReconnects:
         assert result.summary["stopped"] == {"phase": "steady", "reason": "no_stream"}
         assert row["streams"]["refused"] == 4
         assert row["calls"] == fake.writes == 0
+
+    @pytest.mark.parametrize("kind", ["sse", "ws"])
+    async def test_a_stream_that_breaks_mid_read_ended_and_is_not_an_error(self, kind: str) -> None:
+        fake = _Fake(kind=kind, break_after=3)
+        result = await _run(fake, _realtime(kind, duration_s=0.3))
+
+        streams = result.rows[0]["streams"]
+        assert streams["ended"] == 4
+        assert streams["errors"] == 0
+        assert streams["opened"] == 8
 
     async def test_a_socket_closed_before_its_pong_for_another_reason_is_retried(self) -> None:
         fake = _Fake(kind="ws", close_first=[1011])

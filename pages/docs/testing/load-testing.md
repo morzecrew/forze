@@ -424,8 +424,8 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
 - **Missing and gaps.** The first frame per stream and key is timed; later ones count as
   `duplicates`, which a durable signal can produce through the mailbox and the live leg. A key
   a stream has not received `timeout_s` after the write's answer is a `gap` when the stream
-  was down at the write's send, and `missing` otherwise. A frame that arrives later still is
-  `late`.
+  was down at the write's send, and `missing` otherwise. If that stream receives the key
+  later still, it counts once as `late`; any other frame for a closed key counts nowhere.
 - **The storm.** With `storm=True` (the default), every stream drops at once after the steady
   phase and reopens in one batch, each sending the last durable id it saw: `Last-Event-ID` on
   SSE, the `last_event_id` query parameter on a WebSocket. Writes run on for another
@@ -436,13 +436,16 @@ result = asyncio.run(run(plan, realtime, out="realtime.jsonl"))
 - **Draining is a reconnect, never an error.** A draining replica answers a new SSE stream
   200 with a `retry:` and `X-Error-Code: realtime_draining`, and closes a new WebSocket with
   1012. The stream retries after the server's `retry:` (one second on a WebSocket) and counts
-  it under `draining`. A stream the server ends, a drain step's included, reopens with its
-  resume and counts under `ended`. Another status than 200, a WebSocket closed with 1008
-  before it answered the kit's first ping, or an upgrade answered with another status than 101
-  is `refused`, and that stream stays closed. When every stream is refused, the run stops
-  before its first write with `stopped.reason: "no_stream"`.
-- **The kit never acks.** No cursor moves and nothing is trimmed, so a stream that reopens
-  with no id replays from the stored cursor.
+  it under `draining`. An open stream that ends, closed by the server or a drain step or cut
+  by the network, reopens with its resume and counts under `ended`. Another status than 200 or an
+  answer that is not `text/event-stream`, a WebSocket closed with 1008 before it answered the
+  kit's first ping, or an upgrade answered with another status than 101 is `refused`, and
+  that stream stays closed. When every stream is refused, the run stops before its first
+  write with `stopped.reason: "no_stream"`.
+- **The kit never acks.** No cursor moves and nothing is trimmed. So every first open, and a
+  reopen with no id, replays from the stored cursor: the principal's retained mailbox, up to
+  1,000 entries. The first opens' replay comes before the first write, and the kit lets it
+  go.
 
 Each phase, `steady` and then `storm`, writes one row with `"kind": "phase"`. It carries the
 writes' numbers as a step row does (`calls`, `goodput_rps`, `ms`, `outcomes`, `client`, …)
@@ -455,8 +458,8 @@ plus:
 | `delivery` | `expected`, `delivered` and their `share`; `duplicates`, `missing`, `gaps`, `late`; `replayed`, frames a reopened stream received for writes sent before it reopened |
 | `delivery` latency | `send_ms`, `answer_ms`, and `answer_negative` (`count`, `share`, `min_ms`) |
 
-Each stream is read by its own task, and `match` reads a frame's JSON only when it touches
-`data`. A stream that reads slower than its frames arrive fills its 256-slot queue on the
+Each stream is read by its own task. On SSE a frame's JSON is decoded only when `match`
+reads `data`; a WebSocket frame is decoded on arrival, since its event name is inside. A stream that reads slower than its frames arrive fills its 256-slot queue on the
 server, and the live leg drops what does not fit. So a `share` below 1 is a server finding
 when `client.saturated` is false, and the client's own limit when it is true.
 

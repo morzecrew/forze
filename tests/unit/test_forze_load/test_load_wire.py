@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from forze_load import Frame
+from forze_load import _wire as wire
 from forze_load._wire import SseParser, WebSocket, WsRefused, sse_lines, ws_connect
 
 pytestmark = pytest.mark.unit
@@ -42,6 +43,14 @@ class TestEventStreamLines:
     async def test_a_line_split_across_chunks_is_joined(self) -> None:
         assert await _lines(b"da", b"ta: x\n") == ["data: x"]
 
+    async def test_a_line_past_the_limit_breaks_the_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(wire, "_MAX_FRAME", 8)
+
+        with pytest.raises(httpx.RemoteProtocolError):
+            await _lines(b"data: 0123456789")
+
     async def test_no_other_character_ends_a_line(self) -> None:
         # `str.splitlines` would split on U+2028; the event-stream format does not.
         assert await _lines("data: a b\n".encode()) == ["data: a b"]
@@ -73,7 +82,8 @@ class TestEventStreamFrames:
 
     def test_retry_is_read_in_seconds_and_only_from_digits(self) -> None:
         parser = SseParser()
-        _frames("retry: 1500\n\nretry: soon\n", parser)
+        # "²" is a digit to `str.isdigit` and not to `int`.
+        _frames("retry: 1500\n\nretry: soon\n\nretry: \u00b2\n", parser)
 
         assert parser.retry_s == 1.5
 
@@ -172,6 +182,17 @@ class TestWebSocket:
 
         assert await WebSocket(stream).receive() == ("text", "hello")
 
+    async def test_a_pong_between_two_fragments_keeps_the_message_whole(self) -> None:
+        stream = _Stream(
+            _server_frame(0x1, b'{"a": ', fin=False),
+            _server_frame(0xA, b""),
+            _server_frame(0x0, b'"x"}'),
+        )
+        ws = WebSocket(stream)
+
+        assert await ws.receive() == ("pong", None)
+        assert await ws.receive() == ("text", '{"a": "x"}')
+
     async def test_a_ping_is_answered_with_a_masked_pong_carrying_its_payload(self) -> None:
         stream = _Stream(_server_frame(0x9, b"hi"), _server_frame(0x1, b"after"))
 
@@ -233,7 +254,9 @@ class TestWsConnect:
             return httpx.Response(101, extensions={"network_stream": stream})
 
         async with (
-            httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://t") as client,
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), base_url="http://t"
+            ) as client,
             ws_connect(client, "/rt", params={"a": "1"}, headers={"X-User": "ada"}) as ws,
         ):
             assert await ws.receive() == ("text", "hi")

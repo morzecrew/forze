@@ -42,9 +42,10 @@ NO_STATUS = 1005
 class Frame:
     """One realtime frame as a subscriber received it, handed to a plan's ``match``.
 
-    ``data`` is the frame's payload, the ``data`` of forze's ``{id, data}`` envelope. It is
-    decoded from JSON the first time it is read, so a ``match`` that reads only ``event``
-    costs no decoding; a payload that is not JSON reads as its text.
+    ``data`` is the frame's payload, the ``data`` of forze's ``{id, data}`` envelope. On SSE it
+    is decoded from JSON the first time it is read, so a ``match`` that reads only ``event``
+    costs no decoding; a WebSocket frame is decoded on arrival, since its event name is inside.
+    A payload that is not JSON reads as its text.
     """
 
     event: str
@@ -90,6 +91,9 @@ async def sse_lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
 
         after_cr = chunk.endswith(b"\r")
         *lines, buffer = _NEWLINE.split(buffer + chunk)
+
+        if len(buffer) > _MAX_FRAME:
+            raise httpx.RemoteProtocolError("An event-stream line ran past the 16 MiB limit")
 
         for line in lines:
             yield line.decode("utf-8", "replace")
@@ -139,7 +143,7 @@ class SseParser:
                 self._id = value or None
                 self.last_id = self._id
 
-            case "retry" if value.isdigit():
+            case "retry" if value.isascii() and value.isdigit():
                 self.retry_s = int(value) / 1000
 
             case _:  # an unknown field is ignored, as the format says
@@ -178,6 +182,9 @@ class WebSocket:
     def __init__(self, stream: _Stream) -> None:
         self._stream = stream
         self._buffer = b""
+        # A message's fragments, kept across calls: a pong can arrive between two of them.
+        self._message: list[bytes] = []
+        self._kind = _TEXT
 
     async def ping(self) -> None:
         """Send a ping: its pong, or a close, tells whether the server kept the socket."""
@@ -190,9 +197,6 @@ class WebSocket:
         A connection that ends without a close frame reads as an abnormal close, 1006.
         """
 
-        message: list[bytes] = []
-        kind = _TEXT
-
         while True:
             try:
                 fin, opcode, payload = await self._frame()
@@ -202,15 +206,17 @@ class WebSocket:
 
             match opcode:
                 case 0x0 | 0x1 | 0x2:  # a message, or a fragment of one
-                    kind = opcode or kind
-                    message.append(payload)
+                    self._kind = opcode or self._kind
+                    self._message.append(payload)
 
                     if not fin:
                         continue
 
-                    data, message = b"".join(message), []
+                    data, self._message = b"".join(self._message), []
 
-                    if kind == _TEXT:  # forze's protocol is JSON text; a binary one is skipped
+                    if (
+                        self._kind == _TEXT
+                    ):  # forze's protocol is JSON text; a binary one is skipped
                         return "text", data.decode("utf-8", "replace")
 
                 case 0x8:

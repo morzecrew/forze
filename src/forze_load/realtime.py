@@ -9,6 +9,7 @@ the HTTP answer). True commit time is not observable: no frame carries it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import json
 import math
@@ -54,6 +55,9 @@ RETRY_S = 1.0
 _POLL_S = 0.01
 
 _HOLD_S = 1.0
+
+_MIN_RETRY_S = 0.05
+"""The shortest wait before a reopen, whatever ``retry:`` says: no stream reopens in a hot loop."""
 """Seconds past the request timeout a frame waits for its write's answer before it is let go."""
 
 type Key = Hashable
@@ -250,8 +254,11 @@ class _Write:
     phase: _Phase
     sent: float
     answered: float
-    expected: frozenset[int]
-    seen: set[int] = attrs.field(factory=lambda: set[int]())
+    expected: int
+    """The subscribers the write's event should reach, as a bit set of their indexes."""
+
+    seen: int = 0
+    """The subscribers it reached, as a bit set."""
 
 
 @attrs.define(eq=False)
@@ -270,14 +277,32 @@ class _RealtimeRun:
     )
     """Frames whose write has not answered yet: key to (first arrival, sub to [at, repeats])."""
 
-    finished: set[Key] = attrs.field(factory=lambda: set[Key]())
+    finished: dict[Key, int] = attrs.field(factory=lambda: dict[Key, int]())
+    """Closed keys, each with the subscribers it never reached: a frame for one of them is
+    late; any other frame for a closed key counts nowhere."""
+
     outstanding: int = 0
+    opened: int = 0
+    """Subscribers that have opened a stream and were never refused, as a bit set."""
+
+    joined: list[tuple[float, int]] = attrs.field(factory=lambda: list[tuple[float, int]]())
+    """Subscribers whose first stream opened once the writes had begun, with when."""
+
+    writing: bool = False
+    by_principal: dict[str, int] = attrs.field(factory=lambda: dict[str, int]())
+    """Each principal's subscribers, as a bit set."""
 
     def __attrs_post_init__(self) -> None:
         assign = _assignments(self._principals(self.spec.principals))
         self.subscribers = [
             _Subscriber(index=i, principal=next(assign).name) for i in range(self.spec.subscribers)
         ]
+
+        for sub in self.subscribers:
+            self.by_principal[sub.principal] = (
+                self.by_principal.get(sub.principal, 0) | 1 << sub.index
+            )
+
         self.phase = self._phase("steady")
 
     # ....................... #
@@ -298,6 +323,7 @@ class _RealtimeRun:
 
             else:
                 state.on_response = self._answered
+                self.writing = True
                 self._start(self.phase)
                 assign = _assignments(self._principals(self.spec.writers))
                 arrivals = asyncio.create_task(
@@ -364,7 +390,7 @@ class _RealtimeRun:
             back = [
                 min(opened for opened, _ in sub.ups if opened >= dropped)
                 for sub in phase.restarted
-                if sub.ups and sub.ups[-1][0] >= dropped
+                if sub.ups[-1][0] >= dropped
             ]
             phase.storm = {
                 "back": len(back),
@@ -438,7 +464,8 @@ class _RealtimeRun:
         for sub in restarted:
             sub.task = asyncio.create_task(self._subscribe(sub, sub.last_id if resume else None))
 
-        phase.dropped_at, phase.restarted = dropped, restarted
+        # A stream that had never opened was not dropped: it does not hold `back_in_s` open.
+        phase.dropped_at, phase.restarted = dropped, [sub for sub in restarted if sub.ups]
         phase.resumed = sum(1 for sub in restarted if resume and sub.last_id is not None)
 
     async def _subscribe(self, sub: _Subscriber, last_id: str | None) -> None:
@@ -452,7 +479,7 @@ class _RealtimeRun:
                     return
 
                 last_id = sub.last_id if self.spec.resume else None
-                await asyncio.sleep(delay)
+                await asyncio.sleep(max(delay, _MIN_RETRY_S))
 
         except Exception as error:  # a plan's `match` bug, or a credential that expired
             self.state.fail(error)
@@ -498,7 +525,11 @@ class _RealtimeRun:
         async with self.client.stream(
             "GET", self.spec.path, params=params, headers=headers
         ) as response:
-            if response.status_code != 200:  # `EventSource` gives up on any other status
+            # `EventSource` gives up on any other status or type: a wrong path answering 200
+            # with JSON would otherwise be reopened forever.
+            media_type = response.headers.get("content-type", "").partition(";")[0].strip()
+
+            if response.status_code != 200 or media_type != "text/event-stream":
                 self._refused(sub)
 
                 return None
@@ -515,11 +546,13 @@ class _RealtimeRun:
 
             self._opened(sub, started, time.perf_counter())
 
-            async for line in lines:
-                frame = parser.feed(line)
+            # A stream that breaks mid-read ends as one the server closed, as a WebSocket does.
+            with contextlib.suppress(httpx.TransportError):
+                async for line in lines:
+                    frame = parser.feed(line)
 
-                if frame is not None:
-                    self._arrive(sub, frame)
+                    if frame is not None:
+                        self._arrive(sub, frame)
 
         self.phase.ended += 1
 
@@ -582,12 +615,19 @@ class _RealtimeRun:
         return RETRY_S
 
     def _opened(self, sub: _Subscriber, started: float, opened: float) -> None:
+        if not sub.ups:
+            self.opened |= 1 << sub.index
+
+            if self.writing:
+                self.joined.append((opened, sub.index))
+
         sub.ups.append([opened, math.inf])
         sub.settled.set()
         self.phase.opened += 1
         self.phase.open_ms.add("ok", (opened - started) * 1000)
 
     def _refused(self, sub: _Subscriber) -> None:
+        self.opened &= ~(1 << sub.index)
         sub.refused = True
         sub.settled.set()
         self.phase.refused += 1
@@ -608,22 +648,30 @@ class _RealtimeRun:
             return
 
         names = self.spec.audience(response) if self.spec.audience is not None else None
-        expected = frozenset(
-            sub.index
-            for sub in self.subscribers
-            if sub.ups
-            and sub.ups[0][0] <= sent
-            and not sub.refused
-            and (names is None or sub.principal in names)
-        )
+        expected = self.opened
+
+        if names is not None:
+            audience = 0
+
+            for name in set(names):
+                audience |= self.by_principal.get(name, 0)
+
+            expected &= audience
+
+        # A stream that first opened after the write was sent was not there to receive it. Only
+        # streams whose first open came once the writes had begun are listed: usually none.
+        for opened_at, index in self.joined:
+            if opened_at > sent:
+                expected &= ~(1 << index)
+
         write = _Write(phase=phase, sent=sent, answered=answered, expected=expected)
         self.writes[key] = write
-        phase.expected += len(expected)
-        self.outstanding += len(expected)
+        phase.expected += expected.bit_count()
+        self.outstanding += expected.bit_count()
         _, early = self.early.pop(key, (0.0, {}))
 
         for index, (at, repeats) in early.items():
-            if index in expected:
+            if expected >> index & 1:
                 self._deliver(write, index, at)
                 phase.duplicates += int(repeats)
 
@@ -643,22 +691,28 @@ class _RealtimeRun:
 
         write = self.writes.get(key)
 
-        if write is None:
-            if key in self.finished:
-                self.phase.late += 1
+        bit = 1 << sub.index
 
-            else:
+        if write is None:
+            unseen = self.finished.get(key)
+
+            # Before the first write a frame can only be a replay of earlier traffic.
+            if unseen is None and self.writing:
                 self._hold(key, sub.index, at)
+
+            elif unseen is not None and unseen & bit:
+                self.phase.late += 1
+                self.finished[key] = unseen & ~bit
 
             return
 
-        if sub.index not in write.expected:
+        if not write.expected & bit:
             return
 
         if len(sub.ups) > 1 and write.sent < sub.ups[-1][0]:
             self.phase.replayed += 1  # written before this reopened stream: the resume sent it
 
-        if sub.index in write.seen:
+        if write.seen & bit:
             write.phase.duplicates += 1
 
         else:
@@ -681,7 +735,7 @@ class _RealtimeRun:
             subs[index] = [at, 0]
 
     def _deliver(self, write: _Write, index: int, at: float) -> None:
-        write.seen.add(index)
+        write.seen |= 1 << index
         self.outstanding -= 1
         phase = write.phase
         phase.delivered += 1
@@ -707,9 +761,12 @@ class _RealtimeRun:
                 return
 
             del self.writes[key]
-            self.finished.add(key)
+            self.finished[key] = pending = write.expected & ~write.seen
 
-            for index in write.expected - write.seen:
+            while pending:
+                lowest = pending & -pending
+                pending ^= lowest
+                index = lowest.bit_length() - 1
                 self.outstanding -= 1
 
                 if self.subscribers[index].up_at(write.sent):
