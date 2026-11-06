@@ -1,7 +1,7 @@
 {
   "uid": "forze-data-planes",
   "title": "Forze / Data planes",
-  "description": "Tenant pools, crypto/KMS round-trips, the document L1 cache and token signing.",
+  "description": "Tenant and connection pools, outbound HTTP, crypto/KMS round-trips, the document L1 cache, token signing and process resources.",
   "tags": [
     "forze"
   ],
@@ -163,13 +163,199 @@
       }
     },
     {
+      "id": 15,
+      "type": "row",
+      "title": "Connection pools",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Pool occupancy",
+      "description": "in_use / max in the fullest process per client. 100% held is an exhausted pool. A pool with no cap exports no max and is absent here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (forze_client) (forze_connection_pool_in_use{job=~\"$service\"} / forze_connection_pool_max{job=~\"$service\"})",
+          "legendFormat": "{{forze_client}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "In use, idle and max",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_client) (forze_connection_pool_in_use{job=~\"$service\"})",
+          "legendFormat": "in use {{forze_client}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_client) (forze_connection_pool_idle{job=~\"$service\"})",
+          "legendFormat": "idle {{forze_client}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_client) (forze_connection_pool_max{job=~\"$service\"})",
+          "legendFormat": "max {{forze_client}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Callers waiting",
+      "description": "Postgres only. Above zero across scrapes is the queue an exhausted pool builds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_client) (forze_connection_pool_waiting{job=~\"$service\"})",
+          "legendFormat": "{{forze_client}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Outbound HTTP",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Requests in flight",
+      "description": "A floor that climbs under steady load and never falls back is a stream or send block that never exits.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_client) (forze_http_client_in_flight{job=~\"$service\"})",
+          "legendFormat": "{{forze_client}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 4,
       "type": "row",
       "title": "Crypto and KMS",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 25,
         "w": 24,
         "h": 1
       },
@@ -186,7 +372,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 10,
+        "y": 26,
         "w": 8,
         "h": 7
       },
@@ -231,7 +417,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 10,
+        "y": 26,
         "w": 8,
         "h": 7
       },
@@ -266,7 +452,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 10,
+        "y": 26,
         "w": 8,
         "h": 7
       },
@@ -297,7 +483,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 33,
         "w": 24,
         "h": 1
       },
@@ -314,7 +500,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 34,
         "w": 8,
         "h": 7
       },
@@ -349,7 +535,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 18,
+        "y": 34,
         "w": 8,
         "h": 7
       },
@@ -394,7 +580,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 18,
+        "y": 34,
         "w": 8,
         "h": 7
       },
@@ -425,7 +611,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 41,
         "w": 24,
         "h": 1
       },
@@ -442,7 +628,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 42,
         "w": 12,
         "h": 7
       },
@@ -487,7 +673,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 26,
+        "y": 42,
         "w": 12,
         "h": 7
       },
@@ -506,6 +692,89 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "Process",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "CPU",
+      "description": "Cores each process uses, user plus system time.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (job, instance) (rate(process_cpu_time{job=~\"$service\"}[5m]))",
+          "legendFormat": "{{job}} / {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Resident memory",
+      "description": "Linux only. A floor that rises under steady load and never falls back is a leak.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 50,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (job, instance) (process_memory_usage{job=~\"$service\"})",
+          "legendFormat": "{{job}} / {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
           "mappings": []
         },
         "overrides": []

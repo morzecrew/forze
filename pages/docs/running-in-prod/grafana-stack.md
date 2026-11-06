@@ -150,12 +150,14 @@ which makes the mapping trivial: **the OTel name with dots turned into underscor
 | `forze.operations` | `forze_operations` |
 | `forze.operation.duration` | `forze_operation_duration_bucket` / `_sum` / `_count` |
 | `forze.crypto.cold_miss` | `forze_crypto_cold_miss` |
+| `process.cpu.time` | `process_cpu_time` |
 
 Leave suffixes on — the collector default — and the same metrics arrive as
-`forze_operations_total` and `forze_operation_duration_milliseconds_bucket`. Both are
-fine; they are just different, and the shipped dashboards and alert rules assume the
-first. A unit test checks every expression in those files against the metric constants in
-`src/`, which is only possible because the mapping is pinned — and an integration test
+`forze_operations_total`, `forze_operation_duration_milliseconds_bucket` and
+`process_cpu_time_seconds_total`. Both are fine; they are just different, and the shipped
+dashboards and alert rules assume the first. A unit test checks every expression in those
+files against the metric constants in `src/`, which is only possible because the mapping is
+pinned — and an integration test
 puts a real Alloy in front of a real Prometheus and asserts the names that actually
 arrive, so the pinning is verified rather than assumed.
 
@@ -522,13 +524,14 @@ Four, provisioned into a **Forze** folder:
 | Dashboard | What it answers |
 |---|---|
 | **Operations** | throughput, the `error` vs `failed` split, latency distribution, durable runs, job progress |
-| **Resilience** | breaker states, event rates by kind, bulkhead depth against the adaptive limit, hedge delay |
-| **Data planes** | tenant-pool size/capacity/churn, KMS round-trips and cache hit ratio, document L1, token signing |
-| **Realtime** | gateway delivery outcomes, backplane freshness, offline mailbox |
+| **Resilience** | breaker states, event rates by kind, bulkhead slots in use and queue depth against the limit, hedge delay |
+| **Data planes** | tenant-pool size/capacity/churn, connection-pool occupancy and waiting callers, outbound HTTP requests in flight, KMS round-trips and cache hit ratio, document L1, token signing, process CPU and resident memory |
+| **Realtime** | gateway delivery outcomes, backplane freshness, live-hub subscribers and drops, offline mailbox and its replay size |
 
-Every panel queries a metric that exists — checked by a unit test against the constants in
-`src/`, in both directions, so a renamed metric fails CI instead of silently emptying a
-panel.
+A row fills once its `instrument_*` call runs; the [metric catalog](../reference/metrics.md)
+names the call for each plane. Every panel queries a metric that exists — checked by a unit
+test against the constants in `src/`, so a renamed metric fails CI instead of silently
+emptying a panel.
 
 ## Alerts
 
@@ -540,13 +543,17 @@ a "what this means, what to do" is a page nobody can action.
 |---|---|
 | `ForzeOperationErrorRateHigh` | genuine faults only — 4xx-class domain failures are excluded by design |
 | `ForzeDurableRecoverySustained` | runs keep being reclaimed from processes that died holding them |
+| `ForzeDurableRunsFailing` | over 5% of a function's finished runs failed; cancelled, timed-out and retrying runs are excluded |
 | `ForzeJobsStalled` | stuck jobs **or** a dead staleness sweep |
 | `ForzeCircuitBreakerOpen` | a route has been shedding for five minutes |
 | `ForzeBulkheadSaturated` | continuous queueing plus rejections |
 | `ForzeCryptoColdMiss` | a path is skipping `warm` / `ensure_unwrapped` |
 | `ForzeTenantPoolThrash` | pool creation while the cache sits at capacity |
+| `ForzeConnectionPoolExhausted` | a process has held every connection of a pool for ten minutes |
 | `ForzeTokenVerificationFailures` | rotation gaps, clock skew, or forgeries |
+| `ForzeRevocationWriteFailures` | a revoked credential stays admitted for up to the revocation states' `ttl` |
 | `ForzeRealtimeBackplaneStale` | cross-node emit is silently down |
+| `ForzeRealtimeEmitFailing` | every Socket.IO emit fails and none is delivered |
 | `ForzeRealtimeDeliveriesDropped` | poisoned or untenanted deliveries |
 | `ForzeRealtimeMailboxOverflow` | a device lost signals it will never see |
 
@@ -564,6 +571,10 @@ a "what this means, what to do" is a page nobody can action.
 
 Thresholds are starting points. Tune them against your own traffic; the annotations tell
 you what you are trading.
+
+No rule ships for a leaked HTTP stream: no fixed threshold tells a leak from load. Watch
+the floor of the **Requests in flight** panel instead. A floor that rises under steady
+load and never falls back is a `stream` or `send` block that never exits.
 
 ## Exemplars
 

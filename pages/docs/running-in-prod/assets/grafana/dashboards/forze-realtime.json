@@ -1,7 +1,7 @@
 {
   "uid": "forze-realtime",
   "title": "Forze / Realtime",
-  "description": "Gateway delivery outcomes, backplane freshness and the offline mailbox.",
+  "description": "Gateway delivery outcomes, backplane freshness, the SSE and WebSocket live hub, and the offline mailbox.",
   "tags": [
     "forze"
   ],
@@ -273,13 +273,96 @@
       }
     },
     {
+      "id": 9,
+      "type": "row",
+      "title": "Live hub",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Live subscribers",
+      "description": "SSE and WebSocket streams on the live tail. Socket.IO connections are not counted here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_realtime_channel) (forze_realtime_hub_subscribers{job=~\"$service\"})",
+          "legendFormat": "{{forze_realtime_channel}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Dropped live frames",
+      "description": "A client reads slower than signals arrive. Durable signals come back on its next reconnect through the mailbox; ephemeral ones are gone.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_realtime_channel) (rate(forze_realtime_hub_dropped{job=~\"$service\"}[5m]))",
+          "legendFormat": "{{forze_realtime_channel}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 6,
       "type": "row",
       "title": "Offline mailbox",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 24,
         "w": 24,
         "h": 1
       },
@@ -296,7 +379,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 25,
         "w": 16,
         "h": 7
       },
@@ -361,7 +444,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 17,
+        "y": 25,
         "w": 8,
         "h": 7
       },
@@ -374,6 +457,41 @@
           "editorMode": "code",
           "expr": "sum(increase(forze_realtime_mailbox_overflowed{job=~\"$service\"}[1h]))",
           "legendFormat": "overflowed (1h)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Replay size p95",
+      "description": "Per mailbox spec, the unacked entries a connect's replay read. A tail that keeps growing means devices fall behind on acks. It is not the backlog's size.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, forze_document) (rate(forze_realtime_mailbox_replay_size_bucket{job=~\"$service\"}[5m])))",
+          "legendFormat": "{{forze_document}}",
           "refId": "A"
         }
       ],

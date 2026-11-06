@@ -169,8 +169,8 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Queue depth vs adaptive limit",
-      "description": "Queue depth pinned at the limit is the shape that precedes shedding.",
+      "title": "In use and queued vs limit",
+      "description": "The limit is a fixed bulkhead's cap or an adaptive one's current limit. In use pinned at the limit with calls queued is the shape that precedes shedding.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -201,6 +201,16 @@
           "expr": "sum by (forze_policy, forze_route) (forze_resilience_bulkhead_limit{job=~\"$service\"})",
           "legendFormat": "limit {{forze_policy}} / {{forze_route}}",
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (forze_policy, forze_route) (forze_resilience_bulkhead_in_use{job=~\"$service\"})",
+          "legendFormat": "in use {{forze_policy}} / {{forze_route}}",
+          "refId": "C"
         }
       ],
       "fieldConfig": {
