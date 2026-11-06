@@ -10998,7 +10998,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>An authz decision skips the policy principal read after a fast-path admission of it.</strong> With one <code>RevocationStates</code> object on both kernels, later decisions in the request's task and outside a transaction treat it as active until its cached epoch expires (<code>ttl</code> at most). Other subjects still read.</p>
 </li>
 <li>
-<p><strong><code>SessionRevocation.check</code> returns a <code>FreshEpoch</code> when the token is on its principal's current epoch, <code>None</code> otherwise, instead of the epoch; <code>ApiKeyRevocation.fresh</code> returns <code>FreshEpoch | None</code> instead of a bool</strong> (<strong>Breaking</strong>). A custom verifier that compared the epoch tests the result for <code>None</code>.</p>
+<p><strong><code>SessionRevocation.check</code> and <code>ApiKeyRevocation.fresh</code> return a <code>FreshEpoch</code> when the credential is on its principal's current epoch, <code>None</code> otherwise, not the epoch and a bool</strong> (<strong>Breaking</strong>). A custom verifier passes it as <code>fresh=</code> to <code>remember_admitted_session</code> or <code>remember_admitted_api_key</code>, which refuse a bool.</p>
 </li>
 <li>
 <p><strong><code>instrument_realtime_mailbox()</code> now exports every mailbox built in the process</strong> (<strong>Breaking</strong>), per-connect factories, gateway and writer included, so its counters no longer read zero. It takes only <code>meter</code> and labels each series by spec (<code>forze.document</code>). <code>DocumentRealtimeMailbox.on_replay</code> can no longer be set.</p>

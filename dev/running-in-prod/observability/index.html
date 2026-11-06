@@ -7306,7 +7306,7 @@ connection establishment. The fix is usually a larger <code>max_cached_tenants</
 the metric tells you when.</p>
 <h2 id="connection-pool-metrics">Connection pool metrics<a class="headerlink" href="#connection-pool-metrics" title="Permanent link">&para;</a></h2>
 <p>Pool state is the first thing to check when an API slows under load, and a
-connection that is never returned is the leak a soak test exists to catch.
+connection that is never returned is the leak a <a href="../../testing/load-testing/#soak-a-steady-load">soak test</a> exists to catch.
 <code>instrument_connection_pools</code> exports the pool of every client you name:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_connection_pools</span>
 
@@ -7380,7 +7380,7 @@ and <strong>sustained evictions at full capacity with a sagging hit rate</strong
 scan-pollution signature — the signal to switch the eviction policy to the
 in-box W-TinyLFU store or raise <code>capacity</code>.</p>
 <h2 id="process-metrics">Process metrics<a class="headerlink" href="#process-metrics" title="Permanent link">&para;</a></h2>
-<p>A slow memory leak or CPU creep only shows in a soak if the server's own memory
+<p>A slow memory leak or CPU creep only shows in a <a href="../../testing/load-testing/#soak-a-steady-load">soak</a> if the server's own memory
 and CPU arrive in the same scrape as everything else. <code>instrument_process</code>
 exports them, standard library only:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_process</span>
@@ -7425,7 +7425,7 @@ each worker <code>service_instance_id</code>, or push every worker to
 <h2 id="realtime-metrics">Realtime metrics<a class="headerlink" href="#realtime-metrics" title="Permanent link">&para;</a></h2>
 <p>Each realtime plane has its own opt-in call; the
 <a href="../../reference/metrics/#realtime-gateway">catalog</a> lists what each exports. Two cover what a
-soak needs to tell a stuck node from a busy one:</p>
+<a href="../../testing/load-testing/#soak-a-steady-load">soak</a> needs to tell a stuck node from a busy one:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_realtime_hub</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">instrument_realtime_mailbox</span>
 

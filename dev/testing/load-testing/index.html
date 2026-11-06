@@ -2707,6 +2707,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Exit codes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6815,6 +6826,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Exit codes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6988,8 +7010,10 @@ refuse any request to another origin, from a scenario or a credential, the same 
   <code>attach_authn_routes</code> serves. Any async callable that takes the client and returns headers
   works too, for an external IdP or a cookie-mode app. The run's clients keep no cookies,
   because every principal shares them: a cookie-mode credential returns its session as an
-  explicit <code>Cookie</code> header. <code>password_login</code>'s routes are paths on the target; a URL with a
-  host is refused. Each run opens a fresh session, so a plan can be run again.</li>
+  explicit <code>Cookie</code> header. <code>password_login</code>'s routes are paths on the target, <code>/login</code> and
+  <code>/refresh</code> by default; for authn routes mounted under a prefix, pass <code>login_path=</code> and
+  <code>refresh_path=</code>. A URL with a host is refused. Each run opens a fresh session, so a plan
+  can be run again.</li>
 <li><strong><code>tenant</code></strong> is sent as <code>X-Tenant-Id</code>. A token's tenant claim wins over it, and the app
   reads the header only with <code>trust_tenant_header=True</code>.</li>
 </ul>
@@ -7082,7 +7106,8 @@ or as a <code>Scenario.op</code> under another name, is left to that scenario, a
 generates nothing stops the run. An explicit <code>Scenario.op</code> body is checked for its required
 fields only.</p>
 <h2 id="run-a-ramp">Run a ramp<a class="headerlink" href="#run-a-ramp" title="Permanent link">&para;</a></h2>
-<p>Point the CLI at the plan by import string:</p>
+<p>Point the CLI at the plan by import string, or at a function that takes no arguments and
+returns one:</p>
 <div class="highlight"><pre><span></span><code>forze<span class="w"> </span>load<span class="w"> </span>run<span class="w"> </span>myapp.load:plan<span class="w"> </span>--steps<span class="w"> </span><span class="m">1</span>,2,4,8,16,32,64<span class="w"> </span>--step-s<span class="w"> </span><span class="m">30</span><span class="w"> </span>--warm-s<span class="w"> </span><span class="m">5</span><span class="w"> </span>--out<span class="w"> </span>ramp.jsonl
 </code></pre></div>
 <p>Or call <code>run</code> from Python, which returns the same rows:</p>
@@ -7113,7 +7138,8 @@ fields only.</p>
 forze hashes passwords with Argon2 four at a time by default, and a mass sign-in would
 measure that queue. The first failed sign-in stops the run, and the command exits 2. A ramp
 that stops on its stop rule exits 0: the stop is a result, recorded in the summary. To gate
-on a run, compare it with <code>--fail-on</code> (see <a href="#compare-two-runs">Compare two runs</a>).</p>
+on a run, compare it with <code>--fail-on</code> (see <a href="#compare-two-runs">Compare two runs</a> and
+<a href="#exit-codes">Exit codes</a>).</p>
 <h2 id="read-the-result">Read the result<a class="headerlink" href="#read-the-result" title="Permanent link">&para;</a></h2>
 <p>Each step's warm-up (<code>warm_s</code>) is left out of its numbers. A call counts in the step that
 sent it, even when it answers after the step ended, and rates divide by the measured
@@ -7188,13 +7214,15 @@ named and never confirms a knee; the summary's <code>note</code> says why no kne
 forze<span class="w"> </span>load<span class="w"> </span>compare<span class="w"> </span>base.jsonl<span class="w"> </span>head.jsonl<span class="w"> </span>--fail-on<span class="w"> </span>p95:15%,goodput:10%
 </code></pre></div>
 <p>Steps are matched by worker count or rate, a soak's windows by their number, and goodput,
-p50, p95 and p99 are printed side by side. Without <code>--fail-on</code> the command only reports: load runs vary far more than
-micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
-exits 1 when a named metric is worse by more than its share, or has a value in the base run
-and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
-appears in both runs: a gate that compared nothing does not pass. A step either run cut
-short (<code>cut_short</code>) is printed with a warning and never gated, since its window was shorter;
-a gate left with only such steps compared nothing, and exits 2 too.
+p50, p95 and p99 are printed side by side. A file that cannot be read as a run exits 2,
+with or without <code>--fail-on</code>. Without <code>--fail-on</code> the command only reports: load runs vary
+far more than micro-benchmarks, and a default threshold would make a CI gate flaky.
+<code>--fail-on</code> names <code>goodput</code>, <code>p50</code>, <code>p95</code> or <code>p99</code>, each with a positive percentage. With
+it, the command exits 1 when a named metric is worse by more than its share, or has a value
+in the base run and none in the head (no call answered), and 2 when no step appears in both
+runs: a gate that compared nothing does not pass. A step either run cut short (<code>cut_short</code>)
+is printed with a warning and never gated, since its window was shorter; a gate left with
+only such steps compared nothing, and exits 2 too.
 When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the <code>forze_load</code> version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:
@@ -7350,7 +7378,10 @@ and measures the resume.</p>
   <code>device_id</code>; a hand-written resolver must do the same, or a principal's subscribers share
   one cursor, and a stream that reopens with no id replays from another's. Streams open in
   batches of <code>batch</code>. The kit never acks, so no cursor moves and nothing is trimmed, and every
-  first open replays the principal's retained mailbox, up to 1,000 entries. The first write
+  first open replays the principal's retained mailbox, up to 1,000 entries. On a shared
+  stack that skews the mailbox metrics: every open adds to <code>forze.realtime.mailbox.replayed</code>
+  and <code>forze.realtime.mailbox.replay_size</code>, and the run never adds to <code>acked</code>. Run it against
+  a stack of its own. The first write
   waits until no frame has come for a quarter of a second, at most <code>timeout_s</code>, so that
   replay is over. It also waits, <code>timeout_s</code> at most, until a stream is open.</li>
 <li><strong>Writes</strong> run for <code>duration_s</code> as open-model arrivals at <code>rate</code>: each picks one of
@@ -7441,10 +7472,14 @@ plus:</p>
 reads <code>data</code>; a WebSocket frame is decoded on arrival, since its event name is inside. A
 stream that reads slower than its frames arrive fills its 256-slot queue on the server, and
 the live leg drops what does not fit. So a <code>share</code> below 1 is a server finding
-when <code>client.saturated</code> is false, and the client's own limit when it is true.</p>
+when <code>client.saturated</code> is false, and the client's own limit when it is true. The server
+counts each such drop as <code>forze.realtime.hub.dropped</code> when the app calls
+<a href="../../reference/metrics/#realtime-hub"><code>instrument_realtime_hub</code></a>. A realtime run scrapes
+nothing, so read that counter from your own metrics.</p>
 <p>Realtime runs from Python only: <code>forze load run</code> has no realtime model, since <code>match</code> and
-<code>key_of</code> are code. <code>forze load compare</code> reads step and window rows, and skips phase rows. The
-meta line records the profile's numbers, not its path, topics or callables.</p>
+<code>key_of</code> are code. <code>forze load compare</code> reads step and window rows, and skips phase rows, so
+two realtime runs compare nothing: without <code>--fail-on</code> the command warns, and with it, it
+exits 2. The meta line records the profile's numbers, not its path, topics or callables.</p>
 <h2 id="writes-and-shared-environments">Writes and shared environments<a class="headerlink" href="#writes-and-shared-environments" title="Permanent link">&para;</a></h2>
 <p>Writes are off by default, and turning them on is not enough on its own. A run with a writing
 scenario needs <code>allow_writes=True</code> <strong>and</strong> a target host that is a loopback address,
@@ -7455,6 +7490,36 @@ reference is a writing scenario when it declares <code>writes=True</code>, which
 <code>x-forze-kind</code> must confirm as <code>command</code>; a sweep never generates one.</p>
 <p>The run never cleans up what it wrote. Run write-enabled plans against a seeded, disposable
 stack, never against production.</p>
+<h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<p><code>forze load</code> keeps 1 for a crossed threshold, so a CI job can tell a regression from a run
+that never measured anything:</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th><code>forze load run</code></th>
+<th><code>forze load compare</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>The run finished, a stop included: the stop rule or an emptied sample. A soak's drift flags never fail it</td>
+<td>The runs were compared, and no <code>--fail-on</code> threshold was crossed</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Not by design: an unexpected exception, such as one your scenario code raises, ends the command with its traceback and Python's status 1</td>
+<td>A <code>--fail-on</code> metric is worse by more than its share, or has a value in the base run and none in the head</td>
+</tr>
+<tr>
+<td>2</td>
+<td>The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid</td>
+<td>A file cannot be read as a run, with or without <code>--fail-on</code>; the <code>--fail-on</code> spec is invalid; <code>--fail-on</code> finds no whole step in both runs, as with two realtime runs; an option is invalid</td>
+</tr>
+</tbody>
+</table>
+<p>Every <code>forze load</code> command exits 2 when the <code>load</code> extra is not installed.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>One process drives the load, on one core.</strong> A step's <code>client.saturated</code> is set when the
