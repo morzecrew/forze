@@ -13,7 +13,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import attrs
 import httpx
@@ -39,6 +39,9 @@ from .plan import (
 from .report import SCHEMA, RunWriter
 from .soak import MIN_FIT_WINDOWS, Fetched, ServerSeries, drift_report
 from .stats import StepRecorder, classify, error_share, find_knee
+
+if TYPE_CHECKING:
+    from .realtime import Realtime
 
 # ----------------------- #
 
@@ -229,7 +232,7 @@ class Soak:
         return math.floor(self.duration_s / self.window_s + 1e-9)
 
 
-type Profile = ClosedRamp | OpenRamp | Soak
+type Profile = ClosedRamp | OpenRamp | Soak | Realtime
 
 
 @attrs.frozen
@@ -300,7 +303,8 @@ async def run(
     will be fitted.
 
     :param plan: Target, principals and scenarios.
-    :param profile: :class:`ClosedRamp`, :class:`OpenRamp` or :class:`Soak`.
+    :param profile: :class:`ClosedRamp`, :class:`OpenRamp`, :class:`Soak`, or
+        :class:`~forze_load.Realtime` for subscribers, delivery latency and a storm.
     :param out: JSON lines file to write, or ``None`` to only return the result.
     :param transport: An ``httpx`` transport to use instead of the network. An app served
         through it on the same event loop runs on the loop's thread, so the loop's CPU is
@@ -316,12 +320,18 @@ async def run(
     """
 
     validate_plan(plan)
-    model, levels = _levels(profile)
-    connections = (
-        int(max(levels))
-        if model == "closed"
-        else max(inflight_cap(rate, plan.timeout_s) for rate in levels)
-    )
+
+    if isinstance(profile, ClosedRamp | OpenRamp | Soak):
+        model, levels = _levels(profile)
+        connections = (
+            int(max(levels))
+            if model == "closed"
+            else max(inflight_cap(rate, plan.timeout_s) for rate in levels)
+        )
+
+    else:
+        profile.check(plan)
+        model, connections = "realtime", inflight_cap(profile.rate, plan.timeout_s)
 
     async with (
         httpx.AsyncClient(
@@ -389,8 +399,11 @@ async def run(
                 elif isinstance(profile, OpenRamp):
                     rows, stopped = await _open(state, profile, writer)
 
-                else:
+                elif isinstance(profile, Soak):
                     rows, stopped, ends = await _soak(state, profile, writer, server)
+
+                else:
+                    rows, stopped = await profile.drive(state, writer, transport)
 
             finally:
                 probe.cancel()
@@ -406,7 +419,11 @@ async def run(
 
             else:
                 # A step a stop cut short measured a shorter window and a smaller mix: no knee.
-                knee = find_knee([row for row in rows if not row.get("cut_short")], model=model)
+                knee = (
+                    find_knee([row for row in rows if not row.get("cut_short")], model=model)
+                    if model != "realtime"
+                    else {"knee": None, "confirmed": False, "note": None}
+                )
                 summary = {
                     "kind": "summary",
                     "steps": len(rows),
@@ -510,6 +527,10 @@ class _Run:
     failure: BaseException | None = None
     halt: dict[str, Any] | None = None
     """Why the run stops early without failing: a principal with nothing left to call."""
+
+    on_response: Callable[[StepRecorder | None, httpx.Response, float, float], None] | None = None
+    """Called with each answer, its step, and when it was sent and answered: a realtime
+    run reads each write's key from it."""
 
     interrupted: asyncio.Event = attrs.field(factory=asyncio.Event)
     exhausted: list[dict[str, str]] = attrs.field(factory=lambda: list[dict[str, str]]())
@@ -629,9 +650,14 @@ class _Run:
             call = Call(client=self.client, headers=headers, principal=principal.name, rng=self.rng)
 
             try:
+                sent = time.perf_counter()
                 response = await self.scenarios[name].send(call)
+                answered = time.perf_counter()
                 outcome = classify(response.status_code)
-                latency: float | None = (time.perf_counter() - started - auth_s) * 1000
+                latency: float | None = (answered - started - auth_s) * 1000
+
+                if self.on_response is not None:
+                    self.on_response(step, response, sent, answered)
 
             except httpx.TransportError:  # timeouts included
                 outcome, latency = "transport", None
@@ -1067,7 +1093,7 @@ def _step_key(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: row[k] for k in ("window", "workers", "rate") if k in row}
 
 
-def _levels(profile: Profile) -> tuple[str, list[float]]:
+def _levels(profile: ClosedRamp | OpenRamp | Soak) -> tuple[str, list[float]]:
     """The profile's model and every load level it runs: workers or arrival rates."""
 
     if isinstance(profile, ClosedRamp):
@@ -1095,6 +1121,11 @@ def _stop_reason(row: Mapping[str, Any], stop_error_rate: float) -> dict[str, An
     return None
 
 
+def _recorded(attribute: attrs.Attribute[Any], value: Any) -> bool:
+    # A realtime profile's callables cannot be written, and its path and topics may name ids.
+    return not callable(value) and attribute.metadata.get("recorded", True)
+
+
 def _meta(plan: LoadPlan, profile: Profile, model: str, catalog: Catalog) -> dict[str, Any]:
     return {
         "kind": "meta",
@@ -1103,7 +1134,7 @@ def _meta(plan: LoadPlan, profile: Profile, model: str, catalog: Catalog) -> dic
         "target": safe_target(plan.base_url),
         "openapi_sha256": catalog.openapi_sha256,
         "model": model,
-        "profile": attrs.asdict(profile),
+        "profile": attrs.asdict(profile, filter=_recorded),
         "plan": {
             "principals": {p.name: p.weight for p in plan.principals},
             "mixes": {p.name: dict(p.mix) for p in plan.principals},

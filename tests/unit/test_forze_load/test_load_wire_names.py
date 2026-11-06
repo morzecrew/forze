@@ -12,8 +12,12 @@ from forze.application.contracts.tenancy.tenant_hint import TENANT_ID_HEADER
 from forze.application.execution import observability as execution
 from forze.application.execution.operations import OperationKind
 from forze.application.integrations.document import observability as document
+from forze.application.integrations.realtime import REALTIME_DRAINING_CODE
+from forze_fastapi import exceptions as fastapi_exceptions
+from forze_fastapi.realtime import sse, ws
 from forze_fastapi.routes._attach import FORZE_KIND_EXTENSION
 from forze_fastapi.routes._snapshots import _AGE_FAMILY  # pyright: ignore[reportPrivateUsage]
+from forze_load import realtime
 from forze_load.catalog import COMMAND, KIND_EXTENSION, QUERY
 from forze_load.plan import TENANT_HEADER
 from forze_load.soak import CAPACITY, PROCESS_PREFIXES, SNAPSHOT_AGE_FAMILY
@@ -66,3 +70,11 @@ def test_the_process_gauges_are_instrument_process_s() -> None:
 
 def test_the_unfitted_age_gauge_is_the_union_route_s() -> None:
     assert SNAPSHOT_AGE_FAMILY == _AGE_FAMILY
+
+
+def test_the_realtime_names_are_the_routes_own() -> None:
+    assert realtime.LAST_EVENT_ID_HEADER == sse.LAST_EVENT_ID_HEADER
+    assert realtime.ERROR_CODE_HEADER == fastapi_exceptions.ERROR_CODE_HEADER
+    assert realtime.DRAINING_CODE == REALTIME_DRAINING_CODE
+    assert realtime.WS_RECONNECT_CLOSE == ws.WS_RECONNECT_CLOSE
+    assert realtime.WS_POLICY_CLOSE == ws.WS_POLICY_CLOSE
