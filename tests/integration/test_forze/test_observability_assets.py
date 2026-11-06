@@ -272,8 +272,7 @@ def alloy_to_prometheus(
     try:
         with prometheus:
             prometheus_url = (
-                f"http://{prometheus.get_container_host_ip()}:"
-                f"{prometheus.get_exposed_port(9090)}"
+                f"http://{prometheus.get_container_host_ip()}:{prometheus.get_exposed_port(9090)}"
             )
             _wait_ready(f"{prometheus_url}/-/ready", "Prometheus")
 
@@ -393,7 +392,11 @@ class TestTheNameMappingTheAssetsAssume:
         finally:
             _reset_otel_globals()
 
-        names = _series_names(prometheus_url, match='{__name__=~"(forze|process)_.*"}')
+        # This test's own job only: Prometheus and Alloy scrape themselves, and their Go
+        # runtime's `process_cpu_seconds_total` would otherwise land here when it comes first.
+        names = _series_names(
+            prometheus_url, match='{__name__=~"(forze|process)_.*", job="forze-name-mapping"}'
+        )
 
         assert names, "nothing reached Prometheus through Alloy at all"
 
@@ -410,8 +413,8 @@ class TestTheNameMappingTheAssetsAssume:
         # tell, because it only compares the assets to the constants in src/.
         assert "forze_operations_total" not in names
         assert not {name for name in names if "milliseconds" in name}, sorted(names)
-        assert not {name for name in names if name.endswith(("_seconds_total", "_bytes"))}, (
-            sorted(names)
+        assert not {name for name in names if name.endswith(("_seconds_total", "_bytes"))}, sorted(
+            names
         )
 
     # ....................... #
@@ -444,9 +447,7 @@ class TestTheNameMappingTheAssetsAssume:
         finally:
             _reset_otel_globals()
 
-        labels = _query_one(
-            prometheus_url, 'forze_operations{forze_operation="orders.place"}'
-        )
+        labels = _query_one(prometheus_url, 'forze_operations{forze_operation="orders.place"}')
 
         assert labels, "no series carried the converted label"
         assert labels["forze_outcome"] == "success"
@@ -499,9 +500,7 @@ def collector_to_prometheus(
         .with_exposed_ports(9090)
         .with_network(network)
         .with_volume_mapping(str(config), PROMETHEUS_CONFIG_MOUNT, "ro")
-        .with_command(
-            f"--config.file={PROMETHEUS_CONFIG_MOUNT} --storage.tsdb.retention.time=1h"
-        )
+        .with_command(f"--config.file={PROMETHEUS_CONFIG_MOUNT} --storage.tsdb.retention.time=1h")
     )
 
     try:
@@ -579,7 +578,7 @@ class TestTheCollectorRecipe:
 
         assert sorted(labels["instance"] for labels in targets) == ["worker-1", "worker-2"]
 
-        names =_series_names(prometheus_url, match='{job="forze-collector-recipe"}')
+        names = _series_names(prometheus_url, match='{job="forze-collector-recipe"}')
 
         # The push path's spelling, so the shipped dashboards and alert rules apply.
         assert "forze_operations" in names
