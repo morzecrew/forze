@@ -114,6 +114,19 @@ class TestInstrumentConnectionPools:
 
     # ....................... #
 
+    def test_max_is_left_out_for_a_pool_without_a_cap(self) -> None:
+        meter, reader = _meter()
+        capped = _FakeClient(ConnectionPoolStats(in_use=1, idle=0, max_size=5))
+        uncapped = _FakeClient(ConnectionPoolStats(in_use=1, idle=2, max_size=None))
+
+        instrument_connection_pools({"capped": capped, "uncapped": uncapped}, meter=meter)
+        values = _values(reader)
+
+        assert values[CONNECTION_POOL_IN_USE_GAUGE] == {"capped": 1, "uncapped": 1}
+        assert values[CONNECTION_POOL_MAX_GAUGE] == {"capped": 5}
+
+    # ....................... #
+
     def test_refuses_a_client_without_the_method(self) -> None:
         """Refused at wiring: inside a callback the error would repeat on every scrape."""
 

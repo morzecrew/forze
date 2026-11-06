@@ -24,6 +24,7 @@ from redis.commands.core import AsyncScript
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from forze.application.contracts.pools import ConnectionPoolStats
 from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -246,6 +247,42 @@ class RedisClient(RedisClientPort):
             raise exc.internal("Redis client is not initialized")
 
         return self.__client
+
+    # ....................... #
+
+    def connection_pool_stats(self) -> ConnectionPoolStats | None:
+        """Snapshot the connection pool for ``instrument_connection_pools``.
+
+        Read from redis-py's public ``get_connection_count()``, which counts the pool's
+        connections in memory, without a lock, and labels each count with the OpenTelemetry
+        ``db.client.connection.state`` attribute: ``used`` (checked out, or being connected
+        on checkout) or ``idle``. redis-py keeps a connection it has disconnected, or failed
+        to connect on checkout, among the idle ones and connects it on the next checkout, so
+        ``idle`` can include closed connections.
+        A pubsub subscription, and the invalidation hub, hold a connection in use while they
+        run.
+
+        ``waiting`` is ``None``: redis-py exposes no count of callers waiting on a
+        ``BlockingConnectionPool``.
+
+        :returns: The snapshot, or ``None`` before :meth:`initialize` and after :meth:`close`.
+        """
+
+        pool = self.__pool
+
+        if pool is None:
+            return None
+
+        counts = {
+            attributes.get("db.client.connection.state"): count
+            for count, attributes in pool.get_connection_count()
+        }
+
+        return ConnectionPoolStats(
+            in_use=counts.get("used", 0),
+            idle=counts.get("idle", 0),
+            max_size=pool.max_connections,
+        )
 
     # ....................... #
 

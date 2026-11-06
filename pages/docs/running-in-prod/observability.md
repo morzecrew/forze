@@ -240,29 +240,47 @@ connection that is never returned is the leak a soak test exists to catch.
 ```python
 from forze.application.execution import instrument_connection_pools
 
-instrument_connection_pools({"postgres": pg})
+instrument_connection_pools({"postgres": pg, "redis": redis, "mongo": mongo})
 ```
 
 | Metric | What it carries |
 |--------|-----------------|
 | `forze.connection_pool.in_use` (gauge) | connections checked out, or being opened or reopened by the pool |
-| `forze.connection_pool.idle` (gauge) | open connections not checked out |
-| `forze.connection_pool.max` (gauge) | the configured cap |
-| `forze.connection_pool.waiting` (gauge) | callers queued for a connection, where the driver exposes it |
+| `forze.connection_pool.idle` (gauge) | connections in the pool not checked out |
+| `forze.connection_pool.max` (gauge) | the configured cap, absent for a pool without one |
+| `forze.connection_pool.waiting` (gauge) | callers queued for a connection, Postgres only |
 
 One series per client, labelled `forze.client` with the name you chose. A
 client counts if it implements `SupportsConnectionPoolStats`
 (`forze.application.contracts.pools`) with an in-memory snapshot. The callback
-runs on every scrape, so it never does I/O. Today only `PostgresClient` does:
-it reads psycopg_pool's public `get_stats()`. Redis, MongoDB and outbound HTTP
-follow in later releases. A routed client is refused, because it keeps one
+runs on every scrape, so it never does I/O. `PostgresClient`, `RedisClient`
+and `MongoClient` do, each from public driver numbers only; the
+[metric catalog](../reference/metrics.md#connection-pools) says where each one
+comes from. A `MongoClient` reports its busiest server's pool, so on a replica
+set `max` is the per-server cap. A routed client is refused, because it keeps one
 pool per tenant and a sum would hide the saturated one. Its connections are
 not exported: the tenant pool gauges above report only its pool cache. Alert
-on `waiting` above zero across scrapes, or `in_use` pinned at `max`: callers
-are queueing and will start failing at the acquire timeout. A database that is
-down shows the same pattern, because the pool's reconnect attempts hold
-`in_use` at `max` while callers wait. Pair the alert with a connectivity
-signal, such as the health check.
+on `in_use` pinned at `max`: the pool is exhausted. What callers do next
+depends on the pool. Postgres, MongoDB, and a Redis client with
+`pool_timeout` set queue them until they time out; a Redis client without it
+refuses the next checkout at once. Only Postgres exports `waiting`, so there
+`waiting` above zero across scrapes shows the queue itself. On Postgres, a
+database that is down shows the same pattern, because the pool's reconnect
+attempts hold `in_use` at `max` while callers wait. Pair the alert with a
+connectivity signal, such as the health check.
+
+httpx exposes no pool numbers, so outbound HTTP gets a count of requests
+instead: `instrument_http_clients` from `forze_http` exports
+`forze.http.client.in_flight` per `HttpClient`: requests sent and not
+finished, until `request` has read the response or until a `stream` or
+`send` block exits. A count that never falls back is a block that never
+exits; it may or may not still hold its connection.
+
+```python
+from forze_http import instrument_http_clients
+
+instrument_http_clients({"payments": payments})
+```
 
 ## Document L1 metrics
 

@@ -750,3 +750,14 @@ _.writer_step  # unused method (src/forze_fastapi/routes/_snapshots.py:374) — 
 compare_command  # unused function (src/forze_cli/load.py:124) — a Typer command callback
 _._check_margin  # unused method (src/forze_load/auth.py:129) — an attrs validator
 _._check_path  # unused method (src/forze_load/auth.py:152) — an attrs validator
+_.connection_created  # unused method (src/forze_mongo/kernel/client/client.py:154) — a pymongo ConnectionPoolListener callback
+_.connection_ready  # unused method (src/forze_mongo/kernel/client/client.py:157) — a pymongo ConnectionPoolListener callback
+_.connection_checked_out  # unused method (src/forze_mongo/kernel/client/client.py:160) — a pymongo ConnectionPoolListener callback
+_.connection_checked_in  # unused method (src/forze_mongo/kernel/client/client.py:163) — a pymongo ConnectionPoolListener callback
+_.connection_closed  # unused method (src/forze_mongo/kernel/client/client.py:166) — a pymongo ConnectionPoolListener callback
+_.pool_created  # unused method (src/forze_mongo/kernel/client/client.py:176) — a pymongo ConnectionPoolListener callback
+_.pool_ready  # unused method (src/forze_mongo/kernel/client/client.py:179) — a pymongo ConnectionPoolListener callback
+_.pool_cleared  # unused method (src/forze_mongo/kernel/client/client.py:182) — a pymongo ConnectionPoolListener callback
+_.connection_check_out_failed  # unused method (src/forze_mongo/kernel/client/client.py:190) — a pymongo ConnectionPoolListener callback
+_.connection_check_out_started  # unused method (src/forze_mongo/kernel/client/client.py:185) — a pymongo ConnectionPoolListener callback
+_.pool_closed  # unused method (src/forze_mongo/kernel/client/client.py:169) — a pymongo ConnectionPoolListener callback

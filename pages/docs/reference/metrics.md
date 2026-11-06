@@ -74,28 +74,69 @@ connection establishment.
 ## Connection pools
 
 `instrument_connection_pools({"postgres": client, ...})` — one entry per client that
-implements `SupportsConnectionPoolStats`. Today that is `PostgresClient`; Redis, MongoDB
-and outbound HTTP follow.
+implements `SupportsConnectionPoolStats`: `PostgresClient`, `RedisClient` and
+`MongoClient`.
 
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
 | `forze.connection_pool.in_use` | observable gauge | 1 | `forze.client` | connections checked out, or being opened or reopened by the pool |
-| `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | open connections not checked out |
-| `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`) |
-| `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; absent where the driver does not expose it |
+| `forze.connection_pool.idle` | observable gauge | 1 | `forze.client` | connections in the pool not checked out |
+| `forze.connection_pool.max` | observable gauge | 1 | `forze.client` | configured cap (`max_size`); absent for a pool with none, such as MongoDB with `max_pool_size=0` |
+| `forze.connection_pool.waiting` | observable gauge | 1 | `forze.client` | callers queued for a connection; Postgres only, absent for Redis and MongoDB |
+
+Where each number comes from:
+
+- **Postgres:** psycopg_pool's public `get_stats()`.
+- **Redis:** redis-py's public `get_connection_count()`, split by its
+  `db.client.connection.state` label. redis-py keeps a connection it disconnected, or
+  failed to connect on checkout, among the idle ones, so `idle` can include closed
+  connections. A pubsub subscription holds a connection in use while it runs.
+- **MongoDB:** pymongo's public `ConnectionPoolListener` events, which the client
+  registers when it is built. pymongo keeps one pool per server, and the gauges report
+  the pool with the most connections in use, so `max` is the per-server
+  `max_pool_size`. A sum would hide a saturated primary behind idle secondaries. A
+  connection still opening counts as in use for at most `connect_timeout` plus a second:
+  pymongo sends no close event for one whose open is cancelled at the wrong moment, so it
+  would otherwise count until its pool closes.
+
+`waiting` is absent where it cannot be counted honestly. redis-py exposes no count of
+callers queued on a `BlockingConnectionPool`. pymongo publishes no event when a queued
+caller is cancelled, so a count would only climb.
 
 A client with no open pool reports nothing. A routed client is refused: summing its
 per-tenant pools would hide the one that is saturated. Its connections are not exported;
 the tenant pool gauges above report only its pool cache (size and churn).
 
-**The alert that matters:** `waiting` above zero across scrapes, or `in_use` pinned at
-`max`, means callers queue for connections and will start failing at the acquire timeout.
-`in_use` that climbs under steady load and never falls back is a leaked connection.
-A database that is down shows the same pattern: the pool's reconnect attempts hold `in_use`
-at `max` with `waiting` above zero while no caller saturates the pool, so pair the alert
-with a connectivity signal. On Postgres, a caller that timed out still counts in `waiting`
-until a connection is returned to the pool, so `waiting` stays up for as long as every
-connection is held or the database is unreachable.
+**The alert that matters:** `in_use` pinned at `max` means the pool is exhausted. What
+callers do next depends on the pool. psycopg_pool, pymongo, and redis-py's
+`BlockingConnectionPool` (used when `RedisConfig.pool_timeout` is set) queue them until
+they time out. A plain redis-py `ConnectionPool` refuses the next checkout at once. Only
+Postgres exports `waiting`, so there `waiting` above zero across scrapes shows the queue
+itself. `in_use` that climbs under steady load and never falls back is a leaked
+connection. On Postgres, a database that is down shows the same pattern: the pool's
+reconnect attempts hold `in_use` at `max` with `waiting` above zero while no caller
+saturates the pool, so pair the alert with a connectivity signal. A Postgres caller that
+timed out still counts in `waiting` until a connection is returned to the pool, so
+`waiting` stays up for as long as every connection is held or the database is unreachable.
+
+## Outbound HTTP
+
+`instrument_http_clients({"payments": client, ...})` from `forze_http` — one entry per
+`HttpClient`. httpx exposes no pool numbers, so outbound HTTP has no connection pool
+gauges. The client counts requests at its own methods instead.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `forze.http.client.in_flight` | observable gauge | 1 | `forze.client` | requests sent and not finished: `request` until it has read the response, `stream` and `send` until their block exits; queued ones count |
+
+It counts requests, not connections. Leaving a `stream` or `send` block closes its
+response, but closing the response inside the block does not end the count. A client
+before `initialize` or after `close` reports nothing. A `RoutedHttpClient` is refused.
+
+**The alert that matters:** a count that climbs under steady load and never falls back is
+a `stream` or `send` block that never exits. It may still hold its connection, or may have
+closed its response already; the count alone does not tell which. For a service transport,
+it is usually an SDK response nobody closes.
 
 ## Crypto and KMS
 
