@@ -9,6 +9,7 @@ from .drainable import DrainableLoop, Drainables, StoppedLoops
 from .execution import ExecutionContext, ExecutionContextFactory
 from .invocation import InvocationMetadata, InvocationSurface
 from .lifecycle import DrainPhase, DrainPhaseFn, DrainPhases, LifecycleState
+from .transaction import TransactionScopeHandle
 
 # ----------------------- #
 
@@ -32,4 +33,5 @@ __all__ = [
     "Criticality",
     "bind_criticality",
     "current_criticality",
+    "TransactionScopeHandle",
 ]

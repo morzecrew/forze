@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The shipped Grafana dashboards and alerts cover the new gauges.** Panels for connection pools, HTTP in flight, process CPU and memory, bulkhead `in_use`, the realtime hub and replay size. New rules: `ForzeConnectionPoolExhausted`, `ForzeDurableRunsFailing`, `ForzeRevocationWriteFailures`, `ForzeRealtimeEmitFailing`.
 
-- **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a handle: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
+- **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a `TransactionScopeHandle`: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
 
 ### Changed
 
