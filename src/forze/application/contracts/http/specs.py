@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Final, Generic, Literal, TypeVar, final
+from typing import Any, Final, Generic, Literal, TypeVar, final, get_args
 
 import attrs
 from pydantic import BaseModel, ConfigDict
@@ -154,6 +154,13 @@ class HttpOperationSpec(Generic[In, Out]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # A typo (``"RAW"``) would otherwise decode a CSV answer as JSON at the first call.
+        if self.response_decoding not in get_args(HttpResponseDecoding):
+            raise exc.configuration(
+                f"HTTP operation {self.name!r}: response_decoding must be one of "
+                f"{list(get_args(HttpResponseDecoding))}, got {self.response_decoding!r}",
+            )
+
         placeholders = path_param_names(self.path)
 
         if placeholders and self.args_type is None:

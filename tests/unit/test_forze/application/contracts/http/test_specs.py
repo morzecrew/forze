@@ -169,6 +169,20 @@ class TestResponseDecoding:
 
         assert op.return_type is return_type
 
+    @pytest.mark.parametrize("decoding", ["RAW", "text", ""])
+    def test_an_unknown_response_decoding_is_refused(self, decoding: Any) -> None:
+        with pytest.raises(CoreException, match="response_decoding must be one of") as raised:
+            HttpOperationSpec(
+                name="get",
+                method="GET",
+                path="/",
+                args_type=None,
+                return_type=RawBody,
+                response_decoding=decoding,
+            )
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
     @pytest.mark.parametrize("return_type", [_Out, list[RawBody]], ids=["model", "alias"])
     def test_raw_refuses_any_other_return_type(self, return_type: Any) -> None:
         # A generic alias is no class: refused as configuration, not a TypeError.
