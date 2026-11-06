@@ -253,3 +253,26 @@ class TestOpenKnee:
         rows = [_open(10, 10, 20.0), _open(20, 20, None), _open(40, 40, 25.0)]
 
         assert find_knee(rows, model="open")["knee"] is None
+
+
+class TestMixChange:
+    def test_a_step_whose_mix_changed_stops_the_search(self) -> None:
+        retired = [{"principal": "ada", "scenario": "products.get"}]
+        rows = [
+            _closed(1, 100),
+            _closed(2, 200),
+            {**_closed(4, 201), "sample_exhausted": retired},
+            _closed(8, 201),
+        ]
+        knee = find_knee(rows, model="closed")
+
+        assert knee["knee"] is None
+        assert knee["note"] == "mix changed at {'workers': 4}"
+
+    def test_a_mix_change_never_confirms_a_knee(self) -> None:
+        retired = [{"principal": "ada", "scenario": "products.get"}]
+        rows = [_closed(1, 100), _closed(2, 101), {**_closed(4, 101), "sample_exhausted": retired}]
+        knee = find_knee(rows, model="closed")
+
+        assert knee["knee"] == {"workers": 2}
+        assert knee["note"] == "unconfirmed: the next step was mix changed at {'workers': 4}"

@@ -83,7 +83,8 @@ def run_command(
 
     Exits 0 when the run finishes, including a ramp that stopped on its stop rule: a stop is
     a result, recorded in the summary. Gate on it with ``forze load compare --fail-on``.
-    Exits 2 when the plan is refused or a sign-in fails.
+    Exits 2 when the plan is refused, an operation it names does not resolve, a sign-in
+    fails, or a sample comes back empty.
     """
 
     from forze_load import ClosedRamp, LoadPlan, OpenRamp, run, summarize
@@ -142,6 +143,10 @@ def run_command(
 
     for line in summarize(result.rows, result.summary):
         typer.echo(line)
+
+    # A read sweep's routes it could not generate are listed, never guessed (RFC 0084 §5.5).
+    for operation, reason in result.meta["plan"]["skipped"].items():
+        typer.echo(f"skipped {operation}: {reason}")
 
     typer.echo(f"wrote {out}")
 

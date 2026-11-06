@@ -27,6 +27,7 @@ from forze_load import (
     read_run,
     run,
 )
+from forze_load.catalog import resolve
 from forze_load.engine import _Probe, _Run
 
 pytestmark = pytest.mark.unit
@@ -518,8 +519,14 @@ class TestRunState:
 
     async def test_arrivals_draw_from_their_own_stream(self) -> None:
         async with httpx.AsyncClient() as client:
-            first = _Run(plan=_plan(), client=client, auth_client=client, cpu_judged=True)
-            second = _Run(plan=_plan(), client=client, auth_client=client, cpu_judged=True)
+            plan = _plan()
+            catalog = await resolve(plan, client)
+            first = _Run(
+                plan=plan, catalog=catalog, client=client, auth_client=client, cpu_judged=True
+            )
+            second = _Run(
+                plan=plan, catalog=catalog, client=client, auth_client=client, cpu_judged=True
+            )
 
         for _ in range(10):
             first.rng.random()  # a scenario drawing from Call.rng

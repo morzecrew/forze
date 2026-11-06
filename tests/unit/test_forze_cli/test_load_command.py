@@ -146,6 +146,27 @@ class TestRun:
         assert result.exit_code == 0, result.output
         assert "stopped:" in result.output
 
+    def test_a_read_sweep_lists_the_routes_it_skipped(self, tmp_path: Path) -> None:
+        out = tmp_path / "s.jsonl"
+
+        result = runner.invoke(
+            app,
+            ["load", "run", f"{_PLANS}:sweep_plan", "--steps", "1", "--step-s", "0.2"]
+            + ["--warm-s", "0", "--out", str(out)],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "skipped items.search: needs ['q']" in result.output
+
+    def test_an_operation_whose_kind_disagrees_exits_2(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app, ["load", "run", f"{_PLANS}:mismatch_plan", "--out", str(tmp_path / "m.jsonl")]
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "refused" in result.output
+        assert "writes=False" in result.output
+
     def test_a_sign_in_transport_error_exits_2(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("FORZE_LOAD_TEST_PASSWORD", secrets.token_hex(8))
 

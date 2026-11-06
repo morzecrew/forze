@@ -219,6 +219,8 @@ def find_knee(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any
 
     A step whose client was saturated, or that was misconfigured, is never named and never
     confirms a knee; the search stops there, because nothing after it measures the server.
+    So does a step that retired scenarios (``sample_exhausted``): from there on the mix is
+    another, and a change of goodput may be the mix's.
 
     :returns: ``{"knee": <row key> | None, "confirmed": bool, "note": str | None}``.
     """
@@ -227,8 +229,17 @@ def find_knee(rows: Sequence[Mapping[str, Any]], *, model: str) -> dict[str, Any
     blocker: str | None = None
 
     for row in rows:
-        if row["client"]["saturated"] or row["misconfigured"]:
-            reason = "client saturated" if row["client"]["saturated"] else "misconfigured"
+        reason = (
+            "client saturated"
+            if row["client"]["saturated"]
+            else "misconfigured"
+            if row["misconfigured"]
+            else "mix changed"
+            if row.get("sample_exhausted")
+            else None
+        )
+
+        if reason is not None:
             blocker = f"{reason} at {_key(row)}"
             break
 

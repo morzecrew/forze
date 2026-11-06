@@ -7,6 +7,7 @@ import math
 import os
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -25,6 +26,9 @@ WRITE_HOSTS_ENV = "FORZE_LOAD_WRITE_HOSTS"
 
 TENANT_HEADER = "X-Tenant-Id"
 """The tenant hint header forze reads (``forze.application.contracts.tenancy``)."""
+
+MAX_SAMPLE_SIZE = 10_000
+"""The largest page forze's list routes serve, and so the largest :func:`sample`."""
 
 
 # ....................... #
@@ -100,6 +104,134 @@ class Scenario:
     writes: bool = attrs.field(kw_only=True)
     """Whether the request changes data on the target."""
 
+    # ....................... #
+
+    @staticmethod
+    def op(
+        operation: str,
+        *,
+        name: str | None = None,
+        writes: bool = False,
+        path: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+        body: Any = None,
+    ) -> OpScenario:
+        """A scenario that calls an operation by its key, resolved from the app's OpenAPI.
+
+        At the run's start the operation's method and path are read from the document
+        (:attr:`LoadPlan.openapi`). The run stops before any load when the operation is
+        missing, or when its ``x-forze-kind`` disagrees with *writes*: an operation with
+        no kind, or an unknown one, counts as ``command``.
+
+        :param operation: The operation key, the route's ``operationId``.
+        :param name: Name used in mixes and in the output; the operation key by default.
+        :param writes: Whether the operation changes data; it must match the route's kind.
+        :param path: Values for the path's placeholders, each a value or a :func:`sample`.
+        :param params: Query parameters, each a value or a :func:`sample`.
+        :param body: JSON body, sent as given.
+        :returns: A scenario to list in :attr:`LoadPlan.scenarios`.
+        """
+
+        return OpScenario(
+            operation=operation,
+            name=name or operation,
+            writes=writes,
+            path=dict(path or {}),
+            params=dict(params or {}),
+            body=body,
+        )
+
+    @staticmethod
+    def reads(prefix: str = "", *, name: str = "reads") -> ReadSweep:
+        """One scenario per ``query`` operation whose key starts with *prefix*.
+
+        Generated for routes whose input is empty, a body that requires no field (a
+        paginated list), or an ``id`` with an optional ``rev``. Ids are sampled per
+        principal from the ``list`` operation beside the route (``products.list`` for
+        ``products.get``). Other routes are recorded as skipped, never guessed, and
+        ``command`` routes are never generated.
+
+        :param prefix: Operation key prefix, matched as a string (``"products."``).
+        :param name: Name a mix uses for the group: its weight is split evenly between the
+            generated scenarios, which the output names by operation key.
+        :returns: A group to list in :attr:`LoadPlan.scenarios`.
+        """
+
+        return ReadSweep(name=name, prefix=prefix)
+
+
+# ....................... #
+
+
+@attrs.frozen
+class Sample:
+    """Values of one field, read from a list operation as each principal before load."""
+
+    operation: str
+    """The list operation's key; it must be a ``query``."""
+
+    field: str = "id"
+    """The field read from each record of the answer's ``hits``."""
+
+    size: int = 500
+    """Records asked for, at most :data:`MAX_SAMPLE_SIZE`."""
+
+    def __attrs_post_init__(self) -> None:
+        if (
+            isinstance(self.size, bool)
+            or not isinstance(self.size, int)
+            or not 1 <= self.size <= MAX_SAMPLE_SIZE
+        ):
+            raise _invalid(f"sample size must be a whole number from 1 to {MAX_SAMPLE_SIZE}")
+
+
+def sample(operation: str, *, field: str = "id", size: int = 500) -> Sample:
+    """Ids read once per principal from *operation*, for a :meth:`Scenario.op` to call with.
+
+    The list operation runs as each principal that uses the sample, after sign-in and
+    before the first step, and keeps the values that principal can see. An empty sample
+    stops the run before load. A value that later answers 404 leaves the sample; a sample
+    emptied that way retires its scenarios for that principal. Sampled values never reach
+    the output.
+
+    :param operation: Key of a ``query`` list operation.
+    :param field: Field read from each record.
+    :param size: Records asked for, sent as the body's or the query's ``size``.
+    :returns: A value to pass in :meth:`Scenario.op`'s ``path`` or ``params``.
+    """
+
+    return Sample(operation, field, size)
+
+
+@attrs.frozen(kw_only=True)
+class OpScenario:
+    """An operation reference, built by :meth:`Scenario.op`; resolved when a run starts."""
+
+    operation: str
+    name: str
+    writes: bool
+    path: Mapping[str, Any]
+    params: Mapping[str, Any]
+    body: Any
+
+
+@attrs.frozen(kw_only=True)
+class ReadSweep:
+    """A group of generated read scenarios, built by :meth:`Scenario.reads`."""
+
+    name: str
+    prefix: str
+
+    @property
+    def writes(self) -> bool:
+        """Never: only ``query`` operations are generated."""
+
+        return False
+
+
+type PlanScenario = Scenario | OpScenario | ReadSweep
+"""What :attr:`LoadPlan.scenarios` lists: app-written scenarios and operation references."""
+
 
 # ....................... #
 
@@ -138,8 +270,14 @@ class LoadPlan:
     principals: Sequence[Principal]
     """Who the run signs in as."""
 
-    scenarios: Sequence[Scenario]
-    """What the principals' mixes pick from."""
+    scenarios: Sequence[PlanScenario]
+    """What the principals' mixes pick from: :class:`Scenario` values and the operation
+    references of :meth:`Scenario.op` and :meth:`Scenario.reads`."""
+
+    openapi: str | Path | Mapping[str, Any] = "/openapi.json"
+    """Where operation references are resolved: a path on the target, a local file
+    (:class:`~pathlib.Path`) for a deployment that serves no docs, or the document itself.
+    Read only when the plan has an operation reference."""
 
     allow_writes: bool = False
     """Allow scenarios declared ``writes=True``. Even then the host must be allowlisted."""
@@ -166,12 +304,18 @@ def validate_plan(plan: LoadPlan) -> None:
         - ``load_writes_refused`` — a scenario writes and the plan does not allow writes;
         - ``load_write_host_refused`` — writes are allowed but the target host is not
           loopback, ``localhost``, in ``write_hosts`` or in ``FORZE_LOAD_WRITE_HOSTS``.
+
+    Operation references are checked against the app's OpenAPI document when a run starts,
+    still before any sign-in (:func:`forze_load.run`).
     """
 
     host = _check_url(plan.base_url)
 
     if not (math.isfinite(plan.timeout_s) and plan.timeout_s > 0):
         raise _invalid("timeout_s must be a positive, finite number of seconds")
+
+    if isinstance(plan.openapi, str):
+        require_path(plan.openapi, "LoadPlan.openapi")
 
     names = [scenario.name for scenario in plan.scenarios]
 

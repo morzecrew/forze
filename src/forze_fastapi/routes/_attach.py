@@ -98,6 +98,12 @@ single natural surface (search, where every request is a filter body) take no
 style argument.
 """
 
+FORZE_KIND_EXTENSION: Final = "x-forze-kind"
+"""OpenAPI vendor key on every governed route: ``"query"`` (read-only) or ``"command"``.
+
+The HTTP verb cannot tell a read from a write, since list and search routes are ``POST``.
+``forze_load`` restates this name (RFC 0084 §5.5); a test pins the two together."""
+
 OperationRunner = Callable[[Any], Awaitable[Any]]
 """Async callable dispatching validated operation args through the pipeline."""
 
@@ -345,8 +351,11 @@ def _route_description(
 
 def _route_openapi_extra(
     entry: OperationCatalogEntry,
-) -> dict[str, Any] | None:
-    """Catalog-derived OpenAPI additions for one route, or ``None`` when unflagged.
+) -> dict[str, Any]:
+    """Catalog-derived OpenAPI additions for one route.
+
+    Every route carries ``x-forze-kind`` (:data:`FORZE_KIND_EXTENSION`), the catalog's
+    ``query`` or ``command``, so a client can tell reads from writes without the verb.
 
     Idempotency-capable operations (``supports_idempotency_key``) document the
     ``Idempotency-Key`` request header as an **optional** parameter — the wrap
@@ -361,11 +370,11 @@ def _route_openapi_extra(
     per-invocation budget; expiry returns **504**). A filter-accepting operation's
     query surface (filterable fields and their operators, sortable/aggregatable fields)
     surfaces as the ``x-forze-query`` extension. FastAPI deep-merges ``openapi_extra``
-    into the operation object, appending to ``parameters``, so unflagged routes
-    (``None``) are emitted unchanged.
+    into the operation object, appending to ``parameters``, so an unflagged route gains
+    only its kind.
     """
 
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = {FORZE_KIND_EXTENSION: entry.kind.value}
 
     if entry.supports_idempotency_key:
         extra["parameters"] = [
@@ -395,7 +404,7 @@ def _route_openapi_extra(
             entry.descriptor.query_discovery,
         )
 
-    return extra or None
+    return extra
 
 
 # ....................... #

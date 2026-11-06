@@ -17,6 +17,11 @@ open load model, and writes one JSON line per step::
     result = await run(plan, ClosedRamp(steps=[1, 2, 4, 8], step_s=30, warm_s=5),
                        out="ramp.jsonl")
 
+A scenario can also name an operation by key, ``Scenario.op("products.get", path={"id":
+sample("products.list")})``, or sweep every read route, ``Scenario.reads("products.")``:
+the run resolves both from the app's OpenAPI document and stops before load when an
+operation is missing or its ``x-forze-kind`` contradicts the declared ``writes``.
+
 Writes are off by default: a scenario declared ``writes=True`` is refused unless the plan
 allows writes and its host is loopback or allowlisted. Credentials come from environment
 variables only. Needs the ``load`` extra.
@@ -38,9 +43,14 @@ from .plan import (
     WRITE_HOSTS_ENV,
     Call,
     LoadPlan,
+    OpScenario,
+    PlanScenario,
     Principal,
+    ReadSweep,
+    Sample,
     Scenario,
     SendFn,
+    sample,
     validate_plan,
     write_host_allowed,
 )
@@ -58,12 +68,16 @@ __all__ = [
     "Comparison",
     "HeadersFn",
     "LoadPlan",
+    "OpScenario",
     "OpenRamp",
     "PasswordLogin",
+    "PlanScenario",
     "Principal",
     "Profile",
+    "ReadSweep",
     "RunFile",
     "RunResult",
+    "Sample",
     "Scenario",
     "SendFn",
     "WRITE_HOSTS_ENV",
@@ -75,6 +89,7 @@ __all__ = [
     "password_login",
     "read_run",
     "run",
+    "sample",
     "summarize",
     "validate_plan",
     "write_host_allowed",

@@ -41,7 +41,10 @@ yields a read-only router, and a spec declaring `hard_delete=False` gets no
 `DELETE` route; narrow further with `include={"get", "list"}`. A
 plan-declared [deadline](../running-in-prod/deadlines.md) surfaces on each generated
 route as an `x-deadline-seconds` OpenAPI extension and a "Time budget" line in
-its description, so API clients can set their own timeouts. Merging a
+its description, so API clients can set their own timeouts. Every generated route
+also carries `x-forze-kind`, `query` for a read-only operation and `command`
+otherwise, so a client such as [`forze_load`](../testing/load-testing.md) can tell
+reads from writes although list routes are `POST`. Merging a
 soft-deletion registry (`build_soft_deletion_registry`) into the document
 registry adds its `delete`/`restore` operations to the same router automatically.
 

@@ -274,3 +274,26 @@ def test_summarize_names_saturation_and_the_knee() -> None:
     assert "client saturated" in lines[1]
     assert lines[2] == "knee: none (client saturated)"
     assert lines[3].startswith("stopped:")
+
+
+class TestCutShort:
+    def test_a_cut_short_step_is_reported_but_never_gated(self) -> None:
+        comparison = compare_runs(
+            _run(_row(1, 100, 5), _row(2, 200, 5)),
+            _run(_row(1, 100, 5), {**_row(2, 20, 50), "cut_short": True}),
+            fail_on={"goodput": 0.1, "p95": 0.1},
+        )
+
+        assert comparison.failures == []
+        assert len(comparison.lines) == 2
+        assert "workers=2: cut short in head, not gated" in comparison.warnings
+
+    def test_a_gate_over_cut_short_steps_alone_is_refused(self) -> None:
+        with pytest.raises(CoreException) as error:
+            compare_runs(
+                _run(_row(1, 10, 5)),
+                _run({**_row(1, 1, 5), "cut_short": True}),
+                fail_on={"goodput": 0.1},
+            )
+
+        assert error.value.code == "load_compare_empty"
