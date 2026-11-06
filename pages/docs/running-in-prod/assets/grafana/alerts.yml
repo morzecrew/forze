@@ -52,6 +52,8 @@ groups:
 
       # Only `failed` against the runs that finished: `cancelled` is somebody pressing
       # Stop, `timed_out` a capacity signal, and `retrying` a run that has not failed yet.
+      # `for` stays well inside the 15m window, so one failed run of a quiet function
+      # tickets deterministically instead of racing the window's edge.
       - alert: ForzeDurableRunsFailing
         expr: |
           sum by (job, forze_durable_name) (rate(forze_durable_runs{forze_durable_outcome="failed"}[15m]))
@@ -61,7 +63,7 @@ groups:
                 ),
                 1e-9)
             > 0.05
-        for: 15m
+        for: 5m
         labels:
           severity: ticket
         annotations:

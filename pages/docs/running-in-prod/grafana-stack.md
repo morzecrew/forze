@@ -543,7 +543,7 @@ a "what this means, what to do" is a page nobody can action.
 |---|---|
 | `ForzeOperationErrorRateHigh` | genuine faults only — 4xx-class domain failures are excluded by design |
 | `ForzeDurableRecoverySustained` | runs keep being reclaimed from processes that died holding them |
-| `ForzeDurableRunsFailing` | over 5% of a function's finished runs failed; cancelled, timed-out and retrying runs are excluded |
+| `ForzeDurableRunsFailing` | over 5% of a function's finished runs failed for 5 minutes, so one failed run of a quiet function is enough; cancelled, timed-out and retrying runs are excluded |
 | `ForzeJobsStalled` | stuck jobs **or** a dead staleness sweep |
 | `ForzeCircuitBreakerOpen` | a route has been shedding for five minutes |
 | `ForzeBulkheadSaturated` | continuous queueing plus rejections |
