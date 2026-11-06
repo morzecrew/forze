@@ -45,7 +45,11 @@ from forze_duckdb.execution.deps.configs import (
     DuckDbAnalyticsConfig,
     DuckDbQueryConfig,
 )
-from forze_duckdb.kernel.client import DuckDbClientPort, build_count_sql
+from forze_duckdb.kernel.client import (
+    DuckDbClientPort,
+    build_count_sql,
+    object_store_errors,
+)
 
 # ----------------------- #
 
@@ -63,7 +67,13 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
     AnalyticsQueryPortMixin[R],
     AnalyticsQueryPort[R],
 ):
-    """Analytics query port backed by DuckDB via :class:`~forze_duckdb.kernel.client.DuckDbClient`."""
+    """Analytics query port backed by DuckDB via :class:`~forze_duckdb.kernel.client.DuckDbClient`.
+
+    Every read path raises a failed object-store or file read as a
+    :class:`~forze.base.exceptions.CoreException` (see
+    :func:`~forze_duckdb.kernel.client.errors.object_store_error`); other driver errors pass
+    through.
+    """
 
     client: DuckDbClientPort
     spec: AnalyticsSpec[R, Any]
@@ -123,14 +133,16 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         offset: int | None,
     ) -> list[JsonDict]:
         max_rows = (options or {}).get("max_rows")
-        result = await self.client.run_query(
-            self._sql(query_key),
-            self._bind_tenant(params),
-            limit=limit,
-            offset=offset,
-            max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(query_key, options),
-        )
+
+        with object_store_errors():
+            result = await self.client.run_query(
+                self._sql(query_key),
+                self._bind_tenant(params),
+                limit=limit,
+                offset=offset,
+                max_rows=int(max_rows) if max_rows is not None else None,
+                timeout=self._run_timeout(query_key, options),
+            )
 
         return result.rows
 
@@ -143,12 +155,13 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         *,
         options: AnalyticsRunOptions | None,
     ) -> int:
-        result = await self.client.run_query(
-            build_count_sql(self._sql(query_key)),
-            self._bind_tenant(params),
-            limit=1,
-            timeout=self._run_timeout(query_key, options),
-        )
+        with object_store_errors():
+            result = await self.client.run_query(
+                build_count_sql(self._sql(query_key)),
+                self._bind_tenant(params),
+                limit=1,
+                timeout=self._run_timeout(query_key, options),
+            )
 
         return parse_count_row(result.rows)
 
@@ -217,15 +230,16 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        async for chunk in stream_shaped_chunks(
-            raw,
-            fetch_batch_size=fetch_batch_size,
-            read_codec=self.spec.resolved_read_codec,
-            read_type=self.spec.read,
-            return_type=None,
-            return_fields=None,
-        ):
-            yield chunk
+        with object_store_errors():
+            async for chunk in stream_shaped_chunks(
+                raw,
+                fetch_batch_size=fetch_batch_size,
+                read_codec=self.spec.resolved_read_codec,
+                read_type=self.spec.read,
+                return_type=None,
+                return_fields=None,
+            ):
+                yield chunk
 
     # ....................... #
 
@@ -254,15 +268,16 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        async for chunk in stream_shaped_chunks(
-            raw,
-            fetch_batch_size=fetch_batch_size,
-            read_codec=self.spec.resolved_read_codec,
-            read_type=self.spec.read,
-            return_type=return_type,
-            return_fields=None,
-        ):
-            yield chunk
+        with object_store_errors():
+            async for chunk in stream_shaped_chunks(
+                raw,
+                fetch_batch_size=fetch_batch_size,
+                read_codec=self.spec.resolved_read_codec,
+                read_type=self.spec.read,
+                return_type=return_type,
+                return_fields=None,
+            ):
+                yield chunk
 
     # ....................... #
 

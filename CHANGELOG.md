@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`propose` no longer logs an ERROR traceback on Postgres for every dry run**, and an `apply` that opens a scope on another client's route is refused (`propose_cross_client`) instead of committing there; `TransactionScopeHandle.independent_routes` lists such scopes.
 
+- **A DuckDB analytics query over a missing object or empty glob raises `not_found` (`duckdb_source_not_found`), not the driver's `HTTPException`,** on every read path. Other store failures are `infrastructure` or, for a `429`, `throttled`; a missing bucket is `configuration`. Other driver errors pass through.
+
 ## [0.22.0] - 2026-11-04
 
 ### Added
