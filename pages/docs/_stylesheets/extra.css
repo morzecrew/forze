@@ -232,7 +232,11 @@
 /* Rounded to match Zensical's 0.4rem convention (theme default is a square 0.1rem). */
 .md-version__list {
   border-radius: 0.4rem;
-  overflow: hidden;
+  /* Scroll, never clip: past a handful of releases the list outgrows its open
+     height. The radius still clips the corners. `contain` keeps the wheel from
+     scrolling the page once the list reaches its end. */
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   /* Drives the CLOSE (the theme's base is a slow, delayed fade): quick fade
      out, then collapse. !important to beat the theme's base transition. */
   transition: max-height 0ms 0.1s, opacity 0.1s !important;
@@ -256,7 +260,7 @@
    `:focus-within` selector above (which fires because the trigger is a
    <button> that takes focus on click). Open: expand instantly, fade in fast. */
 .md-version--open .md-version__list {
-  max-height: 12rem !important;
+  max-height: min(20rem, calc(100vh - 4rem)) !important;
   opacity: 1 !important;
   transition: max-height 0ms, opacity 0.1s !important;
 }
