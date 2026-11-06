@@ -7196,6 +7196,30 @@ was run against the code without it and failed there.
 | R-36 | Bug | `Text/Event-Stream; charset=utf-8` was refused | Fixed in `91ae47db9`: the media type is compared case-insensitively, without its parameters (D-257) |
 | R-37 | Bug | An id-only event-stream block did not move the resume id, and an empty `id:` did not clear it | Fixed in `91ae47db9`: each dispatch sets the id from the last `id:`, data or not, and it outlives a connection (D-255) |
 
+## Decision-row outcomes — 2026-11-06 (RFC 0084 P3)
+
+The maintainer accepted D-253, D-254, D-255, D-256 with D-257, D-258, D-260, D-261, D-262,
+D-263, D-264, D-265, D-268 and D-269 as proposed, now RFC 0084 §11 rows 54 to 66. Row 57, from
+D-257, extends row 21 to errors and 5xx answers. The drift D-267 is accepted as a departure
+from §7, without a row. D-259, D-266 and D-269a proposed no row. Comparing realtime phase rows
+(row 63) is demand-gated.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0084 | 54 | Accepted | `ASSUMED` | A realtime run is `run(plan, Realtime(...))`, from Python only | D-253 |
+| 0084 | 55 | Accepted | `ASSUMED` | Writes are open-model arrivals at `rate` over the writers' mixes | D-254 |
+| 0084 | 56 | Accepted | `ASSUMED` | The WebSocket transport is a minimal read-only RFC 6455 client over httpx | D-255 |
+| 0084 | 57 | Accepted, **extends row 21** | `ASSUMED` | A 4xx refuses a stream; errors and 5xx reopen with jittered backoff; no open stream stops the run as `no_stream` | D-256, D-257 |
+| 0084 | 58 | Accepted | `ASSUMED` | A key closes `timeout_s` after its answer as missing or gap; a later frame counts once as late | D-258 |
+| 0084 | 59 | Accepted | `ASSUMED` | A `steady` and a `storm` phase row, written once their keys close | D-260 |
+| 0084 | 60 | Accepted | `ASSUMED` | `replayed` and `back_in_s` as a client can see them | D-261 |
+| 0084 | 61 | Accepted | `ASSUMED` | `resume=False` declares a live-only route | D-262 |
+| 0084 | 62 | Accepted | `ASSUMED` | The kit never acks; each subscriber sends its own `device_id` | D-263 |
+| 0084 | 63 | Accepted | `ASSUMED` | `compare` reads step and window rows only; realtime rows are demand-gated | D-264 |
+| 0084 | 64 | Accepted | `ASSUMED` | The meta line leaves out a realtime profile's path, topics and callables | D-265 |
+| 0084 | 65 | Accepted | `ASSUMED` | The first write waits for the first opens' replay to go quiet | D-268 |
+| 0084 | 66 | Accepted | `ASSUMED` | A stream silent for `idle_s` is cut and reopened | D-269 |
+
 ---
 
 # Unit 24 · RFC 0084 P4 — the soak
@@ -7641,3 +7665,26 @@ CodeRabbit's and CodeAnt's reviews of `f79908a42`. Every fix has a test that fai
 | R-17 | Bug | `read_run` took any `warm`; a string `"false"` is truthy and skipped that window's `--fail-on` gate | Fixed (D-279): `warm` and `cut_short` must be booleans, or the file is refused |
 | R-18 | Risk | An unknown label-value escape was read as its character, accepting malformed text and merging distinct series | Fixed (D-273): only `\\`, `\"` and `\n`; another refuses the scrape |
 | R-19 | Bug | The soak waited for its last drain and scrape with the load still running and its calls unrecorded, and a drain or scrape longer than a window pushed later boundaries back | Fixed (D-285): boundaries fixed at `started + n × window_s`, each window's drain and scrape from its close, rows in window order, and no sends after the last boundary or a stop |
+
+## Decision-row outcomes — 2026-11-06 (RFC 0084 P4)
+
+The maintainer accepted D-271, D-272, D-274, D-275, D-276, D-277, D-278, D-279, D-283, D-284
+and D-285 as proposed, now RFC 0084 §11 rows 67 to 77. Row 71, from D-276, amends row 26, and
+row 69 reads row 22, which stays `LOCKED` as written. The drifts D-275 (with its row, as D-221
+departed), D-281 and D-282 are accepted as departures; D-281 and D-282 get no row. D-270, D-273
+and D-280 proposed no row; subscribers during a soak (D-280) are demand-gated. With P3 and P4
+in, every scheduled phase of RFC 0084 has shipped, and the RFC is marked complete.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0084 | 67 | Accepted | `ASSUMED` | The soak fits `forze_*` gauges and counters and the process gauges, not histograms | D-271 |
+| 0084 | 68 | Accepted | `ASSUMED` | A soak scrapes `LoadPlan.metrics` without a credential, before sign-in and after every window | D-272 |
+| 0084 | 69 | Accepted, **reads row 22** | `ASSUMED` | The one-process rule is applied per series | D-274 |
+| 0084 | 70 | Accepted | `ASSUMED` | `Soak(...)`, its `window` rows, and `--soak-s` on the CLI | D-275 |
+| 0084 | 71 | Accepted, **amends row 26** | `ASSUMED` | The fit's duration, quarters, threshold, `sparse` and `inconclusive`, and client latency | D-276 |
+| 0084 | 72 | Accepted | `ASSUMED` | Capacity pairs are a listed table; a gauge at capacity is `at_capacity` | D-277 |
+| 0084 | 73 | Accepted | `ASSUMED` | A soak stops at the first window past its warm-up that passes the stop rule | D-278 |
+| 0084 | 74 | Accepted | `ASSUMED` | `compare` matches soak windows by number and never gates on warm-up | D-279 |
+| 0084 | 75 | Accepted | `ASSUMED` | A union worker's points are stamped at its snapshot write | D-283 |
+| 0084 | 76 | Accepted | `ASSUMED` | The meta line records `server.attribution`; the CLI warns before load | D-284 |
+| 0084 | 77 | Accepted | `ASSUMED` | Windows run back to back on a fixed schedule; nothing is sent after the last boundary | D-285 |
