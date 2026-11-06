@@ -7019,6 +7019,15 @@ loop stops for good on <code>configuration</code>, so a rotated credential would
   half without the other and wiring is refused, because sending no header at all would
   surface at the counterparty as a rejected request rather than here as the mistake it is.
   The other kinds keep their existing behaviour — an absent token means no auth.</li>
+<li><strong>The request model splits into path, query and body.</strong> A <code>{placeholder}</code> in <code>path</code>
+  takes the field of that name, its declared default included; a <code>None</code> there is refused.
+  On a <code>GET</code> every other field is a query parameter, or only the <code>query_from</code> fields when
+  it names some, and a field you set outside them is refused. On other methods the
+  <code>query_from</code> fields are the query and the rest is the body. A query field goes out with
+  its declared default when you leave it unset and stays out when it is <code>None</code>; a list
+  repeats its key (<code>tags=a&amp;tags=b</code>). The body carries only the fields you set, so an
+  explicit <code>None</code> is sent as <code>null</code> and an unset field not at all — how a <code>PATCH</code> tells
+  "clear it" from "leave it".</li>
 <li><strong>A request body is JSON unless an operation says otherwise.</strong>
   <code>async_http_op(..., body_encoding="form")</code> sends
   <code>application/x-www-form-urlencoded</code>, which is what an OAuth token endpoint requires.

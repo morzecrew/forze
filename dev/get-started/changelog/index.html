@@ -11001,6 +11001,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>SessionRevocation.check</code> and <code>ApiKeyRevocation.fresh</code> return a <code>FreshEpoch</code> when the credential is on its principal's current epoch, <code>None</code> otherwise, not the epoch and a bool</strong> (<strong>Breaking</strong>). A custom verifier passes it as <code>fresh=</code> to <code>remember_admitted_session</code> or <code>remember_admitted_api_key</code>, which refuse a bool.</p>
 </li>
 <li>
+<p><strong>Outbound HTTP query parameters go out with their declared defaults</strong> (<strong>Breaking</strong>): every <code>GET</code> field and <code>query_from</code> field the caller left unset; a <code>None</code> one is not sent, not even as <code>key=</code>. A path placeholder takes its default and refuses <code>None</code>. A body still carries only the fields set.</p>
+</li>
+<li>
 <p><strong><code>instrument_realtime_mailbox()</code> now exports every mailbox built in the process</strong> (<strong>Breaking</strong>), per-connect factories, gateway and writer included, so its counters no longer read zero. It takes only <code>meter</code> and labels each series by spec (<code>forze.document</code>). <code>DocumentRealtimeMailbox.on_replay</code> can no longer be set.</p>
 </li>
 </ul>
