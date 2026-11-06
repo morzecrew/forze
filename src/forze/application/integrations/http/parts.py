@@ -13,22 +13,22 @@ from forze.base.primitives import JsonDict
 # ----------------------- #
 
 
-def _dump_model(model: BaseModel) -> JsonDict:
-    return model.model_dump(mode="json", exclude_unset=True)
-
-
-# ....................... #
-
-
 def request_parts(
     op: HttpOperationSpec[Any, Any],
     args: BaseModel | None,
 ) -> tuple[str, JsonDict | None, JsonDict | None]:
     """Return ``(path, query_params, json_body)`` for an HTTP operation.
 
+    Path and query values name what is requested, so they read every field, declared
+    defaults included, and leave out a ``None``: such a query parameter is not sent and
+    such a path placeholder is refused as missing. The body carries only the fields the
+    caller set (``exclude_unset``), so an explicit ``None`` goes out as ``null`` and an
+    unset field not at all, which is how a PATCH tells "clear it" from "leave it".
+
     :param op: Operation specification.
     :param args: Request arguments, or ``None`` when the operation has no inputs.
-    :raises exc.validation: When ``args`` is required but missing.
+    :raises exc.validation: When ``args`` is required but missing, or a path parameter is
+        ``None``.
     """
 
     placeholders = path_param_names(op.path)
@@ -42,41 +42,41 @@ def request_parts(
 
         return path, None, None
 
-    data = _dump_model(args)
+    values = args.model_dump(mode="json", exclude_none=True)
+    body = {
+        k: v
+        for k, v in args.model_dump(mode="json", exclude_unset=True).items()
+        if k not in placeholders
+    }
 
     for name in placeholders:
-        if name not in data:
+        if name not in values:
             raise exc.validation(
                 f"HTTP operation {op.name!r}: missing path parameter {name!r}",
             )
 
-        segment = quote(str(data.pop(name)), safe="")
+        segment = quote(str(values.pop(name)), safe="")
         path = path.replace(f"{{{name}}}", segment)
 
-    query: JsonDict | None = None
-    body: JsonDict | None = None
+    query_names = op.query_from
 
     if op.method == "GET":
-        if op.query_from:
-            query = {k: data[k] for k in op.query_from if k in data}
-            remainder = {k: v for k, v in data.items() if k not in op.query_from}
+        if not query_names:
+            # Without `query_from`, every field of a GET that is not in the path is a query
+            # parameter — the body's keys too, since an explicit `None` is only there.
+            query_names = frozenset(values.keys() | body.keys())
 
-            if remainder:
-                raise exc.validation(
-                    f"HTTP GET operation {op.name!r} does not allow body fields: "
-                    f"{sorted(remainder)}",
-                )
-        elif data:
-            query = dict(data)
+        remainder = body.keys() - query_names
 
-        return path, query or None, None
+        if remainder:
+            raise exc.validation(
+                f"HTTP GET operation {op.name!r} does not allow body fields: {sorted(remainder)}",
+            )
 
-    if op.query_from:
-        query = {k: data.pop(k) for k in op.query_from if k in data}
+    query = {k: values[k] for k in query_names if k in values}
+    body = {k: v for k, v in body.items() if k not in query_names}
 
-    body = data or None
-
-    return path, query, body
+    return path, query or None, body or None
 
 
 # ....................... #

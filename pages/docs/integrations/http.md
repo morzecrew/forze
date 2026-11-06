@@ -184,6 +184,15 @@ The details stay on the exception for your code; a client sees none of them.
   half without the other and wiring is refused, because sending no header at all would
   surface at the counterparty as a rejected request rather than here as the mistake it is.
   The other kinds keep their existing behaviour — an absent token means no auth.
+- **The request model splits into path, query and body.** A `{placeholder}` in `path`
+  takes the field of that name, its declared default included; a `None` there is refused.
+  On a `GET` every other field is a query parameter, or only the `query_from` fields when
+  it names some, and a field you set outside them is refused. On other methods the
+  `query_from` fields are the query and the rest is the body. A query field goes out with
+  its declared default when you leave it unset and stays out when it is `None`; a list
+  repeats its key (`tags=a&tags=b`). The body carries only the fields you set, so an
+  explicit `None` is sent as `null` and an unset field not at all — how a `PATCH` tells
+  "clear it" from "leave it".
 - **A request body is JSON unless an operation says otherwise.**
   `async_http_op(..., body_encoding="form")` sends
   `application/x-www-form-urlencoded`, which is what an OAuth token endpoint requires.
