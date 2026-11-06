@@ -6897,6 +6897,54 @@ enforced by interrupting its cursor; a per-call <code>timeout</code> option lowe
 it (<a href="../../reference/contracts/analytics/">analytics</a>). The bound starts before the query
 waits for a free executor slot, so on a saturated client a query fails with
 <code>duckdb_query_timeout</code> "waiting for a slot" rather than queueing without end.</p>
+<p>A query whose file or object is missing, unreachable or not Parquet raises a
+<code>CoreException</code> on every read path, <code>run_chunked</code> included, with the driver's error as
+<code>__cause__</code>. Its details name the path without the query string and are not shown to
+clients. A retry policy can take another attempt on <code>infrastructure</code> and <code>throttled</code>;
+<code>not_found</code> is the caller's miss.</p>
+<table>
+<thead>
+<tr>
+<th>The read</th>
+<th>Kind</th>
+<th>Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A <code>404</code>, or a path or glob that matches no file</td>
+<td><code>not_found</code></td>
+<td><code>duckdb_source_not_found</code></td>
+</tr>
+<tr>
+<td>A <code>404</code> whose body is <code>NoSuchBucket</code> (a <code>HEAD</code> on one object has no body, so it stays <code>not_found</code>)</td>
+<td><code>configuration</code></td>
+<td><code>duckdb_source_bucket_not_found</code></td>
+</tr>
+<tr>
+<td>A <code>401</code> or <code>403</code></td>
+<td><code>infrastructure</code></td>
+<td><code>duckdb_source_access_denied</code></td>
+</tr>
+<tr>
+<td>A <code>429</code></td>
+<td><code>throttled</code></td>
+<td><code>duckdb_source_throttled</code></td>
+</tr>
+<tr>
+<td>Any other failure: a <code>5xx</code>, an <code>http_timeout</code>, a refused connection, local IO</td>
+<td><code>infrastructure</code></td>
+<td><code>duckdb_source_unavailable</code></td>
+</tr>
+<tr>
+<td>An empty or truncated Parquet file, or one with a bad footer (a re-read returns the same bytes)</td>
+<td><code>internal</code></td>
+<td><code>duckdb_source_corrupt</code></td>
+</tr>
+</tbody>
+</table>
+<p>Other driver errors, such as a <code>BinderException</code> from the SQL, pass through unchanged.
+Dynamic reads keep their own taxonomy, below.</p>
 <p>For a runnable, Docker-free walkthrough, see the
 <a href="../../recipes/analytics-over-a-data-lake/">analytics recipe</a>.</p>
 <h2 id="per-tenant-lake-reads-dedicated">Per-tenant lake reads (<code>dedicated</code>)<a class="headerlink" href="#per-tenant-lake-reads-dedicated" title="Permanent link">&para;</a></h2>
