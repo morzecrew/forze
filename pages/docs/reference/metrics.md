@@ -314,8 +314,14 @@ size: no gauge counts mailbox rows, since that takes a store query a scrape must
 `replay_size` counts the unacked backlog, not the frames sent. A resume with a last-seen id
 (SSE `Last-Event-ID`, WebSocket `last_event_id`) skips the entries delivered before the
 tear, and they still count. A replay the client leaves, or the store fails, records nothing.
+Only a drain through `iter_backlog` records, as every forze transport does: a custom transport
+that drains `iter_replay` itself counts `replayed` but records no `replay_size`.
 The counters are process totals, so the first scrape after the call includes what came before
 it; `replay_size` records only the replays that finish after it.
+
+`trimmed` counts the ids a trim or sweep handed to the document port's `kill_many`, once it
+returns. The shipped adapters raise unless every id was deleted, so a custom port that accepts
+absent ids can over-count, and only when two cleanups delete the same rows at once.
 
 ## Access-token signing
 

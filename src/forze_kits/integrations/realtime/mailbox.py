@@ -117,7 +117,10 @@ class MailboxStats:
     """Entries returned for connect-time replay."""
 
     trimmed: int = 0
-    """Entries dropped by retention/ack trimming."""
+    """Entries dropped by retention/ack trimming: the ids a trim or sweep selected and handed
+    to ``kill_many``, counted once it returns. The shipped adapters raise unless every id
+    was deleted, so only a port that accepts absent ids can over-count, and only when two
+    cleanups delete the same rows at once."""
 
     acked: int = 0
     """Cursor advances (device acks that moved a cursor forward)."""
@@ -303,7 +306,10 @@ class DocumentRealtimeMailbox:
 
         Called by :func:`~forze.application.integrations.realtime.iter_backlog`, not by
         application code; a no-op until
-        :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox` runs.
+        :func:`~forze_kits.integrations.realtime.instrument_realtime_mailbox` runs. A
+        transport that drains :func:`~forze.application.integrations.realtime.iter_replay`
+        itself records no size: one connect can take several replay passes, and only
+        ``iter_backlog`` knows where the connect's drain ends.
         """
 
         record_replay(self._totals.spec, count)

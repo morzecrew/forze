@@ -60,6 +60,9 @@ async def iter_replay(
     ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
     that only implements the buffered :meth:`~RealtimeMailbox.read_since` still works —
     it just materializes the page at once instead of streaming.
+
+    One call is one replay pass, not one connect's drain, so it never calls the mailbox's
+    ``on_replay`` hook: drain through :func:`iter_backlog` to record the replay size.
     """
 
     stream = getattr(mailbox, "replay_since", None)

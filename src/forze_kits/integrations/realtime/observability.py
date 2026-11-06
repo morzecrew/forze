@@ -186,7 +186,8 @@ def instrument_realtime_mailbox(*, meter: Meter | None = None) -> None:
 
     - ``forze.realtime.mailbox.stored`` — durable principal signals stored for replay.
     - ``forze.realtime.mailbox.replayed`` — entries fetched on connect-time replay.
-    - ``forze.realtime.mailbox.trimmed`` — entries dropped by retention/ack trimming.
+    - ``forze.realtime.mailbox.trimmed`` — entries dropped by retention/ack trimming:
+      ids handed to ``kill_many`` once it returns (see ``MailboxStats.trimmed``).
     - ``forze.realtime.mailbox.acked`` — cursor advances (devices confirming receipt).
     - ``forze.realtime.mailbox.overflowed`` — replays that lost their oldest backlog to
       the retention cap; every increment is a device that fell more than ``cap``
@@ -194,7 +195,9 @@ def instrument_realtime_mailbox(*, meter: Meter | None = None) -> None:
     - ``forze.realtime.mailbox.replay_size`` — per connect, the entries past the device's
       acked cursor that its replay read: the unacked backlog, not the frames sent (a
       resume skips what it delivered before the tear). Only a replay that finishes
-      records. A tail that keeps growing means devices fall behind on acks before
+      records, and only one drained through ``iter_backlog``, as every forze transport
+      does; a transport draining ``iter_replay`` itself counts ``replayed`` but records no
+      size. A tail that keeps growing means devices fall behind on acks before
       ``overflowed`` counts a loss.
 
     :param meter: The meter to register on; the global ``forze`` meter when ``None``.
