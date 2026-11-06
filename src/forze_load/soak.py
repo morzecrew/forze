@@ -53,6 +53,10 @@ quarter's mean."""
 MIN_FIT_WINDOWS = 4
 """Windows after the warm-up a series needs before it is fitted: one per quarter."""
 
+_AGE_RESOLUTION_S = 0.002
+"""Slack on a snapshot's write time: the route renders its age to the millisecond, from a
+write time it truncated to the millisecond."""
+
 _NAME = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 _LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"\s*')
 _ESCAPE = re.compile(r"\\(.)")
@@ -146,7 +150,14 @@ def _sample(line: str) -> tuple[str, dict[str, str], float]:
     if not 1 <= len(fields) <= 2:
         raise ValueError(f"{name[0]} has no value, or more than a value and a timestamp")
 
-    return name[0], labels, float(fields[0])
+    try:
+        value = float(fields[0])
+
+    except ValueError:
+        # No excerpt here either: the token could be anything the route answered.
+        raise ValueError(f"{name[0]} has a value that is not a number") from None
+
+    return name[0], labels, value
 
 
 def _unescape(match: re.Match[str]) -> str:
@@ -204,15 +215,15 @@ class ScrapeFailed(Exception):
 async def fetch_metrics(client: httpx.AsyncClient, path: str) -> list[MetricSample]:
     """``GET`` *path* on the target, without a credential, and parse the answer.
 
-    :raises ScrapeFailed: the request failed in transport, answered other than 200, or is not
-        Prometheus text.
+    :raises ScrapeFailed: the request failed (in transport, a timeout, a body that cannot be
+        decoded), answered other than 200, or is not Prometheus text.
     """
 
     try:
         response = await client.get(path, headers={"Accept": "text/plain"})
 
-    except httpx.TransportError as error:  # timeouts included
-        raise ScrapeFailed(f"failed in transport ({type(error).__name__})") from error
+    except httpx.HTTPError as error:
+        raise ScrapeFailed(f"failed ({type(error).__name__})") from error
 
     if response.status_code != 200:
         raise ScrapeFailed(f"answered {response.status_code}")
@@ -248,6 +259,10 @@ class ServerSeries:
     _last: dict[str, tuple[float, float]] = attrs.field(
         factory=lambda: dict[str, tuple[float, float]]()
     )
+    _written: dict[str, tuple[float, float]] = attrs.field(
+        factory=lambda: dict[str, tuple[float, float]]()
+    )
+    """Per instance, when the snapshot its last new point came from was written, as a span."""
 
     # ....................... #
 
@@ -258,8 +273,9 @@ class ServerSeries:
         """
 
         try:
+            sent = time.perf_counter()
             samples = await fetch_metrics(self.client, self.path)
-            self.add(0, time.perf_counter(), samples)
+            self.add(0, sent, samples, answered=time.perf_counter())
 
         except ScrapeFailed as error:
             raise exc.configuration(
@@ -276,49 +292,120 @@ class ServerSeries:
         """
 
         try:
+            sent = time.perf_counter()
             samples = await fetch_metrics(self.client, self.path)
 
         except ScrapeFailed as error:
             return {"error": str(error)}
 
-        return self.add(window, time.perf_counter(), samples)
+        return self.add(window, sent, samples, answered=time.perf_counter())
 
-    def add(self, window: int, t: float, samples: Sequence[MetricSample]) -> dict[str, Any]:
-        """Record one scrape taken at *t* seconds, and return what the row shows of it."""
+    def add(
+        self,
+        window: int,
+        t: float,
+        samples: Sequence[MetricSample],
+        *,
+        answered: float | None = None,
+    ) -> dict[str, Any]:
+        """Record one scrape sent at *t* and answered at *answered* seconds (*t* by default),
+        and return what the row shows of it.
 
+        A point is stamped at *t*, before the route renders. A pre-fork union serves each
+        worker's last snapshot, up to its interval old, so a series that names its instance
+        is stamped at that snapshot's write time instead: *t* less the instance's
+        ``forze_metrics_snapshot_age_seconds``. When the snapshot is the one the previous
+        new point came from, the instance's series get no point: a second read of one
+        snapshot would give a counter a rate of 0, and the next read double.
+        """
+
+        answered = t if answered is None else answered
         instances = frozenset(
             sample.labels[INSTANCE_LABEL] for sample in samples if sample.labels.get(INSTANCE_LABEL)
         )
         self.instances.append(instances)
+        ages = {
+            sample.labels[INSTANCE_LABEL]: sample.value
+            for sample in samples
+            if sample.name == SNAPSHOT_AGE_FAMILY
+            and sample.labels.get(INSTANCE_LABEL)
+            and math.isfinite(sample.value)
+        }
+        seen = {
+            instance for instance, age in ages.items() if self._seen(instance, t, answered, age)
+        }
         series: dict[str, float | None] = {}
 
         for sample in filter(_kept, samples):
             key = series_key(sample.name, sample.labels)
             kind = "counter" if sample.type == "counter" else "gauge"
+            instance = sample.labels.get(INSTANCE_LABEL, "")
             self.kinds[key] = kind
             value: float | None = sample.value
+            stamp = t - ages.get(instance, 0.0)
 
-            if sample.labels.get(INSTANCE_LABEL):
+            if instance:
                 self.labelled.add(key)
+
+            if instance in seen:
+                series[key] = None
+                continue
 
             if kind == "counter":
                 # A cumulative series rises under any steady load: fit its rate, not its level.
                 last = self._last.get(key)
-                self._last[key] = (t, sample.value)
+                self._last[key] = (stamp, sample.value)
                 value = (
                     None
-                    if last is None or t <= last[0] or sample.value < last[1]  # a reset
-                    else (sample.value - last[1]) / (t - last[0])
+                    if last is None or stamp <= last[0] or sample.value < last[1]  # a reset
+                    else (sample.value - last[1]) / (stamp - last[0])
                 )
 
             if value is None or not math.isfinite(value):
                 series[key] = None
                 continue
 
-            self.points.setdefault(key, {})[window] = (t, value)
+            self.points.setdefault(key, {})[window] = (stamp, value)
             series[key] = _round(value)
 
         return {"instances": sorted(instances), "series": series}
+
+    def _seen(self, instance: str, sent: float, answered: float, age: float) -> bool:
+        """Whether *instance*'s snapshot is the one its last new point came from.
+
+        The route reads the age somewhere between sending and answering, so the write lies in
+        ``[sent - age, answered - age]``. Two reads whose spans overlap saw one snapshot, as
+        long as the worker writes less often than two scrapes take.
+        """
+
+        span = (sent - age, answered - age)
+        previous = self._written.get(instance)
+
+        if previous is not None and span[0] <= previous[1] + _AGE_RESOLUTION_S:
+            return True
+
+        self._written[instance] = span
+
+        return False
+
+    def attribution(self) -> str:
+        """How the first scrape ties its series to a process.
+
+        ``per_series`` when each series names its instance (a pre-fork union), ``instance``
+        when the scrape names one, ``interleaved`` when it names several and its series do
+        not say which, ``none`` when it names none. With the last two no server series can
+        be fitted, which the run's meta line records before the load starts.
+        """
+
+        first = self.instances[0] if self.instances else frozenset[str]()
+
+        if self.kinds and self.kinds.keys() <= self.labelled:
+            return "per_series"
+
+        if len(first) == 1:
+            return "instance"
+
+        return "interleaved" if first else "none"
 
     # ....................... #
 
@@ -374,6 +461,8 @@ def fit(points: Sequence[tuple[float, float]], duration_s: float) -> dict[str, A
 
     Flagged when the fitted change over the run, the slope times *duration_s*, passes
     :data:`DRIFT_SHARE` of the first quarter's mean and the last quarter is above the first.
+    From a first quarter of zero it is flagged only when every point of the last quarter is
+    above zero, and is ``sparse`` otherwise.
     The change is in the series' own unit, so neither the window length nor the time unit
     moves the threshold, as long as *duration_s* is in the unit of the times.
     """
@@ -388,7 +477,12 @@ def fit(points: Sequence[tuple[float, float]], duration_s: float) -> dict[str, A
     first = statistics.fmean(values[:quarter])
     last = statistics.fmean(values[-quarter:])
     change = slope * duration_s
-    flagged = change > DRIFT_SHARE * abs(first) and last > first
+    status = "flagged" if change > DRIFT_SHARE * abs(first) and last > first else "steady"
+
+    # From a first quarter of zero any rise passes 10 %, so one late event would read as a
+    # leak: it counts only when every point of the last quarter is above zero.
+    if status == "flagged" and first == 0 and not all(v > 0 for v in values[-quarter:]):
+        status = "sparse"
 
     return {
         "points": len(points),
@@ -396,7 +490,7 @@ def fit(points: Sequence[tuple[float, float]], duration_s: float) -> dict[str, A
         "change": _round(change),
         "first_quarter": _round(first),
         "last_quarter": _round(last),
-        "status": "flagged" if flagged else "steady",
+        "status": status,
     }
 
 

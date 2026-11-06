@@ -276,18 +276,21 @@ result = asyncio.run(run(plan, Soak(duration_s=4 * 3600, workers=32), out="soak.
 ```
 
 `Soak` takes `workers` for a closed load or `rate` for an open one (`--model open` on the
-CLI), never both. Each `window_s` (default 60 s) writes a `window` row with a step row's
-fields, plus:
+CLI), never both. On the CLI, `--steps` names the one load level, and `--step-s` and
+`--warm-s`, which shape a ramp, are refused beside `--soak-s`, as `--window-s` is without
+it. Each `window_s` (default 60 s) writes a `window` row with a step row's fields, plus:
 
 | Field | Meaning |
 | --- | --- |
 | `window` | The window's number, from 1 |
 | `warm` | `true` for the first `warm_windows` (default 2, at least 2), which the fit leaves out |
-| `t_s` | Seconds since the load started, at the window's end |
-| `server` | The scrape at the window's end: `instances` (each `service_instance_id` it named) and `series`, or `error` when it failed |
+| `t_s` | Seconds since the load started, taken once the calls the window sent have finished: its end, plus that wait |
+| `server` | The scrape after the window: `instances` (each `service_instance_id` it named) and `series`, or `error` when it failed |
 
 Writes during a soak grow the data, so the workload changes as it runs. Each row records
-goodput beside latency, so a slowdown can be told apart from more data.
+goodput beside latency, so a slowdown can be told apart from more data. The warm-up windows
+are cold start, so they never stop a soak: the stop rule applies from the first window after
+them.
 
 ### What the soak reads from the server
 
@@ -295,7 +298,7 @@ goodput beside latency, so a slowdown can be told apart from more data.
 without a credential: once before anyone signs in, then at the end of every window. A route
 that cannot be read before load stops the run, and the command exits 2; set
 `metrics=None` to soak on client numbers only. A scrape that fails later is recorded as the
-row's `server.error`, and the soak goes on.
+row's `server.error`, and the soak goes on. A point is stamped when its scrape was sent.
 
 The soak keeps the `forze_*` series and the process gauges from `instrument_process`
 (`process_cpu_time_seconds_total`, `process_memory_usage_bytes`). A counter is turned into a
@@ -305,22 +308,25 @@ route with [`attach_metrics_route`](../reference/fastapi-routes.md) and call the
 `instrument_*` functions for what you want watched: `instrument_process` for memory and CPU,
 `instrument_connection_pools` and `instrument_http_clients` for connections,
 `instrument_resilience` for bulkheads, `instrument_realtime_hub` for SSE and WebSocket
-subscribers, `instrument_document_l1` for caches.
+subscribers, `instrument_document_l1` for caches, `instrument_tenant_pools` for the tenant
+pool cache.
 
 ### Read the drift
 
 After the warm-up, every series gets a least-squares slope over time and the mean of its
 first and last quarter of windows. A series is **flagged** when the slope times the run's
 duration passes 10 % of its first-quarter mean and the last quarter is above the first. The
-threshold does not depend on `window_s`. A gauge that reaches its capacity is not flagged,
+threshold does not depend on `window_s`. From a first quarter of zero any rise passes 10 %,
+so such a series is flagged only when every window of its last quarter is above zero, and is
+`sparse` otherwise: one late event is not a leak. A gauge that reaches its capacity is not flagged,
 because a cache or a pool filling up is not a leak: a cache's size against its capacity, a
 connection pool's `in_use` and `idle` against its `max`, a bulkhead's `in_use` against its
 `limit`, the tenant pool cache's size against its capacity. The client's p50, p95 and p99
 are fitted too.
 
 The summary's `drift` lists every `flagged` series and gives each one a `status`:
-`flagged`, `steady`, `at_capacity`, `too_few` (fewer than four windows after the warm-up),
-or one of the two below. Flags never fail the run: it exits 0, and reading them is yours.
+`flagged`, `steady`, `sparse`, `at_capacity`, `too_few` (fewer than four windows after the
+warm-up), or one of the two below. Flags never fail the run: it exits 0, and reading them is yours.
 
 **Drift is computed only from scrapes of one process.** A scrape names its process through
 the `service_instance_id` label that `bootstrap_telemetry`'s resource puts on
@@ -332,8 +338,18 @@ the `service_instance_id` label that `bootstrap_telemetry`'s resource puts on
   confident false finding. A process that restarted mid-run is marked the same way.
 - With [one scrape for every worker](../running-in-prod/grafana-stack.md#several-workers-one-scrape)
   (`attach_metrics_route(..., snapshots=...)`), every series carries its own
-  `service_instance_id`, and each worker's series is fitted on its own.
+  `service_instance_id`, and each worker's series is fitted on its own. A worker's snapshot
+  can be up to its interval old, so its points are stamped when the worker wrote it (the
+  scrape's time less `forze_metrics_snapshot_age_seconds`), and a snapshot the previous
+  scrape already read adds no point.
 - Scrapes that name no instance are marked `unattributed`.
+
+The meta line records how the first scrape ties series to a process, as
+`server.attribution`: `instance`, `per_series`, `interleaved` or `none`. With the last two
+no server series will be fitted, so `forze load run` warns before the load starts; the soak
+still runs, and its client numbers still count. A pre-fork server without one scrape for
+every worker reads as `instance` at first: only a later scrape that lands on another worker
+shows it.
 
 `compare` matches two soaks window by window. It prints the warm-up windows and never gates
 on them.

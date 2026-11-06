@@ -229,6 +229,26 @@ def _line(values: Sequence[float], window_s: float = 1.0) -> list[tuple[float, f
     return [(i * window_s, value) for i, value in enumerate(values)]
 
 
+_UNION_KEY = 'forze_ops_total{service_instance_id="w-1"}'
+
+
+def _union(sent: float, *, interval: float, latency: float = 0.05) -> str:
+    """A union scrape sent at *sent*: one worker whose snapshot, written every *interval*
+    seconds, holds a counter growing a steady 100/s, served with its age."""
+
+    read = sent + latency / 2  # when the route reads the snapshot's age
+    written = math.floor(read / interval) * interval
+
+    return (
+        "# TYPE target_info gauge\n"
+        'target_info{service_instance_id="w-1"} 1\n'
+        "# TYPE forze_ops_total counter\n"
+        f"{_UNION_KEY} {100.0 * written}\n"
+        "# TYPE forze_metrics_snapshot_age_seconds gauge\n"
+        f'forze_metrics_snapshot_age_seconds{{service_instance_id="w-1"}} {read - written:.3f}\n'
+    )
+
+
 class TestFit:
     def test_a_flat_series_is_not_flagged(self) -> None:
         assert fit(_line([100.0] * 12), 12.0)["status"] == "steady"
@@ -251,6 +271,12 @@ class TestFit:
 
     def test_a_rise_from_zero_is_flagged(self) -> None:
         assert fit(_line([0, 0, 0, 1, 2, 3, 4, 5]), 8.0)["status"] == "flagged"
+
+    def test_one_event_after_a_zero_first_quarter_is_sparse_not_flagged(self) -> None:
+        assert fit(_line([0, 0, 0, 0, 0, 0, 0, 1 / 60]), 8.0)["status"] == "sparse"
+
+    def test_a_rise_from_zero_held_through_the_last_quarter_is_flagged(self) -> None:
+        assert fit(_line([0, 0, 0, 0, 0, 0, 1, 1]), 8.0)["status"] == "flagged"
 
     def test_a_rise_under_the_threshold_is_not_flagged(self) -> None:
         # 1 % over the run, against a 10 % threshold.
@@ -408,7 +434,7 @@ class TestServerSeries:
             f'forze_hub{{service_instance_id="w-1"}} {100.0 + 10 * w}\n'
             'forze_hub{service_instance_id="w-2"} 5\n'
             "# TYPE forze_metrics_snapshot_age_seconds gauge\n"
-            f'forze_metrics_snapshot_age_seconds{{service_instance_id="w-1"}} {w % 3}\n'
+            f'forze_metrics_snapshot_age_seconds{{service_instance_id="w-1"}} {0.25 * (w % 2)}\n'
             for w in range(10)
         ]
         _feed(server, texts)
@@ -422,6 +448,68 @@ class TestServerSeries:
             'forze_hub{service_instance_id="w-1"}',
             'forze_hub{service_instance_id="w-2"}',
         }
+
+    def test_a_point_is_stamped_when_the_scrape_was_sent(self) -> None:
+        server = _server()
+        server.add(1, 10.0, parse_metrics(_expo({"forze_g": 1.0})), answered=12.5)
+
+        assert server.points["forze_g"][1] == (10.0, 1.0)
+
+    def test_a_union_snapshot_is_stamped_when_its_worker_wrote_it(self) -> None:
+        # Snapshots every 7 s, scrapes every 60 s: each scrape reads a snapshot of another
+        # age, so a point stamped at the scrape gives a steady counter a rate that wanders.
+        server = _server()
+
+        for k in range(10):
+            sent = 60.0 * k + 0.5
+            server.add(k, sent, parse_metrics(_union(sent, interval=7.0)), answered=sent + 0.05)
+
+        rates = [value for _, value in server.points[_UNION_KEY].values()]
+
+        assert rates == pytest.approx([100.0] * 9, rel=1e-3)
+        assert server.drift(2, 540.0)[_UNION_KEY]["status"] == "steady"
+
+    def test_a_snapshot_read_twice_gives_no_second_point(self) -> None:
+        # Scrapes every 5 s, snapshots every 10 s; the latency varies, so a second read of
+        # one snapshot is stamped a little later than the first.
+        server = _server()
+        rows = []
+
+        for k in range(12):
+            sent, latency = 5.0 * k + 0.5, 0.15 if k % 2 == 0 else 0.05
+            text = _union(sent, interval=10.0, latency=latency)
+            rows.append(server.add(k, sent, parse_metrics(text), answered=sent + latency))
+
+        unchanged = [row["series"][_UNION_KEY] is None for row in rows[1:]]
+        rates = [value for _, value in server.points[_UNION_KEY].values()]
+
+        assert unchanged == [True, False] * 5 + [True]
+        assert rates == pytest.approx([100.0] * 5, rel=1e-3)
+
+    @pytest.mark.parametrize(
+        ("text", "attribution"),
+        [
+            (_expo({"forze_g": 1.0}), "instance"),
+            (_expo({"forze_g": 1.0}, instance=None), "none"),
+            (
+                'target_info{service_instance_id="a"} 1\n'
+                'target_info{service_instance_id="b"} 1\n'
+                "forze_g 1\n",
+                "interleaved",
+            ),
+            (
+                'forze_g{service_instance_id="a"} 1\nforze_g{service_instance_id="b"} 1\n',
+                "per_series",
+            ),
+        ],
+    )
+    def test_the_first_scrape_says_how_it_ties_series_to_a_process(
+        self, text: str, attribution: str
+    ) -> None:
+        server = _server()
+        server.add(0, 0.0, parse_metrics(text))
+
+        assert server.attribution() == attribution
 
     def test_warm_up_windows_are_left_out_of_the_fit(self) -> None:
         server = _server()
@@ -477,6 +565,14 @@ def _refused(_scrape: int) -> httpx.Response:
     raise httpx.ConnectError("refused")
 
 
+def _undecodable(_scrape: int) -> httpx.Response:
+    return httpx.Response(200, headers={"Content-Encoding": "gzip"}, content=b"not gzip")
+
+
+def _token(_scrape: int) -> httpx.Response:
+    return httpx.Response(200, text="forze_x secret-token-123\n")
+
+
 _SOAK = Soak(duration_s=0.3, window_s=0.05, workers=1)
 
 
@@ -484,7 +580,9 @@ class TestSoakRun:
     async def test_a_window_row_per_window_and_drift_at_the_end(self, tmp_path: Path) -> None:
         out = tmp_path / "soak.jsonl"
 
-        result = await run(_plan(), _SOAK, out=out, transport=_app(_leaking))
+        soak = Soak(duration_s=1.2, window_s=0.2, workers=1)
+
+        result = await run(_plan(), soak, out=out, transport=_app(_leaking))
 
         assert [row["window"] for row in result.rows] == [1, 2, 3, 4, 5, 6]
         assert all(row["kind"] == "window" and row["workers"] == 1 for row in result.rows)
@@ -492,7 +590,8 @@ class TestSoakRun:
         times = [row["t_s"] for row in result.rows]
         assert times == sorted(set(times))
         # Goodput beside latency, so a slowdown can be told from more data.
-        assert all(row["goodput_rps"] > 0 and "p99" in row["ms"] for row in result.rows)
+        assert all("goodput_rps" in row and "p99" in row["ms"] for row in result.rows)
+        assert any(row["goodput_rps"] > 0 for row in result.rows if not row["warm"])
         assert result.rows[0]["server"]["instances"] == ["w-1"]
         assert set(result.rows[0]["server"]["series"]) == {"forze_leak", "forze_flat"}
 
@@ -506,7 +605,8 @@ class TestSoakRun:
         assert result.summary["windows"] == 6
         assert "knee" not in result.summary
         assert result.meta["model"] == "closed"
-        assert result.meta["profile"]["window_s"] == 0.05
+        assert result.meta["profile"]["window_s"] == 0.2
+        assert result.meta["server"] == {"attribution": "instance"}
 
         # The file reads back for `compare`, window rows included.
         assert len(read_run(out).rows) == 6
@@ -546,36 +646,109 @@ class TestSoakRun:
 
     @pytest.mark.parametrize(
         "answer",
-        [lambda _n: httpx.Response(200, text="forze_x{oops} 1\n"), _refused],
-        ids=["not-prometheus", "transport"],
+        [
+            lambda _n: httpx.Response(200, text="forze_x{oops} 1\n"),
+            _refused,
+            _undecodable,
+            _token,
+        ],
+        ids=["not-prometheus", "transport", "undecodable", "token"],
     )
     async def test_an_unreadable_metrics_route_refuses_the_run(self, answer: Any) -> None:
         with pytest.raises(CoreException) as caught:
             await run(_plan(), _SOAK, transport=_app(answer))
 
         assert caught.value.code == "load_metrics_unavailable"
+        # The reason never carries the route's body.
+        assert "secret-token-123" not in caught.value.summary
 
-    async def test_a_scrape_that_fails_mid_run_is_recorded_and_the_soak_goes_on(self) -> None:
+    @pytest.mark.parametrize(
+        ("answer", "error"),
+        [
+            (lambda _n: httpx.Response(503), "answered 503"),
+            (_undecodable, "failed (DecodingError)"),
+            (_token, "is not Prometheus text (forze_x has a value that is not a number)"),
+        ],
+        ids=["status", "undecodable", "token"],
+    )
+    async def test_a_scrape_that_fails_mid_run_is_recorded_and_the_soak_goes_on(
+        self, answer: Any, error: str
+    ) -> None:
         def flaky(scrape: int) -> httpx.Response:
-            return httpx.Response(503) if scrape == 3 else _leaking(scrape)
+            return answer(scrape) if scrape == 3 else _leaking(scrape)
 
         result = await run(_plan(), _SOAK, transport=_app(flaky))
 
         # Scrape 1 is the baseline, so scrape 3 closes window 2.
-        assert result.rows[1]["server"] == {"error": "answered 503"}
+        assert result.rows[1]["server"] == {"error": error}
         assert len(result.rows) == 6
         assert result.summary["drift"]["server"]["forze_leak"]["points"] == 4
+        assert "secret-token-123" not in json.dumps(result.rows)
 
-    async def test_server_errors_stop_a_soak_at_their_window(self) -> None:
+    async def test_server_errors_stop_a_soak_after_its_warm_up(self) -> None:
         async def failing(request: httpx.Request) -> httpx.Response:
             await asyncio.sleep(0.001)
 
             return httpx.Response(503)
 
         result = await run(_plan(metrics=None), _SOAK, transport=httpx.MockTransport(failing))
+        stopped = result.summary["stopped"]
 
-        assert len(result.rows) == 1
-        assert result.summary["stopped"] == {"window": 1, "workers": 1, "reason": "errors"}
+        # The warm-up never stops a soak; the first later window that got a call does.
+        assert stopped["reason"] == "errors"
+        assert stopped["window"] == len(result.rows) > _SOAK.warm_windows
+        assert stopped["workers"] == 1
+
+    async def test_a_cold_start_burst_in_the_warm_up_does_not_stop_a_soak(self) -> None:
+        scrapes = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal scrapes
+
+            if request.url.path == "/metrics":
+                scrapes += 1
+                return _leaking(scrapes)
+
+            await asyncio.sleep(0.001)
+
+            # Scrape 3 closes window 2: every call of the warm-up answers 503.
+            return httpx.Response(503 if scrapes < 3 else 200)
+
+        result = await run(_plan(), _SOAK, transport=httpx.MockTransport(handler))
+
+        assert len(result.rows) == 6
+        assert result.summary["stopped"] is None
+        assert not any(row["outcomes"]["ok"] for row in result.rows[:2])
+
+    async def test_a_scrape_that_names_no_process_is_in_the_meta_line_before_sign_in(
+        self,
+    ) -> None:
+        signed_in = 0
+        seen: list[tuple[Any, int]] = []
+
+        async def credential(_client: httpx.AsyncClient) -> dict[str, str]:
+            nonlocal signed_in
+            signed_in += 1
+            return {}
+
+        def nameless(_scrape: int) -> httpx.Response:
+            return httpx.Response(200, text=_expo({"forze_g": 1.0}, instance=None))
+
+        plan = attrs.evolve(
+            _plan(), principals=[Principal(name="viewer", mix={"get": 1}, auth=credential)]
+        )
+
+        result = await run(
+            plan,
+            _SOAK,
+            transport=_app(nameless),
+            on_meta=lambda meta: seen.append((meta.get("server"), signed_in)),
+        )
+
+        # A warning, not a refusal: the soak runs, and its client numbers still count.
+        assert seen == [({"attribution": "none"}, 0)]
+        assert result.summary["stopped"] is None
+        assert result.summary["drift"]["server"]["forze_g"]["status"] == "unattributed"
 
     def test_a_metrics_url_with_a_host_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:

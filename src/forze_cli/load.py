@@ -2,7 +2,7 @@
 
 ``run`` takes a ``module:attribute`` import string pointing at a
 :class:`~forze_load.LoadPlan`, or a zero-argument callable returning one, and runs a closed
-or open ramp against the plan's target. ``compare`` reads two run files. Both need the
+or open ramp, or a soak, against the plan's target. ``compare`` reads two run files. Both need the
 ``load`` extra; ``forze_load`` is imported inside the commands so ``forze --help`` works
 without it.
 """
@@ -10,7 +10,9 @@ without it.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -59,8 +61,34 @@ def _numbers(spec: str) -> list[float]:
         raise typer.BadParameter(f"expected comma-separated numbers, got {spec!r}") from error
 
 
+def _given(ctx: typer.Context, *names: str) -> list[str]:
+    """The options among *names* typed on the command line, as ``--option-name``."""
+
+    return [
+        "--" + name.replace("_", "-")
+        for name in names
+        if (source := ctx.get_parameter_source(name)) is not None and source.name != "DEFAULT"
+    ]
+
+
+def _warn_unattributed(meta: Mapping[str, Any]) -> None:
+    """Warn at the start of a soak whose first scrape ties no series to one process."""
+
+    attribution = meta.get("server", {}).get("attribution")
+
+    if attribution in ("none", "interleaved"):
+        named = "no instance" if attribution == "none" else "several instances"
+        typer.echo(
+            f"warning: the metrics scrape names {named} and its series do not name theirs, so "
+            "no server series will be fitted; client numbers still are. Name each process "
+            "with bootstrap_telemetry, or serve one scrape for every worker.",
+            err=True,
+        )
+
+
 @load_app.command("run")
 def run_command(
+    ctx: typer.Context,
     ref: str = typer.Argument(
         ...,
         help="Import string of a LoadPlan, e.g. 'myapp.load:plan'.",
@@ -127,6 +155,13 @@ def run_command(
     if soak_s is not None and len(values) != 1:
         raise typer.BadParameter(f"a soak holds one load level: --steps takes one, got {steps!r}")
 
+    # An option the chosen run does not read is refused, not ignored.
+    if soak_s is None and _given(ctx, "window_s"):
+        raise typer.BadParameter("--window-s sets a soak's windows: give --soak-s too")
+
+    if soak_s is not None and (ramp_only := _given(ctx, "step_s", "warm_s")):
+        raise typer.BadParameter(f"a soak takes --window-s, not {' or '.join(ramp_only)}")
+
     try:
         if model not in ("closed", "open"):
             raise typer.BadParameter("model must be 'closed' or 'open'")
@@ -155,7 +190,7 @@ def run_command(
                 rates=values, step_s=step_s, warm_s=warm_s, stop_error_rate=stop_error_rate
             )
 
-        result = asyncio.run(run(target, profile, out=out))
+        result = asyncio.run(run(target, profile, out=out, on_meta=_warn_unattributed))
 
     except CoreException as error:
         typer.echo(f"refused: {error.summary}", err=True)

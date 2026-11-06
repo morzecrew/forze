@@ -376,3 +376,49 @@ class TestSoak:
 
         assert result.exit_code == 2
         assert "metrics route" in result.output
+
+    def test_a_soak_whose_scrape_names_no_process_warns_at_start(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import forze_load.soak as soak
+
+        async def nameless(_client, _path):
+            return soak.parse_metrics("# TYPE forze_g gauge\nforze_g 1\n")
+
+        monkeypatch.setattr(soak, "fetch_metrics", nameless)
+
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:plan",
+                "--steps",
+                "1",
+                "--soak-s",
+                "0.3",
+                "--window-s",
+                "0.05",
+                "--out",
+                str(tmp_path / "n.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "warning: the metrics scrape names no instance" in result.output
+        # At the start, before the rows the command prints when the run ends.
+        assert result.output.index("warning:") < result.output.index("window=1:")
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--window-s", "10"],
+            ["--soak-s", "600", "--step-s", "5"],
+            ["--soak-s", "600", "--warm-s", "1"],
+        ],
+    )
+    def test_an_option_the_run_does_not_read_is_a_usage_error(self, args: list[str]) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:soak_plan", "--steps", "1", *args])
+
+        assert result.exit_code == 2
+        assert "soak" in result.output

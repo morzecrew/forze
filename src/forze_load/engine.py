@@ -292,6 +292,7 @@ async def run(
     *,
     out: str | Path | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    on_meta: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> RunResult:
     """Drive *plan* against its target with *profile*, and write JSON lines to *out*.
 
@@ -306,7 +307,9 @@ async def run(
 
     A :class:`Soak` writes a row per window instead of per step, scrapes the plan's
     ``metrics`` route once before sign-in and after every window, and ends with a summary
-    of drift instead of a knee.
+    of drift instead of a knee. Its meta line says how the first scrape ties series to a
+    process (``server.attribution``); ``none`` or ``interleaved`` means no server series
+    will be fitted.
 
     :param plan: Target, principals and scenarios.
     :param profile: :class:`ClosedRamp`, :class:`OpenRamp` or :class:`Soak`.
@@ -314,6 +317,8 @@ async def run(
     :param transport: An ``httpx`` transport to use instead of the network. An app served
         through it on the same event loop runs on the loop's thread, so the loop's CPU is
         then reported but not judged (``loop_cpu_judged: false``).
+    :param on_meta: Called with the meta record once it is written, before sign-in, so a
+        caller can warn at the start of a long run.
     :returns: The meta record, the rows and the summary.
     :raises CoreException: ``configuration`` — the plan is refused (:func:`validate_plan`),
         an operation reference does not resolve (:func:`forze_load.catalog.resolve`), a
@@ -374,8 +379,17 @@ async def run(
         )
         meta = _meta(plan, profile, model, catalog)
 
+        # Known from the first scrape: a soak whose series no scrape can tie to one process
+        # says so now, not when its drift comes back empty hours later.
+        if server is not None:
+            meta["server"] = {"attribution": server.attribution()}
+
         with RunWriter(out) as writer:
             writer.write(meta)
+
+            if on_meta is not None:
+                on_meta(meta)
+
             await state.sign_in()
             await state.sample()
             probe = asyncio.create_task(state.probe.run())
@@ -800,7 +814,8 @@ async def _ramp(
         if state.halt is not None:
             return rows, {**_step_key(row), **state.halt}
 
-        stopped = _stop_reason(row, profile.stop_error_rate)
+        # A soak's warm-up is cold start, as a ramp's `warm_s` is: a burst there stops nothing.
+        stopped = None if row.get("warm") else _stop_reason(row, profile.stop_error_rate)
 
         if stopped is not None:
             return rows, stopped
