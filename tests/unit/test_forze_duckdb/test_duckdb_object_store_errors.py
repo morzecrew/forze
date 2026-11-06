@@ -95,9 +95,7 @@ def test_a_404_naming_no_such_bucket_is_configuration() -> None:
         body="<Error><Code>NoSuchBucket</Code><Message>gone</Message></Error>",
     )
 
-    _assert_mapped(
-        _map(error), ExceptionKind.CONFIGURATION, SOURCE_BUCKET_NOT_FOUND_CODE
-    )
+    _assert_mapped(_map(error), ExceptionKind.CONFIGURATION, SOURCE_BUCKET_NOT_FOUND_CODE)
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -257,9 +255,7 @@ def _read_paths(port: Any) -> dict[str, Callable[[], Any]]:
         "project_run": lambda: port.project_run(["day"], "by_day", params),
         "project_run_chunked": lambda: _drain(port.project_run_chunked(["day"], "by_day", params)),
         "select_run": lambda: port.select_run(BaseModel, "by_day", params),
-        "select_run_chunked": lambda: _drain(
-            port.select_run_chunked(BaseModel, "by_day", params)
-        ),
+        "select_run_chunked": lambda: _drain(port.select_run_chunked(BaseModel, "by_day", params)),
     }
 
 
@@ -278,14 +274,18 @@ async def test_every_read_path_raises_a_missing_source_as_not_found(
         assert isinstance(caught.value.__cause__, duckdb.IOException), path
 
 
+def _cut(path: str, cut: str) -> None:
+    data = Path(path).read_bytes()
+    Path(path).write_bytes(
+        {"empty": b"", "too_small": data[:5], "truncated": data[: len(data) // 2]}[cut]
+    )
+
+
 @pytest.mark.parametrize("cut", ["empty", "too_small", "truncated"])
 async def test_every_read_path_raises_a_file_that_is_not_parquet_as_corrupt(
     events_parquet: str, make_adapter: Callable[..., Any], cut: str
 ) -> None:
-    data = Path(events_parquet).read_bytes()
-    Path(events_parquet).write_bytes(
-        {"empty": b"", "too_small": data[:5], "truncated": data[: len(data) // 2]}[cut]
-    )
+    _cut(events_parquet, cut)
     adapter = make_adapter(
         f"SELECT day, total FROM read_parquet('{events_parquet}') WHERE total >= $min_total"
     )

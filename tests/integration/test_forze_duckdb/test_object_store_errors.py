@@ -46,7 +46,7 @@ class _Params(BaseModel):
     pass
 
 
-_SPEC = AnalyticsSpec(
+_SPEC: AnalyticsSpec[_Row, Any] = AnalyticsSpec(
     name="events",
     read=_Row,
     queries={"by_day": AnalyticsQueryDefinition(params=_Params)},
@@ -98,9 +98,7 @@ async def _first_chunk(client: DuckDbClient, location: str) -> None:
         client=client,
         spec=_SPEC,
         config=DuckDbAnalyticsConfig(
-            queries={
-                "by_day": DuckDbQueryConfig(sql=f"SELECT day FROM read_parquet('{location}')")
-            }
+            queries={"by_day": DuckDbQueryConfig(sql=f"SELECT day FROM read_parquet('{location}')")}
         ),
     )
     chunks: AsyncIterator[Any] = adapter.run_chunked("by_day", _Params())
