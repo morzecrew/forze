@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The shipped Grafana dashboards and alerts cover the new gauges.** Panels for connection pools, HTTP in flight, process CPU and memory, bulkhead `in_use`, the realtime hub and replay size. New rules: `ForzeConnectionPoolExhausted`, `ForzeDurableRunsFailing`, `ForzeRevocationWriteFailures`, `ForzeRealtimeEmitFailing`.
 
-- **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a handle: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
+- **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a `TransactionScopeHandle`: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
 
 ### Changed
 
@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A second realtime channel on one meter now exports its own series** from `instrument_realtime_gateway`, `instrument_realtime_backplane`, `instrument_realtime_connections` and `instrument_realtime_hub`, instead of being dropped silently. A repeat call for the same object and channel adds nothing.
 
 - **Resilience gauges no longer fail a scrape that lands while a call is admitted.** The bulkhead queue-depth and hedge-delay callbacks of `instrument_resilience` could raise `RuntimeError: OrderedDict mutated during iteration` in the exporter thread and lose that sample.
+
+- **`propose` no longer logs an ERROR traceback on Postgres for every dry run**, and an `apply` that opens a scope on another client's route is refused (`propose_cross_client`) instead of committing there; `TransactionScopeHandle.independent_routes` lists such scopes.
 
 ## [0.22.0] - 2026-11-04
 

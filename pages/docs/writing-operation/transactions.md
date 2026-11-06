@@ -141,7 +141,8 @@ async with ctx.tx_ctx.scope("orders") as tx:
 
 `rollback_only()` decides how the scope ends, not when: the body runs to the end,
 then the scope rolls back instead of committing. Call it first thing to declare a
-dry run up front.
+dry run up front. To type a helper that takes `tx`, import `TransactionScopeHandle`
+from `forze.application.execution`.
 
 - **At the root**, the whole transaction rolls back. Work deferred with
   [`run_or_defer`](#after-the-commit) never runs, as after any rollback, and

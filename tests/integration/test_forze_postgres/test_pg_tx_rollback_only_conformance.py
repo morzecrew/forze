@@ -18,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze_kits.invariants import propose
 from forze_postgres.adapters import PostgresTxManagerAdapter
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.kernel.client import PostgresConfig
@@ -95,6 +96,21 @@ async def test_a_real_error_still_logs_at_error(harness: RollbackOnlyHarness) ->
     assert await harness.stored() == set()
 
 
+async def test_propose_keeps_nothing_and_logs_no_error(harness: RollbackOnlyHarness) -> None:
+    """``propose`` dry-runs through ``rollback_only()``, not a raise the client logs."""
+
+    async def apply(_ctx: ExecutionContext) -> None:
+        await harness.write("proposed")
+
+    verdict = await propose(harness.ctx, apply, [], route=harness.route)
+
+    errors = [r.getMessage() for r in harness.caplog.records if r.levelname == "ERROR"]
+
+    assert verdict.holds
+    assert errors == []
+    assert await harness.stored() == set()
+
+
 # ....................... #
 # Routes on two clients: a scope on the other client's route has a transaction of its own.
 
@@ -149,6 +165,21 @@ async def test_a_dry_run_declared_first_covers_another_clients_route(two: _TwoCl
         async with two.ctx.tx_ctx.scope("b"):
             await two.write(two.second, "second")
 
+    assert await two.stored() == set()
+
+
+async def test_propose_refuses_a_scope_on_another_clients_route(two: _TwoClients) -> None:
+    async def apply(ctx: ExecutionContext) -> None:
+        await two.write(two.first, "first")
+
+        async with ctx.tx_ctx.scope("b"):
+            await two.write(two.second, "second")
+
+    # The checks would run after "b" rolled back, against the state before its write.
+    with pytest.raises(CoreException) as caught:
+        await propose(two.ctx, apply, [], route="a")
+
+    assert caught.value.code == "propose_cross_client"
     assert await two.stored() == set()
 
 
