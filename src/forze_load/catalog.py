@@ -225,7 +225,12 @@ class Catalog:
         body = (
             ({_SIZE: sample.size} if _SIZE in route.body_fields else {}) if route.has_body else None
         )
-        params = {_SIZE: sample.size} if body is None and _SIZE in route.query_params else None
+        # The body's `size` if it has one, else the query's: a body without one must not hide it.
+        params = (
+            {_SIZE: sample.size}
+            if _SIZE in route.query_params and _SIZE not in route.body_fields
+            else None
+        )
         where = f"Sampling {sample.operation!r} as {principal!r}"
 
         try:
@@ -251,7 +256,8 @@ class Catalog:
             raise _sample_failed(f"{where} answered no list of records (a 'hits' list or an array)")
 
         found = (record.get(sample.field) for record in records if isinstance(record, dict))
-        values = list(dict.fromkeys(v for v in found if _is_id(v)))
+        # At most `size`, whatever the route answered: one that ignores `size` sends its page.
+        values = list(dict.fromkeys(v for v in found if _is_id(v)))[: sample.size]
 
         if not values:
             raise exc.configuration(
@@ -777,10 +783,10 @@ def _send(route: _Route, op: OpScenario, pool: SamplePool) -> SendFn:
         params = {name: fill(value) for name, value in op.params.items()}
         response = await call.request(route.method, path, json=op.body, params=params or None)
 
-        # Deleted, or gone for this principal: the value leaves the sample, not the run.
-        if response.status_code == 404:
-            for sample, value in picked:
-                pool.drop(call.principal, sample, value)
+        # Deleted, or gone for this principal: the value leaves the sample, not the run. With
+        # two sampled values the answer does not say which is gone, so neither leaves.
+        if response.status_code == 404 and len(picked) == 1:
+            pool.drop(call.principal, *picked[0])
 
         return response
 

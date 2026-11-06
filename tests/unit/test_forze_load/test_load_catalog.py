@@ -778,3 +778,97 @@ class TestRouteInputs:
 
         assert result.meta["plan"]["skipped"]["products.list"] == "named by another scenario"
         assert "products.list" not in result.meta["plan"]["scenarios"]
+
+
+class TestSampleBounds:
+    async def test_a_sample_keeps_no_more_than_its_size(self) -> None:
+        doc = {**_DOC, "components": {"schemas": {"L": {"properties": {"page": {}}}}}}
+        app = _App({"ada": [f"p{i}" for i in range(10)]}, doc)
+
+        await _run(
+            app, _plan(Scenario.op("products.get", path={"id": sample("products.list", size=3)}))
+        )
+
+        listing = next(r for r in app.requests if r.url.path == "/products/list")
+        assert json.loads(listing.content) == {}  # the route takes no size; it answers ten
+        assert {p for p in app.paths() if p.startswith("/products/p")} <= {
+            "/products/p0",
+            "/products/p1",
+            "/products/p2",
+        }
+
+    async def test_the_size_goes_in_the_query_when_the_body_has_none(self) -> None:
+        listing_op = _op(
+            "x.list", params=[("size", "query", False)], body={"properties": {"f": {}}}
+        )
+        doc = {
+            "paths": {"/x/{id}": {"get": _op("x.get", params=_ID)}, "/x/list": {"post": listing_op}}
+        }
+        app = _App({"ada": ["p1"]}, doc)
+
+        await _run(app, _plan(Scenario.op("x.get", path={"id": sample("x.list", size=7)})))
+
+        listing = next(r for r in app.requests if r.url.path == "/x/list")
+        assert listing.url.params["size"] == "7"
+        assert json.loads(listing.content) == {}
+
+    async def test_a_404_on_two_sampled_values_drops_neither(self) -> None:
+        item = _op("items.get", params=[("shop", "path", True), ("id", "path", True)])
+        doc = {
+            "paths": {
+                "/shops/list": {"post": _op("shops.list", body={})},
+                "/products/list": {"post": _op("products.list", body={})},
+                "/shops/{shop}/items/{id}": {"get": item},
+            }
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/openapi.json":
+                return httpx.Response(200, json=doc)
+
+            if request.url.path.endswith("list"):
+                return httpx.Response(200, json={"hits": [{"id": "x1"}]})
+
+            return httpx.Response(404)  # the shop or the item: the answer does not say
+
+        both = {"shop": sample("shops.list"), "id": sample("products.list")}
+        result = await run(
+            _plan(Scenario.op("items.get", path=both)),
+            ClosedRamp(steps=[1, 1], step_s=0.2),
+            transport=httpx.MockTransport(handler),
+        )
+
+        assert len(result.rows) == 2
+        assert result.rows[0]["outcomes"]["not_found"] > 0
+        assert result.summary["stopped"] is None
+        assert not any("sample_exhausted" in row for row in result.rows)
+
+    async def test_each_sample_reads_the_credential_afresh(self) -> None:
+        app = _App({"ada": ["p1"]})
+        handle = app.handler
+        credentials = 0
+        at_listing: list[int] = []
+
+        async def counted(_client: httpx.AsyncClient) -> dict[str, str]:
+            nonlocal credentials
+            credentials += 1
+
+            return {"X-Caller": "ada"}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("list"):
+                at_listing.append(credentials)
+
+            return await handle(request)
+
+        plan = _plan(
+            Scenario.op("products.get", path={"id": sample("products.list")}),
+            Scenario.op("notes.get", params={"id": sample("notes.list")}),
+            principals=[
+                Principal(name="ada", mix={"products.get": 1, "notes.get": 1}, auth=counted)
+            ],
+        )
+
+        await run(plan, ClosedRamp(steps=[1], step_s=0.1), transport=httpx.MockTransport(handler))
+
+        assert at_listing == [2, 3]  # after sign-in, once more per sample

@@ -115,19 +115,20 @@ plan = LoadPlan(
 
 `sample("products.list", field="id", size=500)` calls the list operation once as each
 principal that uses it, after sign-in and before the first step, and keeps the values of
-`field` from the answer's `hits`. `size` is sent as the body's `size` (or the query's, for a
-route without a body) and is at most 10,000. Each call picks one value at random. Each
-principal samples for itself, because an id one principal can read may be forbidden to
-another.
+`field` from the answer's `hits`, at most `size` of them. `size` is sent as the body's
+`size`, or as the query's when the body has none, and is at most 10,000. Each call picks
+one value at random. Each principal samples for itself, because an id one principal can
+read may be forbidden to another.
 
 - A sample must read a `query` operation, and an empty one stops the run before load,
   naming the principal and the operation.
 - An id that answers 404 later, deleted by a write scenario or by someone else, counts as
-  `not_found` and leaves the sample. A sample emptied that way retires its scenarios for that
-  principal, and the step row lists them under `sample_exhausted`. The principal's workers
-  carry on with the rest of its mix. When nothing is left, the run ends the step there and
-  stops: the summary's `stopped` says `sample_exhausted` and names the principal, and the
-  step it cut short says `cut_short` and is never named the knee.
+  `not_found` and leaves the sample. A request that carries two sampled values drops
+  neither: the 404 does not say which one is gone. A sample emptied by 404s retires its
+  scenarios for that principal, and the step row lists them under `sample_exhausted`. The
+  principal's workers carry on with the rest of its mix. When nothing is left, the run ends
+  the step there and stops: the summary's `stopped` says `sample_exhausted` and names the
+  principal, and the step it cut short says `cut_short` and is never named the knee.
 - Sampled ids never reach the output.
 
 ### Sweep the read routes

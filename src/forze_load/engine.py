@@ -431,12 +431,9 @@ class _Run:
                 for sample in self.catalog.samples_of.get(name, ())
             }
 
-            if not needed:
-                continue
-
-            headers = await self.sessions[principal.name].headers()
-
             for sample in sorted(needed, key=_sample_order):
+                # Per sample, so a long sampling phase refreshes the token like any call.
+                headers = await self.sessions[principal.name].headers()
                 await self.catalog.collect(self.client, sample, principal.name, headers)
 
     def pick(self, principal: Principal) -> str | None:
