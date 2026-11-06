@@ -6756,6 +6756,280 @@ no row.
 
 ---
 
+# Unit 23 · RFC 0084 P3 — realtime subscribers, delivery latency and the storm
+
+Branch `feat/load-realtime`, cut from `main` at `bad754b62` and fast-forwarded to `6706f8444`
+before this entry, which records the maintainer's answers to Unit 21. RFC 0084 P3 per §12: SSE
+and WebSocket subscribers, send → delivery and answer → delivery, the storm with resume
+(§5.7, rows 19 to 21), the §6 Realtime and parser tests, the §7 docs and the changelog. Not
+built, as §12 assigns it to P4: the soak, the `/metrics` parser and drift. Socket.IO stays out
+(§8). Rows 1–18, 22–53 hold as written or do not apply to P3. Row 19 holds: both latencies run
+on the one process's monotonic clock. Rows 20 and 21 are refined by D-254 to D-263; row 2 holds
+(D-255).
+
+Every file:line §3.4 and §5.7 cite was checked against `6706f8444`. Only line numbers moved:
+the SSE route is `sse.py:539` (cited `:537`), the resume `:408-439` (`:406-437`), the draining
+answer `:272-288` (`:270-286`), the frame `:242-256` (`:240-254`), the end of an unconfirmed
+replay `:744-751` (`:748-749`); the mailbox's 1000 is `forze_kits/integrations/realtime/mailbox.py:55`
+(`:48`), the replay's 8 rounds `forze/application/integrations/realtime/replay.py:88` (`:82`),
+and the hub's 256-slot queue `hub.py:123-128` (`:120-126`). `ws.py:383`, `:637`, `:118`,
+`hub.py:157-160`, `:174`, `:274`, `sketch.py:99-100`, `:167-174`, `lifecycle.py:164-170` and
+`enrichment.py:42` are where the RFC says. What each says holds.
+
+**Drift count: 1.** Fifteen entries, D-253 to D-267: one `drift` (D-267), twelve `spec-gap`,
+two `discovery`. D-267 departs from §7's wording as D-246 did; no decision row is departed
+from.
+
+**Where each item lives.** `Realtime`, the phases, matching, the storm and the reconnect rules
+in [`forze_load/realtime.py`](../src/forze_load/realtime.py); `Frame`, the event-stream parser
+and the WebSocket client in [`_wire.py`](../src/forze_load/_wire.py). The engine gains three
+things in [`engine.py`](../src/forze_load/engine.py): `run()` takes `Realtime` as a third
+profile and calls its `drive`, `_Run.on_response` hands each answer to the realtime run, and
+the meta line's profile filter leaves out callables and fields marked unrecorded.
+`forze_load` still imports only `forze` core and `httpx`; `uv.lock` and the `load` extra are
+unchanged.
+
+## D-253 — A realtime run is a profile for `run()`, from Python only
+
+- **Touches:** §5.7 ("`Realtime(transport=..., path=..., subscribers=N, principals=...,
+  topics=...)`"), §5.2 (`--profile ramp|open|soak`). No row says where realtime plugs in.
+- **RFC said:** the subscriber spec, writes "at a set rate", and a storm, with no entry point.
+- **Built:** `run(plan, Realtime(...))`, a third profile beside `ClosedRamp` and `OpenRamp`.
+  It carries the streams (`transport`, `path`, `subscribers`, `principals`, `topics`,
+  `batch`), the writes (`rate`, `writers`, `duration_s`), the matching (`match`, `key_of`,
+  `audience`, `timeout_s`) and the storm (`storm`, `resume`). Its principals and writers are
+  checked against the plan with the plan's validation, before the document is read or anyone
+  signs in. `forze load run` gains no realtime model: `match` and `key_of` are code, which a
+  command line cannot carry.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run is `run(plan, Realtime(...))`, a
+  profile beside the ramps, checked against the plan before sign-in; it runs from Python only,
+  and `forze load run` has no realtime model.
+
+## D-254 — The writes are the writers' mixes, as open-model arrivals at `rate`
+
+- **Touches:** §5.7 ("A write scenario runs at a set rate"), row 5.
+- **RFC said:** one write scenario at a rate; silent on who sends it and how it is scheduled.
+- **Found:** a write runs as a principal, a principal-addressed event depends on who writes,
+  and a write that is an operation reference may need a sample. The open model already
+  schedules arrivals at a rate, caps what is in flight and counts late sends.
+- **Built:** the writes are the open model's arrivals at `rate`, constant spacing, over
+  `writers` (every principal by default) by weight, each picking a scenario from its mix.
+  `key_of` returns `None` for an answer that emits nothing, so a mix may hold reads. The
+  writes' own row fields are the open model's (`"latency": "open"`, from the intended send);
+  send → delivery runs from the instant the scenario starts sending, credential time left out
+  as in P1. The write guard applies unchanged.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run's writes are open-model arrivals at
+  `rate` over its `writers`' mixes, by weight; send → delivery runs from the scenario's send.
+
+## D-255 — The WebSocket client is read-only RFC 6455 over httpx's upgrade
+
+- **Touches:** §5.7 (`transport="ws"`), row 2 (`LOCKED`, the `load` extra is httpx only),
+  row 31.
+- **RFC said:** WebSocket subscribers; names no client.
+- **Found:** httpx has no WebSocket client. `websockets` is installed only through
+  `uvicorn[standard]`, the `fastapi` extra; adding it to `load` would break row 2.
+- **Built:** `_wire.ws_connect` sends the upgrade through `httpx.AsyncClient.stream`, so the
+  run's target guard, cookie policy and credential headers apply, and reads frames off the
+  upgraded connection httpx hands back (`network_stream`). It reads text messages, fragments
+  included, skips binary ones, answers pings, sends one ping of its own (D-256), masks with
+  `secure_random_bytes`, and never sends a message. A frame over 16 MiB, a reserved opcode or
+  a broken connection ends the stream as a close. Row 2 holds.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the WebSocket transport is a minimal read-only
+  RFC 6455 client over httpx's HTTP/1.1 upgrade; it answers pings and sends no message, so the
+  `load` extra stays httpx only.
+
+## D-256 — A WebSocket counts as open when its first ping is answered
+
+- **Touches:** §5.7 ("open time", "failed opens"; "WS: close 1012").
+- **Found:** forze accepts a refused WebSocket before closing it with 1008, so the close
+  reason reaches the client (`ws.py:512-513`), and a draining one before closing it with 1012
+  (`:476-477`). A 101 is therefore not an open stream. A healthy socket sends nothing until it
+  has a frame to send, so waiting for a frame would stall an idle stream's open.
+- **Built:** after the 101 the client pings. The open counts when a pong or a message comes
+  back first, timed at the 101. A close before either is a draining answer (1012), a refusal
+  (1008) or an error (any other code), as D-257 counts them.
+- **Class:** `discovery`. Its row is proposed with D-257.
+
+## D-257 — What each end of a stream counts as, and a run where none opens
+
+- **Touches:** §5.7 ("failed opens and open streams"; "Draining answers are reconnects …
+  never errors"), row 21.
+- **RFC said:** draining answers are reconnects with the server's `retry:`. Silent on any
+  other status, on transport errors, on a stream the server ends, on a WebSocket's retry delay,
+  which has no `retry:`, and on a run where nothing opens.
+- **Built:** each phase row counts, under `streams`:
+  - `opened`, with `open_ms`: streams that opened;
+  - `refused`: an SSE answer other than 200, as `EventSource` gives up on one; a WebSocket
+    closed with 1008 before it answered the ping; an upgrade answered with another status than
+    101. That subscriber stays closed;
+  - `errors`: a transport failure, or another close before the ping's answer; retried after
+    one second;
+  - `draining`: SSE 200 with `X-Error-Code: realtime_draining`, retried after its `retry:`;
+    WebSocket 1012 before the ping's answer, retried after one second;
+  - `ended`: an open stream the server ended (an SSE end of stream, any WebSocket close, 1012
+    from a drain step and 1008 from an expired credential included), reopened with its resume
+    after the stream's last `retry:` or one second. The kit sends no `realtime.reauth`.
+
+  "Failed opens" are `refused` plus `errors`. The streams open in batches of `batch`, each
+  batch waited for up to `timeout_s`. When every stream is refused, the run stops before its
+  first write, a finished run (row 36), with `stopped: {"phase": "steady", "reason":
+  "no_stream"}`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a WebSocket is open once its first ping is
+  answered; a refused stream (SSE non-200, WebSocket 1008 before that, an upgrade other than
+  101) stays closed; draining answers, transport errors and streams the server ends are
+  reopened, after the server's `retry:` or one second; a run whose every stream is refused
+  stops before its first write as `no_stream`.
+
+## D-258 — A key closes `timeout_s` after its write's answer: missing, gap or late
+
+- **Touches:** §5.7 ("A key unseen after `timeout_s` is `missing`"; "gaps, keys written while
+  the stream was down that never arrived"), row 20.
+- **RFC said:** as quoted, gaps under the storm.
+- **Found:** silent on when `timeout_s` starts, on what a frame after it is, on how "down" is
+  decided, and on which subscribers a write expects. Keeping every key until the run ends
+  would hold subscribers × writes entries.
+- **Built:** a write's expected subscribers are fixed at its answer: those that had opened
+  before its send, are not refused, and are in its audience. `timeout_s` after the answer the
+  key closes: an expected subscriber that has not received it counts a `gap` when it held no
+  open stream at the write's send, and `missing` otherwise. Gaps count in every phase, a
+  stream a drain ended included, not only in the storm. A frame for a closed key is `late`,
+  neither delivered nor a duplicate. Keys are held only until they close, so the run holds at
+  most rate × `timeout_s` of them. One key per write: a repeated key is expected once.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a write expects the subscribers in its audience
+  that opened before its send; `timeout_s` after its answer each that has not received it is a
+  `gap` if it was down at the send and `missing` otherwise, and a later frame is `late`.
+
+## D-259 — A frame that beats its write's answer waits for the answer to name its key
+
+- **Touches:** row 20 (`key_of(response)`), §5.7 (answer → delivery "can be negative").
+- **Found:** the key comes from the answer, so a frame that arrives first matches no known
+  write yet. It is common, not an edge: against forze's routes served in process, more than
+  half of the steady deliveries beat their answer.
+- **Built:** such a frame is held under its key with its arrival time and repeats. The answer
+  resolves it: timed (a negative answer → delivery), its repeats counted as duplicates, and
+  dropped if its subscriber is not expected. A held frame no answer claims is let go after the
+  request timeout plus one second.
+- **Class:** `discovery`.
+
+## D-260 — Two phases, one row each, written once their keys close
+
+- **Touches:** §5.7 ("Recorded: open time p50/p95, failed opens and open streams"; the storm's
+  records), §5.9 ("one row per step, window or phase"), §5.10.
+- **RFC said:** what is recorded, not in which rows.
+- **Built:** a `steady` phase of `duration_s`, then a `storm` phase of `duration_s` whose drop
+  happens at its start; the writes run across the boundary. Each phase writes one row,
+  `"kind": "phase"`: the writes' step fields (`calls`, `goodput_rps`, `ms`, `outcomes`,
+  `client`, `scenarios`, …), `streams` (D-257, and the opening in the steady row) and
+  `delivery` (`expected`, `delivered`, `share`, `duplicates`, `missing`, `gaps`, `late`,
+  `replayed`, `send_ms`, `answer_ms`, `answer_negative`). Rows are written when the writes
+  have stopped and every key has closed, since a steady key can close during the storm.
+  `open_ms` carries every quantile, not p50 and p95 only. The client report is the probe's,
+  so `client.saturated` is the flag §5.7 asks for when `share` is below 1. The summary keeps
+  its keys, the knee's `null`. A principal whose samples run out ends the phase as in a ramp
+  (row 46): the row says `cut_short`, and the run stops.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run writes a `steady` and a `storm`
+  row, `"kind": "phase"`, each with the writes' step fields, `streams` and `delivery`, once
+  the phase's keys have closed; the storm drops every stream at the start of its phase.
+
+## D-261 — `replayed` and `back_in_s`, as a client can see them
+
+- **Touches:** §5.7 ("time until all streams are back (`back_in_s`); frames replayed").
+- **Found:** no frame says it was replayed, and the client cannot see where a replay ends and
+  the live leg begins.
+- **Built:** `replayed` counts the frames a reopened stream received for writes sent before
+  it reopened, its duplicates included. Only matched frames count: other traffic's replay has
+  no write to compare with. `back_in_s` runs from the drop to the last stream's reopen, and is
+  `null` while any stream that was dropped is still away; `back` counts those that returned.
+  The drop closes each connection without a close frame, as a network failure would.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — `replayed` counts frames a reopened stream
+  received for writes sent before it reopened; `back_in_s` runs from the drop until the last
+  stream is back, `null` while one is away.
+
+## D-262 — `resume=False` stands for a live-only route
+
+- **Touches:** §5.7 ("A live-only route ignores `Last-Event-ID` … the storm records `resume:
+  "none"`"), row 21.
+- **Found:** a client cannot tell a live-only SSE route from a durable one: both answer 200
+  with an event stream, and a frame with no `id:` is also what a durable route sends for an
+  ephemeral signal.
+- **Built:** the plan says so: `Realtime(resume=False)` sends no id on a reopen and the storm
+  records `resume: "none"`. With the default `resume=True` the row records `"last_event_id"`,
+  and `resumed` counts the streams that had a durable id to send. The WebSocket route has no
+  live-only mode; `resume=False` there replays from the stored cursor.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the plan declares a live-only route with
+  `resume=False`, which sends no id and records `resume: "none"`; `resumed` counts streams
+  that sent one.
+
+## D-263 — The kit never acks, and gives each subscriber a `device_id`
+
+- **Touches:** §5.7 ("with `device_id` per subscriber"), §5.11 (the kit and shared
+  environments).
+- **RFC said:** a `device_id` per subscriber; silent on acks.
+- **Built:** the kit never acks, by `POST …/ack` or `realtime.ack`: an ack moves a device's
+  cursor and lets the trim delete mailbox entries, a write to a shared environment the plan
+  never declared. So a stream reopened with no id replays from the stored cursor, which for a
+  device that never acked is the retained mailbox, up to 1000 entries a principal. Each
+  subscriber sends `device_id=forze-load-<n>`. forze's WebSocket route keys its cursor by the
+  `WsConnection.client` the app's resolver returns, so that resolver must read the parameter;
+  the docs say so.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — a realtime run never acks, so it moves no cursor
+  and trims nothing; each subscriber sends its own `device_id`.
+
+## D-264 — `compare` does not read realtime rows
+
+- **Touches:** §5.9 (`compare` matches rows "by `kind` plus `workers` or `rate` or `window`"),
+  row 28.
+- **Found:** silent on phases. A delivery gate needs its own metrics (send → delivery, share,
+  gaps), and P4 is reworking `compare`'s row matching for windows at the same time.
+- **Built:** nothing. `read_run` keeps step rows, so two realtime files compare no step: the
+  report warns that nothing was compared, and `--fail-on` is refused as `load_compare_empty`
+  (row 53). The docs say so.
+- **Class:** `spec-gap` (phasing).
+- **Proposed row (RFC 0084):** `ASSUMED` — `compare` reads step rows only; comparing realtime
+  phase rows is demand-gated.
+
+## D-265 — The meta line leaves out a realtime profile's path, topics and callables
+
+- **Touches:** row 15 (output holds no ids; `target` keeps scheme, host and port only), §5.9.
+- **Found:** the meta line records the profile with `attrs.asdict`. A realtime profile holds
+  callables, which JSON cannot carry, and a stream path or a topic can name a tenant or a
+  record (`/tenants/123/realtime/sse`, `order:42`), as a base path can.
+- **Built:** the profile is recorded through a filter that drops callables and fields marked
+  `recorded: False`, which `Realtime.path` and `Realtime.topics` are. Row 15 holds.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the meta line records a realtime profile's numbers,
+  not its path, topics or callables.
+
+## D-266 — The realtime wire names are pinned
+
+- **Touches:** §5.2, §6 ("wire-name constants pinned"), row 31, D-243.
+- **Built:** `forze_load.realtime` restates `Last-Event-ID`, `X-Error-Code`,
+  `realtime_draining`, 1012 and 1008. `test_load_wire_names.py` pins them to `sse.py`'s
+  `LAST_EVENT_ID_HEADER`, `forze_fastapi.exceptions.ERROR_CODE_HEADER`, core's
+  `REALTIME_DRAINING_CODE` and `ws.py`'s two close codes. The query names `device_id`,
+  `topics` and `last_event_id` are literals in the routes, with no constant to pin; the
+  integration test sends them to forze's own routes, but would not catch every rename.
+- **Class:** `spec-gap`.
+
+## D-267 — P3 amends the unreleased `forze_load` changelog entry
+
+- **Touches:** §7 ("A `CHANGELOG.md` `Added` entry per phase").
+- **Built:** `Realtime` is folded into the `forze_load` entry P1 added and P2 amended, which is
+  still unreleased, as D-246 did and the maintainer accepted. The entry stays within the
+  house's 320 characters, so its saturated-client clause gave way.
+- **Class:** `drift`.
+
+---
+
 # Unit 24 · RFC 0084 P4 — the soak
 
 Branch `feat/load-soak` (PR #872), cut from `main` at `bad754b62` and rebased onto
