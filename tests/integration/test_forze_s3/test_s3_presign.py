@@ -18,23 +18,32 @@ from forze_s3.kernel.client import S3Client
 # ----------------------- #
 
 
+_KEYS = pytest.mark.parametrize(
+    "key",
+    ["docs/report.txt", "lake/bars/symbol=BTCUSDT/data.parquet"],
+    ids=["plain", "hive-partition"],
+)
+"""A plain key and a Hive-style ``key=value`` one: ``=`` is URL-encoded in the signed path."""
+
+
 @pytest.mark.asyncio
+@_KEYS
 async def test_presigned_download_get_over_plain_http(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client, s3_bucket: str, key: str
 ) -> None:
     payload = b"forze-presigned-download"
 
     async with s3_client.client():
         await s3_client.upload_bytes(
             s3_bucket,
-            "docs/report.txt",
+            key,
             payload,
             content_type="text/plain",
         )
 
         vo = await s3_client.presign_download_url(
             s3_bucket,
-            "docs/report.txt",
+            key,
             expires_in=timedelta(minutes=5),
         )
 
@@ -72,15 +81,16 @@ async def test_presigned_download_answers_with_the_signed_content_disposition(
 
 
 @pytest.mark.asyncio
+@_KEYS
 async def test_presigned_upload_put_with_bound_content_type(
-    s3_client: S3Client, s3_bucket: str
+    s3_client: S3Client, s3_bucket: str, key: str
 ) -> None:
     payload = b"uploaded-via-presigned-put"
 
     async with s3_client.client():
         vo = await s3_client.presign_upload_url(
             s3_bucket,
-            "incoming/data.bin",
+            key,
             expires_in=timedelta(minutes=5),
             content_type="application/octet-stream",
         )
@@ -96,8 +106,8 @@ async def test_presigned_upload_put_with_bound_content_type(
 
     # The object is now readable through the normal client port.
     async with s3_client.client():
-        body = await s3_client.download_bytes(s3_bucket, "incoming/data.bin")
-        head = await s3_client.head_object(s3_bucket, "incoming/data.bin")
+        body = await s3_client.download_bytes(s3_bucket, key)
+        head = await s3_client.head_object(s3_bucket, key)
 
     assert body.data == payload
     assert head.content_type == "application/octet-stream"

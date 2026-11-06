@@ -97,6 +97,14 @@ _FRAME_PREFIX_MAX = 512
 """Upper bound on a frame's length-prefix region (is_final + nonce + ct-length), used
 for the rare header-probe-too-small fallback when deriving the stride."""
 
+_KEY_CHARS = r"a-zA-Z0-9!\-_.*'()/="
+"""Characters an object key or prefix may hold (a regex character-class body).
+
+S3's safe set plus ``=``, so Hive-style ``key=value`` partition segments
+(``lake/bars/symbol=BTCUSDT/data.parquet``) address objects through the port. ``=`` is
+URL-encoded by the S3 and GCS SDKs and cannot form a traversal; the ``..`` and leading
+``/`` checks in :meth:`ObjectStorageAdapter._validate_key` are separate."""
+
 
 async def _count_bytes(source: AsyncIterator[bytes], total: list[int]) -> AsyncIterator[bytes]:
     """Pass *source* through untouched while tallying its byte count into ``total[0]``."""
@@ -333,7 +341,7 @@ class ObjectStorageAdapter(
             return
 
         # ``fullmatch``: ``$`` would also match before a trailing newline.
-        if not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]*", prefix):
+        if not re.fullmatch(rf"[{_KEY_CHARS}]*", prefix):
             raise exc.precondition(f"Invalid object storage prefix: {prefix}")
 
     # ....................... #
@@ -358,7 +366,7 @@ class ObjectStorageAdapter(
         upload/list — take the key verbatim.
         """
 
-        if not key or not re.fullmatch(r"[a-zA-Z0-9!\-_.*'()/]+", key):
+        if not key or not re.fullmatch(rf"[{_KEY_CHARS}]+", key):
             raise exc.precondition(f"Invalid object storage key: {key!r}")
 
         if key.startswith("/") or ".." in key.split("/"):

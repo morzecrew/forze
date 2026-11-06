@@ -15,7 +15,7 @@ PEM signing code. Only real GCS verifies signatures end to end.
 
 import json
 from datetime import timedelta
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 import pytest
@@ -101,9 +101,15 @@ def _emulator_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    ["docs/report.txt", "lake/bars/symbol=BTCUSDT/data.parquet"],
+    ids=["plain", "hive-partition"],
+)
 async def test_presigned_get_roundtrip_via_emulator(
     gcs_signing_client: GCSClient,
     fake_gcs_container: str,
+    key: str,
 ) -> None:
     """Plain-HTTP GET on the signed path serves the uploaded bytes.
 
@@ -118,20 +124,21 @@ async def test_presigned_get_roundtrip_via_emulator(
         await gcs_signing_client.ensure_bucket(bucket)
         await gcs_signing_client.upload_bytes(
             bucket,
-            "docs/report.txt",
+            key,
             payload,
             content_type="text/plain",
         )
 
         vo = await gcs_signing_client.presign_download_url(
             bucket,
-            "docs/report.txt",
+            key,
             expires_in=timedelta(minutes=5),
         )
 
     assert vo.method == "GET"
     assert "X-Goog-Signature=" in vo.url
-    assert urlparse(vo.url).path == f"/{bucket}/docs/report.txt"
+    # ``=`` is percent-encoded in the signed path; ``/`` stays a separator.
+    assert urlparse(vo.url).path == f"/{bucket}/{quote(key, safe='/')}"
 
     async with httpx.AsyncClient() as http:
         resp = await http.get(

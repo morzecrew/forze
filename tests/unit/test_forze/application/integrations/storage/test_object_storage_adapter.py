@@ -2,11 +2,12 @@
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.storage import UploadedObject
+from forze.application.contracts.storage import UploadedObject, tenant_key_prefix
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.storage import (
     ObjectStorageAdapter,
     ObjectStorageHead,
@@ -35,7 +36,10 @@ def test_validate_prefix_valid(storage_adapter: ObjectStorageAdapter) -> None:
     storage_adapter._validate_prefix("validPrefix")
     storage_adapter._validate_prefix("prefix/with/slash")
     storage_adapter._validate_prefix("prefix-with-dash_and.dot")
-    storage_adapter._validate_prefix("!-_.*'()/")
+    storage_adapter._validate_prefix("!-_.*'()/=")
+    # Hive-style ``key=value`` partition segments.
+    storage_adapter._validate_prefix("lake/bars/symbol=BTCUSDT")
+    storage_adapter._validate_prefix("lake/events/date=2026-11-06/")
 
 
 def test_validate_prefix_invalid(storage_adapter: ObjectStorageAdapter) -> None:
@@ -43,6 +47,9 @@ def test_validate_prefix_invalid(storage_adapter: ObjectStorageAdapter) -> None:
         "prefix with space",
         "prefix@invalid",
         "prefix#invalid",
+        "lake/symbol=BTC USDT",
+        "lake/symbol=BTC&date=2026",
+        "lake/symbol%3DBTCUSDT",
     ]
     for prefix in invalid_prefixes:
         with pytest.raises(CoreException) as excinfo:
@@ -59,6 +66,17 @@ def test_validate_key_accepts_minted_keys(
     storage_adapter._validate_key(storage_adapter.construct_key("docs"))
 
 
+def test_validate_key_accepts_hive_partition_keys(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter._validate_key("lake/bars/symbol=BTCUSDT/data.parquet")
+    storage_adapter._validate_key("lake/events/date=2026-11-06/part-0.parquet")
+    storage_adapter._validate_key("lake/a=1/b=2/c=/part-0.parquet")
+    storage_adapter._validate_key(
+        storage_adapter.construct_key(("lake", "bars", "symbol=BTCUSDT")),
+    )
+
+
 def test_validate_key_rejects_unsafe_keys(
     storage_adapter: ObjectStorageAdapter,
 ) -> None:
@@ -70,6 +88,11 @@ def test_validate_key_rejects_unsafe_keys(
         "key with space",
         "key@bad",
         "ctrl\nchar",
+        # ``=`` opens no way around the traversal and charset checks.
+        "lake/symbol=BTCUSDT/../../secret",
+        "/lake/symbol=BTCUSDT/data.parquet",
+        "lake/symbol=BTC USDT/data.parquet",
+        "lake/symbol%3DBTCUSDT/data.parquet",
     ):
         with pytest.raises(CoreException):
             storage_adapter._validate_key(bad)
@@ -102,6 +125,25 @@ async def test_upload_refuses_a_prefix_ending_in_a_line_break(
         )
 
     storage_adapter.client.upload_bytes.assert_not_called()
+
+
+def test_validate_key_keeps_hive_keys_inside_the_tenant() -> None:
+    tenant = TenantIdentity(tenant_id=uuid4())
+    adapter = ObjectStorageAdapter(
+        client=MagicMock(),
+        bucket_spec="test-bucket",
+        resolve_bucket=_resolve_static_bucket,
+        tenant_aware=True,
+        tenant_provider=lambda: tenant,
+    )
+    own = tenant_key_prefix(tenant.tenant_id)
+
+    adapter._validate_key(f"{own}/lake/bars/symbol=BTCUSDT/data.parquet")
+
+    with pytest.raises(CoreException) as ei:
+        adapter._validate_key(f"tenant_{uuid4()}/lake/bars/symbol=BTCUSDT/data.parquet")
+
+    assert ei.value.code == "core.storage.key_outside_tenant"
 
 
 @pytest.mark.asyncio
