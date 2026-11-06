@@ -842,14 +842,15 @@ class TestReconnects:
         started = time.perf_counter()
         result = await run(
             _plan(),
-            _realtime(subscribers=3, batch=1, timeout_s=0.5),
+            _realtime(subscribers=8, batch=1, timeout_s=0.5),
             transport=httpx.MockTransport(down),
         )
 
-        # One timeout for the whole opening, not one per batch of a single stream.
-        assert time.perf_counter() - started < 1.2
+        # One timeout for the whole opening (~0.5 s), not one per batch of a single stream
+        # (≥ 4.5 s): the bound sits far from both, so a loaded CI runner cannot trip it.
+        assert time.perf_counter() - started < 3.5
         assert result.summary["stopped"]["reason"] == "no_stream"
-        assert result.rows[0]["streams"]["errors"] >= 3
+        assert result.rows[0]["streams"]["errors"] >= 8
 
     @pytest.mark.parametrize("kind", ["sse", "ws"])
     async def test_a_silent_stream_is_cut_after_idle_s_and_reopened(self, kind: str) -> None:
