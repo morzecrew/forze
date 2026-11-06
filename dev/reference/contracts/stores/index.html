@@ -7077,6 +7077,13 @@ millions of suffixes is not yet in scope.</p>
 upload sessions), and a client-side-encrypting route refuses to resolve the spec with a
 <code>configuration</code> error (<code>storage_direct_transfer_encrypted</code>). Objects are addressed by string
 <code>key</code>.</p>
+<p>A key or <code>prefix</code> may hold only <code>A–Z a–z 0–9 ! - _ . * ' ( ) / =</code>. Any other character, a
+<code>..</code> segment, or a key that starts with <code>/</code> is refused with <code>precondition</code>. A <code>list</code>
+prefix is a plain string prefix, but one that ends in <code>/</code> lists exactly that folder:
+<code>symbol=BTC/</code> never returns <code>symbol=BTCUSDT/…</code>.
+The <code>=</code> allows Hive-style <code>key=value</code> partition segments
+(<code>lake/bars/symbol=BTCUSDT/data.parquet</code>), so a Parquet lake written through the port is one
+<a href="../../../integrations/duckdb/#the-lake-source">DuckDB</a> reads with partition pruning.</p>
 <table>
 <thead>
 <tr>

@@ -6845,6 +6845,11 @@ auto-load the extensions they need — no hand-written SQL strings:</p>
 
 <span class="n">events</span> <span class="o">=</span> <span class="n">ParquetSource</span><span class="p">(</span><span class="s2">"s3://bucket/events/*.parquet"</span><span class="p">)</span>   <span class="c1"># also CsvSource, JsonSource</span>
 </code></pre></div>
+<p>For a Hive-partitioned lake (<code>bars/symbol=BTCUSDT/data.parquet</code>), pass
+<code>ParquetSource("s3://bucket/bars/*/*.parquet", hive_partitioning=True)</code>. Each <code>key=value</code>
+segment becomes a column, and a filter on it skips the other partitions' files unread. The
+<a href="../../reference/contracts/stores/#storage">storage port</a> accepts these keys, so the same
+application can write the lake with <code>ctx.storage</code>.</p>
 <p>Object-storage credentials render to DuckDB secrets, resolved at startup from the
 wired <a href="../vault/">secrets backend</a> via a <code>secret_ref</code> (or supplied inline for
 local runs):</p>
