@@ -146,6 +146,28 @@ class TestRun:
         assert result.exit_code == 0, result.output
         assert "stopped:" in result.output
 
+    def test_a_plan_whose_scenario_raises_exits_2_not_1(self, tmp_path: Path) -> None:
+        # 1 means a --fail-on gate was crossed; a crashed plan is no verdict at all.
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:crashing_plan",
+                "--steps",
+                "1",
+                "--step-s",
+                "0.2",
+                "--warm-s",
+                "0",
+                "--out",
+                str(tmp_path / "c.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "RuntimeError" in result.output
+
     def test_a_read_sweep_lists_the_routes_it_skipped(self, tmp_path: Path) -> None:
         out = tmp_path / "s.jsonl"
 

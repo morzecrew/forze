@@ -33,6 +33,18 @@ plan = _plan(writes=False)
 writing_plan = _plan(writes=True)
 # A soak on client numbers only: nothing listens on port 9 to serve `/metrics`.
 soak_plan = attrs.evolve(plan, metrics=None)
+
+
+async def _broken(_call: Call) -> httpx.Response:
+    raise RuntimeError("scenario bug")
+
+
+# A scenario that raises: a bug in the plan, which ends the run without a verdict.
+crashing_plan = LoadPlan(
+    base_url="http://127.0.0.1:9",
+    principals=[Principal(name="viewer", mix={"read": 1})],
+    scenarios=[Scenario("read", _broken, writes=False)],
+)
 failing_plan = LoadPlan(
     base_url="http://127.0.0.1:9",
     principals=[Principal(name="viewer", mix={"read": 1})],

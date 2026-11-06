@@ -10,6 +10,8 @@ without it.
 from __future__ import annotations
 
 import asyncio
+import sys
+import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -201,6 +203,13 @@ def run_command(
 
     except CoreException as error:
         typer.echo(f"refused: {error.summary}", err=True)
+        raise typer.Exit(code=2) from error
+
+    # A scenario or hook of the plan raised: a bug in the plan, not a crossed gate, so not 1.
+    # The traceback has no locals: a plan's frames hold its principals' credentials.
+    except Exception as error:
+        traceback.print_exception(error, file=sys.stderr)
+        typer.echo(f"the plan raised {type(error).__name__}; the run did not finish", err=True)
         raise typer.Exit(code=2) from error
 
     for line in summarize(result.rows, result.summary):
