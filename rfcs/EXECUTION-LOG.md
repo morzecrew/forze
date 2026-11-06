@@ -6647,13 +6647,13 @@ D-243 proposed no row.
 
 | RFC | Row | Outcome | Grade | Decision | From |
 |---|---|---|---|---|---|
-| 0084 | 42 | Accepted | `ASSUMED` | The OpenAPI document is read once per run, before sign-in and without a credential, from `LoadPlan.openapi` | D-233 |
-| 0084 | 43 | Accepted | `ASSUMED` | `Scenario.op` defaults to `writes=False`, and `x-forze-kind` must confirm it either way | D-234 |
-| 0084 | 44 | Accepted | `ASSUMED` | A reference that does not fit its route, or whose key is listed twice, stops the run before sign-in | D-235 |
+| 0084 | 42 | Accepted | `ASSUMED` | A plan with an operation reference reads the OpenAPI document once, before sign-in and without a credential, from `LoadPlan.openapi`; one without reads none | D-233 |
+| 0084 | 43 | Accepted | `ASSUMED` | `Scenario.op` defaults to `writes=False`, and the route's kind, absent or unknown counting as `command`, must confirm it either way | D-234 |
+| 0084 | 44 | Accepted | `ASSUMED` | A reference with misfit path keys or query names, a missing required input, or a body lacking a top-level required field, or whose key is listed twice, stops the run before sign-in | D-235 |
 | 0084 | 45 | Accepted | `ASSUMED` | A sample reads a `query` operation that needs no input; a failed or unreadable answer stops the run before load | D-236 |
 | 0084 | 46 | Accepted | `ASSUMED` | Equal samples are shared per principal; `sample_exhausted` stops the run as finished, and a `cut_short` step is never a knee | D-237, D-238 |
 | 0084 | 47 | Accepted | `ASSUMED` | A generated id route samples its namespace's `list`, and is skipped without one | D-239 |
-| 0084 | 48 | Accepted, **amends row 7** | `ASSUMED` | The sweep generates a `query` route needing at most an id, with a required body that accepts `{}` | D-240 |
+| 0084 | 48 | Accepted, **amends row 7** | `ASSUMED` | The sweep generates a `query` route needing at most an id, whose required body, if it has one, accepts `{}` | D-240 |
 | 0084 | 49 | Accepted | `ASSUMED` | A sweep is one mix entry split evenly; skipped routes go in `plan.skipped` | D-241 |
 | 0084 | 50 | Accepted | `ASSUMED` | Every request uses the plan's `timeout_s`; `x-deadline-seconds` is demand-gated | D-242 |
 | 0084 | 51 | Accepted | `ASSUMED` | A document whose first server is a path is refused unless the base URL ends with it | D-245 |
