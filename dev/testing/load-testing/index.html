@@ -7509,12 +7509,12 @@ that never measured anything:</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Not by design: an unexpected exception, such as one your scenario code raises, ends the command with its traceback and Python's status 1</td>
+<td>Never: <code>run</code> has no threshold to cross</td>
 <td>A <code>--fail-on</code> metric is worse by more than its share, or has a value in the base run and none in the head</td>
 </tr>
 <tr>
 <td>2</td>
-<td>The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid</td>
+<td>The plan cannot be loaded or is refused; an operation does not resolve; the OpenAPI document or a soak's metrics route cannot be read; a credential is missing; a sign-in fails; a sample fails or comes back empty; a refresh fails after the token expired; an option is invalid; the run file cannot be written; your plan's code (its module, factory or a scenario) raises or exits, which prints its traceback</td>
 <td>A file cannot be read as a run, with or without <code>--fail-on</code>; the <code>--fail-on</code> spec is invalid; <code>--fail-on</code> finds no whole step in both runs, as with two realtime runs; an option is invalid</td>
 </tr>
 </tbody>
