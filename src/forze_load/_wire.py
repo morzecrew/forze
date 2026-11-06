@@ -125,7 +125,8 @@ async def sse_lines(
         after_cr = chunk.endswith(b"\r")
         *lines, buffer = _NEWLINE.split(buffer + chunk)
 
-        if len(buffer) > _MAX_FRAME:
+        # A line completed inside this chunk counts as much as the remainder still open.
+        if len(buffer) > _MAX_FRAME or any(len(line) > _MAX_FRAME for line in lines):
             raise httpx.RemoteProtocolError("An event-stream line ran past the 16 MiB limit")
 
         for line in lines:
@@ -171,7 +172,7 @@ class SseParser:
 
         match name:
             case "data":
-                self._size += len(value) + 1
+                self._size += len(value.encode()) + 1  # bytes, as the limit is on the wire
 
                 if self._size > _MAX_FRAME:
                     raise httpx.RemoteProtocolError("An event's data ran past the 16 MiB limit")
@@ -247,6 +248,7 @@ class WebSocket:
         self._message: list[bytes] = []
         self._size = 0
         self._kind = _TEXT
+        self._fragmented = False
 
     async def ping(self) -> None:
         """Send a ping: its pong, or a close, tells whether the server kept the socket."""
@@ -279,7 +281,12 @@ class WebSocket:
 
             match opcode:
                 case 0x0 | 0x1 | 0x2:  # a message, or a fragment of one
+                    # A continuation needs a message to continue; a new one, none open (§5.4).
+                    if (opcode == 0x0) != self._fragmented:
+                        raise _Violation(1002)
+
                     self._kind = opcode or self._kind
+                    self._fragmented = not fin
                     self._message.append(payload)
                     self._size += len(payload)
 
@@ -301,6 +308,9 @@ class WebSocket:
                         raise _Violation(1007) from None
 
                 case 0x8:
+                    if len(payload) == 1:  # a status is two bytes or absent (§5.5.1)
+                        raise _Violation(1002)
+
                     await self._send(_CLOSE, payload[:2])  # echoed, as §5.5.1 asks
 
                     return "close", int.from_bytes(payload[:2]) if len(payload) >= 2 else NO_STATUS

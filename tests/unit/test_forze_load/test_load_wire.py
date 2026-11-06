@@ -59,6 +59,9 @@ class TestEventStreamLines:
         with pytest.raises(httpx.RemoteProtocolError):
             await _lines(b"data: 0123456789")
 
+        with pytest.raises(httpx.RemoteProtocolError):  # a long line ending inside the chunk
+            await _lines(b"data: 0123456789\nok")
+
     async def test_one_leading_byte_order_mark_is_dropped_even_split(self) -> None:
         assert await _lines(b"\xef\xbb\xbfdata: x\n") == ["data: x"]
         assert await _lines(b"\xef", b"\xbb\xbfdata: y\n") == ["data: y"]
@@ -119,6 +122,13 @@ class TestEventStreamFrames:
 
         with pytest.raises(httpx.RemoteProtocolError):
             parser.feed("data: 5678")
+
+    def test_the_event_limit_counts_utf8_bytes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(wire, "_MAX_FRAME", 8)
+        parser = SseParser()
+
+        with pytest.raises(httpx.RemoteProtocolError):
+            parser.feed("data: ééééé")  # 5 characters, 10 bytes
 
     def test_an_id_with_a_nul_is_ignored(self) -> None:
         parser = SseParser()
@@ -270,8 +280,22 @@ class TestWebSocket:
             (_server_frame(0x9, b"p", fin=False), 1002),  # a fragmented control frame
             (_server_frame(0x1, b"\xff\xfe"), 1007),  # text that is not UTF-8
             (bytes([0x81, 127]) + (1 << 40).to_bytes(8), 1009),  # a frame past the limit
+            (_server_frame(0x0, b"x"), 1002),  # a continuation with no message to continue
+            (_server_frame(0x1, b"a", fin=False) + _server_frame(0x1, b"b"), 1002),  # a new one
+            (_server_frame(0x8, b"\x03"), 1002),  # a close status of one byte
         ],
-        ids=["masked", "rsv", "opcode", "long-ping", "split-ping", "utf8", "huge"],
+        ids=[
+            "masked",
+            "rsv",
+            "opcode",
+            "long-ping",
+            "split-ping",
+            "utf8",
+            "huge",
+            "orphan-continuation",
+            "interleaved-message",
+            "one-byte-close",
+        ],
     )
     async def test_a_violation_closes_with_its_code_and_says_so(
         self, frame: bytes, code: int
