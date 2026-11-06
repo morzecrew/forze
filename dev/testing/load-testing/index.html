@@ -2685,6 +2685,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#measure-realtime-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measure realtime delivery
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writes-and-shared-environments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6782,6 +6793,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#measure-realtime-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measure realtime delivery
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writes-and-shared-environments" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7289,6 +7311,140 @@ every worker reads as <code>instance</code> at first: only a later scrape that l
 shows it.</p>
 <p><code>compare</code> matches two soaks window by window. It prints the warm-up windows and never gates
 on them.</p>
+<h2 id="measure-realtime-delivery">Measure realtime delivery<a class="headerlink" href="#measure-realtime-delivery" title="Permanent link">&para;</a></h2>
+<p>A ramp says how fast the app answers. It does not say how long a change takes to reach the
+people watching it, or what they miss when every connection drops at once. Pass a <code>Realtime</code>
+profile instead of a ramp: the run holds <abbr title="Server-Side Encryption">SSE</abbr> or WebSocket streams open against
+<code>attach_realtime_sse_route</code> or <code>attach_realtime_ws_route</code>, sends writes at a set rate, and
+times each write's frame at every stream it should reach. Then it drops every stream at once
+and measures the resume.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_load</span><span class="w"> </span><span class="kn">import</span> <span class="n">Frame</span><span class="p">,</span> <span class="n">Realtime</span><span class="p">,</span> <span class="n">run</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">shipped</span><span class="p">(</span><span class="n">frame</span><span class="p">:</span> <span class="n">Frame</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">frame</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">)</span> <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">event</span> <span class="o">==</span> <span class="s2">"order.shipped"</span> <span class="k">else</span> <span class="kc">None</span>
+
+
+<span class="n">realtime</span> <span class="o">=</span> <span class="n">Realtime</span><span class="p">(</span>
+    <span class="n">transport</span><span class="o">=</span><span class="s2">"sse"</span><span class="p">,</span>  <span class="c1"># or "ws"</span>
+    <span class="n">path</span><span class="o">=</span><span class="s2">"/realtime/sse"</span><span class="p">,</span>
+    <span class="n">subscribers</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+    <span class="n">rate</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+    <span class="n">writers</span><span class="o">=</span><span class="p">[</span><span class="s2">"buyer"</span><span class="p">],</span>
+    <span class="n">match</span><span class="o">=</span><span class="n">shipped</span><span class="p">,</span>
+    <span class="n">key_of</span><span class="o">=</span><span class="k">lambda</span> <span class="n">response</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">"id"</span><span class="p">]</span> <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">is_success</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">audience</span><span class="o">=</span><span class="k">lambda</span> <span class="n">response</span><span class="p">:</span> <span class="p">[</span><span class="s2">"buyer"</span><span class="p">],</span>
+    <span class="n">duration_s</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run</span><span class="p">(</span><span class="n">plan</span><span class="p">,</span> <span class="n">realtime</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="s2">"realtime.jsonl"</span><span class="p">))</span>
+</code></pre></div>
+<ul>
+<li><strong>Subscribers</strong> are spread over <code>principals</code> (every principal by default) by weight, each
+  stream signed in as its principal, with its own <code>device_id</code> and the <code>topics</code> you name. The
+  app must grant the topics. A WebSocket carries the credential on its upgrade request, and
+  the route's resolver reads it there. The <code>device_id</code> keys the stream's stored cursor: the
+  <abbr title="Server-Side Encryption">SSE</abbr> route reads it itself, while the WebSocket route takes the key from the
+  <code>WsConnection.client</code> the resolver returns. <code>build_ws_connection_resolver</code> fills it from
+  <code>device_id</code>; a hand-written resolver must do the same, or a principal's subscribers share
+  one cursor, and a stream that reopens with no id replays from another's. Streams open in
+  batches of <code>batch</code>. The kit never acks, so no cursor moves and nothing is trimmed, and every
+  first open replays the principal's retained mailbox, up to 1,000 entries. The first write
+  waits until no frame has come for a quarter of a second, at most <code>timeout_s</code>, so that
+  replay is over. It also waits, <code>timeout_s</code> at most, until a stream is open.</li>
+<li><strong>Writes</strong> run for <code>duration_s</code> as open-model arrivals at <code>rate</code>: each picks one of
+  <code>writers</code> (every principal by default) by weight, then a scenario from its mix. The write
+  guard applies as it does to a ramp.</li>
+<li><strong>Matching is yours.</strong> <code>key_of(response)</code> names the key a write's event will carry, or
+  <code>None</code> when the write emits none. <code>match(frame)</code> reads the key back from a frame (<code>event</code>,
+  <code>id</code> and <code>data</code>, the payload of forze's envelope), or <code>None</code> for a frame no write caused.
+  <code>audience(response)</code> names the principals the event reaches, so a principal-addressed
+  write is expected only at that principal's streams; <code>None</code>, the default, expects it at
+  every stream. Use one key per write. An exception in any of the three stops the run.</li>
+<li><strong>Each delivery is timed twice, on one clock.</strong> The writer and every subscriber run in one
+  process, so no clock alignment is needed. <code>send_ms</code> runs from the write's send to the
+  frame: an upper bound, because it includes the write's own latency. <code>answer_ms</code> runs from
+  the write's answer: a frame can beat the answer when the live leg is faster than the HTTP
+  response. Those negative times are not clipped; they are counted beside the percentiles in
+  <code>answer_negative</code>, with their share and minimum. When every frame beats its answer, the
+  percentiles are <code>null</code>. The true commit time is not observable: no frame carries it.</li>
+<li><strong>Missing and gaps.</strong> The first frame per stream and key is timed; later ones count as
+  <code>duplicates</code>, which a durable signal can produce through the mailbox and the live leg. A key
+  a stream has not received <code>timeout_s</code> after the write's answer is a <code>gap</code> when the stream
+  was down at the write's send, and <code>missing</code> otherwise. If that stream receives the key
+  later still, within ten times <code>timeout_s</code> of that, it counts once as <code>late</code>; any other
+  frame for a closed key counts nowhere. Every count of a write, <code>late</code> and <code>replayed</code>
+  included, goes in the row of the phase that sent it.</li>
+<li><strong>The storm.</strong> With <code>storm=True</code> (the default), every stream drops at once after the steady
+  phase and reopens in one batch, each sending the last durable id it saw: <code>Last-Event-ID</code> on
+  <abbr title="Server-Side Encryption">SSE</abbr>, the <code>last_event_id</code> query parameter on a WebSocket. Writes run on for another
+  <code>duration_s</code>. A resume whose id the mailbox no longer holds falls back to the stored cursor
+  without telling the client, so a fallback shows only as gaps and duplicates. A live-only
+  <abbr title="Server-Side Encryption">SSE</abbr> route ignores <code>Last-Event-ID</code>: set <code>resume=False</code> there, and the row records
+  <code>resume: "none"</code>.</li>
+<li><strong>Draining is a reconnect, never an error.</strong> A draining replica answers a new <abbr title="Server-Side Encryption">SSE</abbr> stream
+  200 with a <code>retry:</code> and <code>X-Error-Code: realtime_draining</code>, and closes a new WebSocket with</li>
+<li>The stream retries and counts it under <code>draining</code>. An open stream that ends, closed by
+  the server or a drain step, cut by the network, or silent for <code>idle_s</code>, reopens with its
+  resume and counts under <code>ended</code>.</li>
+<li><strong>Errors are retried; a 4xx refuses.</strong> A transport failure, a 5xx (a balancer's 502 or 503
+  passes), a 101 that does not complete the WebSocket handshake, or a socket closed with
+  another code than 1008 or 1012 before it answered the kit's first ping counts under
+  <code>errors</code>, and the stream retries. Any other
+  status than 200, an answer that is not <code>text/event-stream</code>, or a WebSocket closed with 1008
+  before that ping is <code>refused</code>, and that stream stays closed. When no stream is open
+  <code>timeout_s</code> after the last batch or after the replay's quiet, every one refused, failing or
+  dropped, the run stops before its first write with <code>stopped.reason: "no_stream"</code>.</li>
+<li><strong>Retries spread out.</strong> A stream waits the server's <code>retry:</code>, or one second, doubled for
+  each failure in a row up to 30 seconds, then jittered by half either way, so the streams do
+  not return in lockstep; never less than 50 ms.</li>
+<li><strong>A silent stream is cut.</strong> <code>idle_s</code> (60 seconds by default) bounds the wait for a byte.
+  Keep it above the server's heartbeat: forze's <abbr title="Server-Side Encryption">SSE</abbr> route sends a keepalive comment every 15
+  seconds by default, and uvicorn pings a WebSocket every 20. Set <code>idle_s=None</code> for a server
+  that sends neither.</li>
+<li><strong>The WebSocket client is strict.</strong> It checks the handshake's <code>Sec-WebSocket-Accept</code>,
+  echoes the server's close, and closes on a protocol violation: 1002 for a masked frame,
+  reserved bits or a malformed control frame, 1007 for text that is not UTF-8, 1009 for a
+  message over 16 MiB.</li>
+</ul>
+<p>Each phase, <code>steady</code> and then <code>storm</code>, writes one row with <code>"kind": "phase"</code>. It carries the
+writes' numbers as a step row does (<code>calls</code>, <code>goodput_rps</code>, <code>ms</code>, <code>outcomes</code>, <code>client</code>, …)
+plus:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>streams</code></td>
+<td><code>subscribers</code>; <code>open</code> at the phase's end; <code>opened</code>, with <code>open_ms</code>; <code>refused</code>, <code>errors</code> (retried), <code>draining</code>, <code>ended</code></td>
+</tr>
+<tr>
+<td><code>streams</code> (storm)</td>
+<td><code>back</code> and <code>back_in_s</code>, the time until every stream was back (<code>null</code> while one is away); <code>resume</code>, <code>last_event_id</code> or <code>none</code>; <code>resumed</code>, the streams that sent an id</td>
+</tr>
+<tr>
+<td><code>delivery</code></td>
+<td><code>expected</code>, <code>delivered</code> and their <code>share</code>; <code>duplicates</code>, <code>missing</code>, <code>gaps</code>, <code>late</code>; <code>replayed</code>, frames a reopened stream received for writes sent before it reopened</td>
+</tr>
+<tr>
+<td><code>delivery</code> latency</td>
+<td><code>send_ms</code>, <code>answer_ms</code>, and <code>answer_negative</code> (<code>count</code>, <code>share</code>, <code>min_ms</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Each stream is read by its own task. On <abbr title="Server-Side Encryption">SSE</abbr> a frame's JSON is decoded only when <code>match</code>
+reads <code>data</code>; a WebSocket frame is decoded on arrival, since its event name is inside. A
+stream that reads slower than its frames arrive fills its 256-slot queue on the server, and
+the live leg drops what does not fit. So a <code>share</code> below 1 is a server finding
+when <code>client.saturated</code> is false, and the client's own limit when it is true.</p>
+<p>Realtime runs from Python only: <code>forze load run</code> has no realtime model, since <code>match</code> and
+<code>key_of</code> are code. <code>forze load compare</code> reads step and window rows, and skips phase rows. The
+meta line records the profile's numbers, not its path, topics or callables.</p>
 <h2 id="writes-and-shared-environments">Writes and shared environments<a class="headerlink" href="#writes-and-shared-environments" title="Permanent link">&para;</a></h2>
 <p>Writes are off by default, and turning them on is not enough on its own. A run with a writing
 scenario needs <code>allow_writes=True</code> <strong>and</strong> a target host that is a loopback address,
@@ -7319,7 +7475,6 @@ stack, never against production.</p>
   records each principal's weight and mix.</li>
 <li><strong>One timeout for every request.</strong> Operation references use the plan's <code>timeout_s</code> too;
   a route's <code>x-deadline-seconds</code> is not read.</li>
-<li><strong>Not yet covered:</strong> realtime subscribers, a later phase of RFC 0084.</li>
 </ul>
 
 
