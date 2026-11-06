@@ -157,6 +157,19 @@ def test_the_path_loses_its_query_string_and_user_info() -> None:
     assert _map(error).details == {"path": "https://host/b/k.parquet", "status": 404}
 
 
+def test_a_message_that_names_no_path_on_its_first_line_has_none() -> None:
+    # DuckDB 1.5's refusal of an ``s3://`` URL with a query: the quoted names come after.
+    error = duckdb.IOException(
+        "IO Error: Invalid query parameters found. Supported parameters are:\n"
+        "'s3_region', 's3_access_key_id', 's3_secret_access_key', 's3_session_token'"
+    )
+
+    mapped = _map(error)
+
+    _assert_mapped(mapped, ExceptionKind.INFRASTRUCTURE, SOURCE_UNAVAILABLE_CODE)
+    assert mapped.details == {"path": None}
+
+
 def test_a_path_that_does_not_parse_is_left_out() -> None:
     error = duckdb.IOException(
         'IO Error: No files found that match the pattern "//[bad/missing.parquet"'
