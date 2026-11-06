@@ -4,7 +4,9 @@
   union route, the age gauge and `worker_metrics_reader()`. §10 Q1 to Q7 were settled by the
   maintainer on 2026-11-05, each the lean's way (rows 4 to 10), and the rows execution proposed
   in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 19 were accepted the same day (rows 19 to 22).
-  **P2 (the collector recipe) remains, and P3 (a Redis/Valkey store) is demand-gated.**
+  **P2 shipped 2026-11-05** (#860): the minimal collector recipe and its config asset; the row
+  Unit 22 proposed was accepted on 2026-11-06 (row 23). **P3 (a Redis/Valkey store) is
+  demand-gated.**
 - **Scope:** A supported way for one Prometheus scrape to cover every worker of a pre-fork
   server (`uvicorn --workers N`, gunicorn's uvicorn worker) without an OTLP collector. The
   recommendation:
@@ -595,10 +597,12 @@ default.
 | 20 | `ASSUMED` | The final render's budget is one `interval`, accepted by the maintainer over a smaller fixed bound that would skip a wedged final render before the runtime's step timeout. A final render past the budget is skipped and writes nothing, so row 6's final snapshot then holds the last tick's counters, and increments since that tick are lost. (D-212) |
 | 21 | `ASSUMED` | `MetricsSnapshots.union()` is public: blocking, returning `(status, body)` exactly as the route answers. (D-213) |
 | 22 | `ASSUMED` | One descriptor per process, opened and checked by whichever of the writer and the route comes first. A route that cannot open it answers `503`. (D-217) |
+| 23 | `ASSUMED` | The collector recipe turns metric name suffixes off, and its documented scrape job sets `honor_labels: true`, so its names and `job`/`instance` labels are the Alloy path's, and the shipped dashboards and alert rules apply to it. (D-251) |
 
-Rows 19 to 22 were added by execution and accepted by the maintainer on 2026-11-05; each cites
-the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
-as designed. Row 20 bounds the final snapshot of row 6, which stays `LOCKED` as written.
+Rows 19 to 22 were added by execution and accepted by the maintainer on 2026-11-05, and row 23
+on 2026-11-06; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and
+the sections above are left as designed. Row 20 bounds the final snapshot of row 6, which
+stays `LOCKED` as written.
 
 ## 12. Phasing
 
