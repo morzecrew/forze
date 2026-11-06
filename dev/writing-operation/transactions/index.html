@@ -1224,6 +1224,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dry-runs-roll-back-on-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dry runs: roll back on purpose
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#read-only-transactions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6676,6 +6687,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dry-runs-roll-back-on-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dry runs: roll back on purpose
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#read-only-transactions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6948,6 +6970,52 @@ supports it, so an inner failure can roll back without losing the outer work:</p
 <p>A nested scope whose kind <strong>doesn't</strong> match the active transaction is a
 programming error and is rejected immediately — you can't open a cache
 transaction inside a database one and expect them to commit together.</p>
+<h2 id="dry-runs-roll-back-on-purpose">Dry runs: roll back on purpose<a class="headerlink" href="#dry-runs-roll-back-on-purpose" title="Permanent link">&para;</a></h2>
+<p>Sometimes you want the work done and then thrown away. A dry run of an import goes
+through every write, guard and constraint against the live database, so it reports
+the problems only the database finds, such as a duplicate key or a missing
+reference, and keeps nothing. Raising through the scope would roll back too, but
+every backend logs that as an error. Mark the scope instead:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span> <span class="k">as</span> <span class="n">tx</span><span class="p">:</span>
+    <span class="n">report</span> <span class="o">=</span> <span class="k">await</span> <span class="n">import_rows</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">rows</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">dry_run</span><span class="p">:</span>
+        <span class="n">tx</span><span class="o">.</span><span class="n">rollback_only</span><span class="p">()</span>
+<span class="c1"># rolled back if dry_run, and report is still here</span>
+</code></pre></div>
+<p><code>rollback_only()</code> decides how the scope ends, not when: the body runs to the end,
+then the scope rolls back instead of committing. Call it first thing to declare a
+dry run up front.</p>
+<ul>
+<li><strong>At the root</strong>, the whole transaction rolls back. Work deferred with
+  <a href="#after-the-commit"><code>run_or_defer</code></a> never runs, as after any rollback, and
+  nothing logs above <code>DEBUG</code>.</li>
+<li><strong>In a nested scope</strong>, only its savepoint rolls back, together with the work it
+  deferred, and the outer scope carries on. Mongo, Firestore, Neo4j and the mock's
+  default <code>journal</code> mode have no savepoints, because a nested scope shares the
+  root's transaction. There <code>rollback_only()</code> raises <code>exc.precondition</code>
+  (<code>code="tx_nested_rollback_unsupported"</code>) at the call instead of keeping writes
+  you asked to discard. The mock's <code>transactions="strict"</code> mode has savepoints.</li>
+<li><strong>A route on another client</strong> opens a transaction of its own, which commits when its
+  scope exits, and the root cannot undo that. Under a root already marked, such a scope
+  rolls back too. Once one has exited, <code>rollback_only()</code> on the root raises
+  <code>exc.precondition</code> (<code>code="tx_rollback_after_independent_commit"</code>), and a deadline
+  after that commit is reported <code>commit_ambiguous</code>, never retryable. So a dry run that
+  spans clients calls <code>rollback_only()</code> before it opens their scopes. Routes on the same
+  client, such as <code>tx={"orders", "billing"}</code> in one deps module, share the root's
+  transaction and need no care.</li>
+<li><strong>An exception after the mark</strong> propagates as usual: the scope rolls back, and the
+  error is logged and raised like any other. The mark never swallows an error.</li>
+<li><strong>After the scope exits</strong>, <code>rollback_only()</code> raises <code>exc.precondition</code>
+  (<code>code="tx_scope_ended"</code>), since the outcome is already decided.</li>
+</ul>
+<p>The scope rolls back by throwing <code>RollbackSignal</code> into the transaction manager and
+catching it again on the way out. It is a <code>BaseException</code>, like a cancellation, so a
+custom manager that rolls back on a cancel handles it with no change. A manager
+reports savepoints through <code>TxCapabilities(savepoints=True)</code>, and whether a scope opened
+now joins a transaction already open on its client through
+<code>TransactionallyEnlistable.is_transactionally_enlisted()</code>. A manager that cannot tell
+counts as another client.</p>
 <h2 id="read-only-transactions">Read-only transactions<a class="headerlink" href="#read-only-transactions" title="Permanent link">&para;</a></h2>
 <p><code>QUERY</code> operations open their scope <code>read_only=True</code>, so the backend begins a
 read-only transaction where it supports one (Postgres <code>BEGIN … READ ONLY</code>) and
@@ -7130,7 +7198,8 @@ needs. It rolls back what a database would — documents, outbox rows, inbox mar
 document-backed identity stores — and deliberately <strong>not</strong> the non-transactional
 backends (queues, streams, storage, caches, counters, locks, search/analytics):
 rolling those back would hide the cross-system gaps the <a href="#after-the-commit">outbox</a>
-exists to close. Nested scopes act as savepoints, a <code>QUERY</code> root enforces <code>read_only</code>
+exists to close. Nested scopes share the root's transaction, with no savepoint of
+their own (see <a href="#dry-runs-roll-back-on-purpose">Dry runs</a>). A <code>QUERY</code> root enforces <code>read_only</code>
 (a participating write raises <code>code="read_only_tx"</code>), and the manager honors the
 declared <a href="#isolation">isolation</a> level through its MVCC overlay.</p>
 <p>Two other modes are opt-in when wiring <code>MockDepsModule</code>: <code>transactions="strict"</code>
