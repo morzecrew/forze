@@ -1,5 +1,8 @@
 """Tests for HttpServiceAdapter."""
 
+from datetime import date
+from enum import StrEnum
+
 import httpx
 import pytest
 from pydantic import BaseModel
@@ -234,9 +237,7 @@ async def test_invoke_propagates_deadline_budget_header() -> None:
     # Opt-out via config.
     adapter_off = HttpServiceAdapter(
         client=client,
-        config=HttpServiceConfig(
-            base_url="https://api.example.com", propagate_deadline=False
-        ),
+        config=HttpServiceConfig(base_url="https://api.example.com", propagate_deadline=False),
         spec=spec,
     )
 
@@ -302,3 +303,71 @@ async def test_an_upstream_404_reaches_the_client_without_the_upstream_context(
     assert raised.value.details is not None
     assert raised.value.details["url"] == "https://billing.internal.example/items"
     assert isinstance(raised.value.__cause__, httpx.HTTPStatusError)
+
+
+# ....................... #
+
+
+class Kind(StrEnum):
+    LINEAR = "linear"
+
+
+class PageArgs(BaseModel):
+    category: Kind = Kind.LINEAR
+    since: date = date(2026, 1, 2)
+    tags: list[str] = ["a", "b"]
+    archived: bool = False
+    cursor: str | None = None
+    after: str | None = None
+
+
+class PagingClient(BaseHttpIntegration):
+    list_items = async_http_op(
+        request=PageArgs,
+        response=ListResponse,
+        method="GET",
+        path="/items",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call", ["invoke", "stream"])
+async def test_a_get_sends_declared_defaults_and_drops_none(call: str) -> None:
+    spec = build_http_service_spec(PagingClient, name="paging")
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.extend(request.url.params.multi_items())
+        return httpx.Response(200, json={"items": []})
+
+    client = HttpClient()
+    await client.initialize(
+        base_url="https://api.example.com", transport=httpx.MockTransport(handler)
+    )
+    adapter = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(base_url="https://api.example.com"),
+        spec=spec,
+    )
+    args = PageArgs(cursor="x", after=None)
+
+    try:
+        if call == "invoke":
+            await adapter.invoke("list_items", args)
+        else:
+            async for _ in adapter.stream("list_items", args):
+                pass
+
+    finally:
+        await client.aclose()
+
+    # A list repeats its key and a bool goes out lowercase, as for a value the caller set;
+    # the explicit `after=None` is not sent as an empty `after=`.
+    assert sorted(seen) == [
+        ("archived", "false"),
+        ("category", "linear"),
+        ("cursor", "x"),
+        ("since", "2026-01-02"),
+        ("tags", "a"),
+        ("tags", "b"),
+    ]

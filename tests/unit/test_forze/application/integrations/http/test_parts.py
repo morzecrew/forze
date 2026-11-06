@@ -1,7 +1,11 @@
 """Tests for HTTP request part splitting."""
 
+from datetime import date
+from enum import StrEnum
+from typing import Any
+
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from forze.application.contracts.http import HttpOperationSpec
 from forze.application.integrations.http import form_fields, request_parts
@@ -97,6 +101,161 @@ def test_missing_args_for_path_raises() -> None:
 
     with pytest.raises(CoreException):
         request_parts(op, None)
+
+
+# ....................... #
+
+
+class Kind(StrEnum):
+    LINEAR = "linear"
+
+
+class PageArgs(BaseModel):
+    category: Kind = Kind.LINEAR
+    since: date = date(2026, 1, 2)
+    tags: list[str] = ["a", "b"]
+    archived: bool = False
+    limit: int = 1000
+    cursor: str | None = None
+
+
+class PatchArgs(BaseModel):
+    order_id: str = "current"
+    dry_run: bool = False
+    note: str | None = None
+    qty: int = 1
+
+
+def _op(
+    method: str,
+    args_type: type[BaseModel],
+    *,
+    path: str = "/v1/items",
+    query_from: frozenset[str] = frozenset(),
+) -> HttpOperationSpec[Any, Any]:
+    return HttpOperationSpec(
+        name="op",
+        method=method,  # type: ignore[arg-type]
+        path=path,
+        args_type=args_type,
+        return_type=OrderPath,
+        query_from=query_from,
+    )
+
+
+class _Opaque:
+    """A value the JSON encoder cannot serialize."""
+
+
+class _BodyWithOpaqueDefault(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    extra: _Opaque = Field(default_factory=_Opaque)
+
+
+def test_an_unset_body_default_is_never_serialized() -> None:
+    # Only path and query fields are dumped with their defaults; a body keeps exclude_unset.
+    _, query, body = request_parts(
+        _op("POST", _BodyWithOpaqueDefault), _BodyWithOpaqueDefault(name="a")
+    )
+
+    assert body == {"name": "a"}
+    assert query is None
+
+
+class TestQueryDefaults:
+    """A query field's declared default is part of the request; its ``None`` is not."""
+
+    _DEFAULTS = {
+        "category": "linear",
+        "since": "2026-01-02",
+        "tags": ["a", "b"],
+        "archived": False,
+        "limit": 1000,
+    }
+
+    def test_a_get_sends_declared_defaults(self) -> None:
+        _, query, body = request_parts(_op("GET", PageArgs), PageArgs(cursor="x"))
+
+        assert query == {**self._DEFAULTS, "cursor": "x"}
+        assert body is None
+
+    def test_a_get_with_query_from_sends_its_defaults(self) -> None:
+        op = _op("GET", PageArgs, query_from=frozenset({"category", "limit", "cursor"}))
+
+        _, query, _ = request_parts(op, PageArgs(cursor="x"))
+
+        assert query == {"category": "linear", "limit": 1000, "cursor": "x"}
+
+    def test_an_explicit_none_is_not_sent(self) -> None:
+        # Sent as `cursor=` before, which a server can read as "the empty cursor".
+        _, query, _ = request_parts(_op("GET", PageArgs), PageArgs(cursor=None))
+        _, from_query, _ = request_parts(
+            _op("GET", PageArgs, query_from=frozenset({"cursor", "limit"})),
+            PageArgs(cursor=None),
+        )
+
+        assert query == self._DEFAULTS
+        assert from_query == {"limit": 1000}
+
+    def test_query_from_on_a_post_sends_defaults_and_leaves_the_body_alone(self) -> None:
+        op = _op("POST", PatchArgs, query_from=frozenset({"dry_run"}))
+
+        _, query, body = request_parts(op, PatchArgs(note=None))
+
+        assert query == {"dry_run": False}
+        # The body is still what the caller set, an explicit null included: a PATCH reads
+        # an absent field as "leave it" and a null as "clear it".
+        assert body == {"note": None}
+
+    def test_an_explicit_none_in_query_from_on_a_post_is_not_sent(self) -> None:
+        op = _op("POST", PatchArgs, query_from=frozenset({"note"}))
+
+        _, query, body = request_parts(op, PatchArgs(note=None, qty=2))
+
+        assert query is None
+        assert body == {"qty": 2}
+
+    def test_a_body_without_query_from_is_unchanged(self) -> None:
+        _, query, body = request_parts(_op("PATCH", PatchArgs), PatchArgs(qty=3))
+
+        assert query is None
+        assert body == {"qty": 3}
+
+    def test_a_get_still_refuses_a_set_field_outside_query_from(self) -> None:
+        op = _op("GET", PageArgs, query_from=frozenset({"cursor"}))
+
+        # Unset, `limit` is neither a query parameter nor a body field: nothing to refuse.
+        assert request_parts(op, PageArgs())[1] is None
+
+        with pytest.raises(CoreException) as raised:
+            request_parts(op, PageArgs(limit=5))
+
+        assert "limit" in str(raised.value)
+
+
+class TestPathDefaults:
+    def test_a_default_fills_its_placeholder(self) -> None:
+        op = _op("PATCH", PatchArgs, path="/v1/orders/{order_id}")
+
+        path, _, body = request_parts(op, PatchArgs(qty=2))
+
+        assert path == "/v1/orders/current"
+        assert body == {"qty": 2}
+
+    def test_a_none_placeholder_is_refused(self) -> None:
+        class MaybePath(BaseModel):
+            order_id: str | None = None
+
+        op = _op("GET", MaybePath, path="/v1/orders/{order_id}")
+
+        # Unset or passed, `None` would otherwise go out as the literal path `/None`.
+        for args in (MaybePath(), MaybePath(order_id=None)):
+            with pytest.raises(CoreException) as raised:
+                request_parts(op, args)
+
+            assert "order_id" in str(raised.value)
 
 
 # ....................... #

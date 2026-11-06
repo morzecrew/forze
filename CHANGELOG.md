@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SessionRevocation.check` and `ApiKeyRevocation.fresh` return a `FreshEpoch` when the credential is on its principal's current epoch, `None` otherwise, not the epoch and a bool** (**Breaking**). A custom verifier passes it as `fresh=` to `remember_admitted_session` or `remember_admitted_api_key`, which refuse a bool.
 
+- **Outbound HTTP query parameters go out with their declared defaults** (**Breaking**): every `GET` field and `query_from` field the caller left unset; a `None` one is not sent, not even as `key=`. A path placeholder takes its default and refuses `None`. A body still carries only the fields set.
+
 - **`instrument_realtime_mailbox()` now exports every mailbox built in the process** (**Breaking**), per-connect factories, gateway and writer included, so its counters no longer read zero. It takes only `meter` and labels each series by spec (`forze.document`). `DocumentRealtimeMailbox.on_replay` can no longer be set.
 
 ### Removed
@@ -58,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Storage keys and prefixes ending in a line break are refused**, as the key charset already intended.
+- **A DuckDB analytics query over a missing object or empty glob raises `not_found` (`duckdb_source_not_found`), not the driver's `HTTPException`,** on every read path. Other store failures are `infrastructure` (`429`: `throttled`), a missing bucket `configuration`, a truncated Parquet file `internal`.
 
 ## [0.22.0] - 2026-11-04
 

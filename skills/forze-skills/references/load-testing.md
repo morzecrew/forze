@@ -197,10 +197,10 @@ exit codes:
 
 - **0**: `run` finished, a stop included; `compare` crossed no threshold.
 - **1**: `compare` found a metric worse than its threshold.
-- **2**: a refusal. The plan, an operation, the OpenAPI document, a soak's metrics route, a
-  credential, a sign-in or a sample failed; a run file cannot be read; the `--fail-on` spec is
-  invalid; `--fail-on` matched no whole step in both runs, as with two realtime runs; or the
-  `load` extra is missing.
+- **2**: no verdict. The plan, an operation, the OpenAPI document, a soak's metrics route, a
+  credential, a sign-in or a sample failed; a scenario raised; a run file cannot be read; the
+  `--fail-on` spec is invalid; `--fail-on` matched no whole step in both runs, as with two
+  realtime runs; or the `load` extra is missing.
 
 When the two runs' meta lines differ, as in their `openapi_sha256`, host, cores or mixes,
 `compare` warns and still compares.

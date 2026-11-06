@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
+from forze.base.exceptions import exc
 from forze_cli.app import app
+from forze_cli.load import _refusal
 from forze_load.report import SCHEMA
 
 pytestmark = pytest.mark.unit
@@ -145,6 +148,65 @@ class TestRun:
 
         assert result.exit_code == 0, result.output
         assert "stopped:" in result.output
+
+    def test_a_plan_whose_scenario_raises_exits_2_not_1(self, tmp_path: Path) -> None:
+        # 1 means a --fail-on gate was crossed; a crashed plan is no verdict at all.
+        result = runner.invoke(
+            app,
+            [
+                "load",
+                "run",
+                f"{_PLANS}:crashing_plan",
+                "--steps",
+                "1",
+                "--step-s",
+                "0.2",
+                "--warm-s",
+                "0",
+                "--out",
+                str(tmp_path / "c.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 2, result.output
+        assert "RuntimeError" in result.output
+
+    def _run(self, ref: str, out: Path, *extra: str) -> Any:
+        args = ["load", "run", f"{_PLANS}:{ref}", "--steps", "1", "--step-s", "0.2"]
+
+        return runner.invoke(app, [*args, "--warm-s", "0", "--out", str(out), *extra])
+
+    def test_a_scenario_that_exits_exits_2_not_1(self, tmp_path: Path) -> None:
+        result = self._run("exiting_plan", tmp_path / "e.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "exited" in result.output
+
+    def test_refusals_raised_inside_a_task_group_are_refusals(self, tmp_path: Path) -> None:
+        result = self._run("grouped_refusal_plan", tmp_path / "g.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "refused: refused inside" in result.output
+        assert "the plan raised" not in result.output
+
+    def test_an_unwritable_run_file_is_not_a_plan_failure(self, tmp_path: Path) -> None:
+        result = self._run("plan", tmp_path / "missing-dir" / "p.jsonl")
+
+        assert result.exit_code == 2, result.output
+        assert "cannot write" in result.output
+        assert "the plan raised" not in result.output
+
+    def test_a_factory_that_raises_exits_2(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:crashing_factory"])
+
+        assert result.exit_code == 2, result.output
+        assert "factory raised RuntimeError" in result.output
+
+    def test_an_unknown_model_is_a_usage_error_not_a_plan_failure(self) -> None:
+        result = runner.invoke(app, ["load", "run", f"{_PLANS}:plan", "--model", "sideways"])
+
+        assert result.exit_code == 2
+        assert "the plan raised" not in result.output
 
     def test_a_read_sweep_lists_the_routes_it_skipped(self, tmp_path: Path) -> None:
         out = tmp_path / "s.jsonl"
@@ -443,3 +505,19 @@ def test_the_start_warning_matches_the_attribution(
     err = capsys.readouterr().err
 
     assert (warning in err) if warning else err == ""
+
+
+class TestRefusalInGroups:
+    def test_a_nested_group_of_refusals_is_a_refusal(self) -> None:
+        first = exc.configuration("first")
+        group = ExceptionGroup("outer", [ExceptionGroup("inner", [first]), exc.configuration("b")])
+
+        assert _refusal(group) is first
+
+    def test_a_group_mixing_a_bug_with_refusals_is_not_a_refusal(self) -> None:
+        group = ExceptionGroup("calls", [exc.configuration("a"), RuntimeError("bug")])
+
+        assert _refusal(group) is None
+
+    def test_a_plain_exception_is_not_a_refusal(self) -> None:
+        assert _refusal(RuntimeError("bug")) is None
