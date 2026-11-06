@@ -218,8 +218,7 @@ wiring notes below.
   (`tenant_aware_required`).
 - Realtime loops are supervised: they restart on crash with jittered backoff and
   register as drainable. A custom signal source must accept a stop signal.
-- The SSE stream sends `Cache-Control: no-store, no-transform` and `X-Accel-Buffering: no`.
-  Behind a proxy that honours neither, exclude the route from buffering and compression.
+- A proxy that ignores SSE's `X-Accel-Buffering: no` and `no-transform` must not buffer it.
 - A realtime stream route that declares an encryption tier is **refused at start** —
   seal the mailbox at rest instead (sealing the replay index is refused).
 - Generate clients from the AsyncAPI document (`asyncapi_document(catalog, router)`
