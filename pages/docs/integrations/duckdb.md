@@ -115,6 +115,24 @@ it ([analytics](../reference/contracts/analytics.md)). The bound starts before t
 waits for a free executor slot, so on a saturated client a query fails with
 `duckdb_query_timeout` "waiting for a slot" rather than queueing without end.
 
+A query whose file or object is missing, unreachable or not Parquet raises a
+`CoreException` on every read path, `run_chunked` included, with the driver's error as
+`__cause__`. Its details name the path without the query string and are not shown to
+clients. A retry policy can take another attempt on `infrastructure` and `throttled`;
+`not_found` is the caller's miss.
+
+| The read | Kind | Code |
+|----------|------|------|
+| A `404`, or a path or glob that matches no file | `not_found` | `duckdb_source_not_found` |
+| A `404` whose body is `NoSuchBucket` (a `HEAD` on one object has no body, so it stays `not_found`) | `configuration` | `duckdb_source_bucket_not_found` |
+| A `401` or `403` | `infrastructure` | `duckdb_source_access_denied` |
+| A `429` | `throttled` | `duckdb_source_throttled` |
+| Any other failure: a `5xx`, an `http_timeout`, a refused connection, local IO | `infrastructure` | `duckdb_source_unavailable` |
+| An empty or truncated Parquet file, or one with a bad footer (a re-read returns the same bytes) | `internal` | `duckdb_source_corrupt` |
+
+Other driver errors, such as a `BinderException` from the SQL, pass through unchanged.
+Dynamic reads keep their own taxonomy, below.
+
 For a runnable, Docker-free walkthrough, see the
 [analytics recipe](../recipes/analytics-over-a-data-lake.md).
 
