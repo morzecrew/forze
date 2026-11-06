@@ -1,7 +1,7 @@
 ---
 title: Load testing
 icon: lucide/gauge
-summary: Ramp a running app as several principals, find where its throughput stops rising, and compare two runs
+summary: Ramp a running app as several principals, find where its throughput stops rising, soak it for drift, and compare two runs
 ---
 
 A generic load tool knows nothing about your app. It signs in as one admin, sends the same
@@ -243,8 +243,8 @@ forze load compare base.jsonl head.jsonl
 forze load compare base.jsonl head.jsonl --fail-on p95:15%,goodput:10%
 ```
 
-Steps are matched by worker count or rate, and goodput, p50, p95 and p99 are printed side by
-side. Without `--fail-on` the command only reports: load runs vary far more than
+Steps are matched by worker count or rate, a soak's windows by their number, and goodput,
+p50, p95 and p99 are printed side by side. Without `--fail-on` the command only reports: load runs vary far more than
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
 exits 1 when a named metric is worse by more than its share, or has a value in the base run
 and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
@@ -255,6 +255,88 @@ When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the `forze_load` version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:
 another host, runtime or mix is another measurement, not a regression.
+
+## Soak a steady load
+
+A ramp finds where the server fills up. A soak asks whether it stays healthy at a load it can
+carry, for hours: the leaks only time shows are pool connections never returned,
+subscribers that never leave, and memory that only grows. It holds one load level, writes a
+row per window, and flags what drifted upward:
+
+```bash
+forze load run myapp.load:plan --steps 32 --soak-s 14400 --window-s 60 --out soak.jsonl
+```
+
+```python
+import asyncio
+
+from forze_load import Soak, run
+
+result = asyncio.run(run(plan, Soak(duration_s=4 * 3600, workers=32), out="soak.jsonl"))
+```
+
+`Soak` takes `workers` for a closed load or `rate` for an open one (`--model open` on the
+CLI), never both. Each `window_s` (default 60 s) writes a `window` row with a step row's
+fields, plus:
+
+| Field | Meaning |
+| --- | --- |
+| `window` | The window's number, from 1 |
+| `warm` | `true` for the first `warm_windows` (default 2, at least 2), which the fit leaves out |
+| `t_s` | Seconds since the load started, at the window's end |
+| `server` | The scrape at the window's end: `instances` (each `service_instance_id` it named) and `series`, or `error` when it failed |
+
+Writes during a soak grow the data, so the workload changes as it runs. Each row records
+goodput beside latency, so a slowdown can be told apart from more data.
+
+### What the soak reads from the server
+
+`LoadPlan.metrics`, `/metrics` by default, is the path on the target the soak scrapes,
+without a credential: once before anyone signs in, then at the end of every window. A route
+that cannot be read before load stops the run, and the command exits 2; set
+`metrics=None` to soak on client numbers only. A scrape that fails later is recorded as the
+row's `server.error`, and the soak goes on.
+
+The soak keeps the `forze_*` series and the process gauges from `instrument_process`
+(`process_cpu_time_seconds_total`, `process_memory_usage_bytes`). A counter is turned into a
+per-second rate between scrapes, so `series` shows rates for counters and values for
+gauges. Histograms are not fitted. The app exports only what it instruments, so serve the
+route with [`attach_metrics_route`](../reference/fastapi-routes.md) and call the
+`instrument_*` functions for what you want watched: `instrument_process` for memory and CPU,
+`instrument_connection_pools` and `instrument_http_clients` for connections,
+`instrument_resilience` for bulkheads, `instrument_realtime_hub` for SSE and WebSocket
+subscribers, `instrument_document_l1` for caches.
+
+### Read the drift
+
+After the warm-up, every series gets a least-squares slope over time and the mean of its
+first and last quarter of windows. A series is **flagged** when the slope times the run's
+duration passes 10 % of its first-quarter mean and the last quarter is above the first. The
+threshold does not depend on `window_s`. A gauge that reaches its capacity is not flagged,
+because a cache or a pool filling up is not a leak: a cache's size against its capacity, a
+connection pool's `in_use` and `idle` against its `max`, a bulkhead's `in_use` against its
+`limit`, the tenant pool cache's size against its capacity. The client's p50, p95 and p99
+are fitted too.
+
+The summary's `drift` lists every `flagged` series and gives each one a `status`:
+`flagged`, `steady`, `at_capacity`, `too_few` (fewer than four windows after the warm-up),
+or one of the two below. Flags never fail the run: it exits 0, and reading them is yours.
+
+**Drift is computed only from scrapes of one process.** A scrape names its process through
+the `service_instance_id` label that `bootstrap_telemetry`'s resource puts on
+`target_info`:
+
+- A single-process app names the same instance in every scrape, and its series are fitted.
+- A pre-fork server (`uvicorn --workers 4`) answers each scrape from whichever worker took
+  it. Its series are marked `interleaved` and not fitted: a fit across processes is a
+  confident false finding. A process that restarted mid-run is marked the same way.
+- With [one scrape for every worker](../running-in-prod/grafana-stack.md#several-workers-one-scrape)
+  (`attach_metrics_route(..., snapshots=...)`), every series carries its own
+  `service_instance_id`, and each worker's series is fitted on its own.
+- Scrapes that name no instance are marked `unattributed`.
+
+`compare` matches two soaks window by window. It prints the warm-up windows and never gates
+on them.
 
 ## Writes and shared environments
 
@@ -289,5 +371,4 @@ stack, never against production.
   records each principal's weight and mix.
 - **One timeout for every request.** Operation references use the plan's `timeout_s` too;
   a route's `x-deadline-seconds` is not read.
-- **Not yet covered:** realtime subscribers, and soak runs that watch server gauges for
-  drift. They are later phases of RFC 0084.
+- **Not yet covered:** realtime subscribers, a later phase of RFC 0084.

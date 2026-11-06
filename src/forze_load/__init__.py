@@ -22,6 +22,10 @@ sample("products.list")})``, or sweep every read route, ``Scenario.reads("produc
 the run resolves both from the app's OpenAPI document and stops before load when an
 operation is missing or its ``x-forze-kind`` contradicts the declared ``writes``.
 
+A ``Soak`` holds one load level for hours, writes a row per window, and flags upward drift
+in client latency and in the server's ``forze_*`` and process series scraped from
+``/metrics``.
+
 Writes are off by default: a scenario declared ``writes=True`` is refused unless the plan
 allows writes and its host is loopback or allowlisted. Credentials come from environment
 variables only. Needs the ``load`` extra.
@@ -38,7 +42,7 @@ from .auth import (
     bearer,
     password_login,
 )
-from .engine import ClosedRamp, OpenRamp, Profile, RunResult, inflight_cap, run
+from .engine import ClosedRamp, OpenRamp, Profile, RunResult, Soak, inflight_cap, run
 from .plan import (
     WRITE_HOSTS_ENV,
     Call,
@@ -80,6 +84,7 @@ __all__ = [
     "Sample",
     "Scenario",
     "SendFn",
+    "Soak",
     "WRITE_HOSTS_ENV",
     "api_key",
     "bearer",

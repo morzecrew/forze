@@ -77,17 +77,24 @@ def run_command(
     stop_error_rate: float = typer.Option(
         0.05, help="Share of 5xx (504 included) and transport failures that stops the ramp."
     ),
+    soak_s: float | None = typer.Option(
+        None,
+        help="Soak instead of ramp: hold the one load level --steps names for this many "
+        "seconds, and flag drift.",
+    ),
+    window_s: float = typer.Option(60.0, help="Soak: seconds per window, one row each."),
     out: Path = typer.Option(Path("load.jsonl"), help="JSON lines file to write."),
 ) -> None:
-    """Run a ramp against the plan's target and write one JSON line per step.
+    """Run a ramp or a soak against the plan's target and write one JSON line per step.
 
     Exits 0 when the run finishes, including a ramp that stopped on its stop rule: a stop is
-    a result, recorded in the summary. Gate on it with ``forze load compare --fail-on``.
-    Exits 2 when the plan is refused, an operation it names does not resolve, a sign-in
-    fails, or a sample comes back empty.
+    a result, recorded in the summary. Gate on it with ``forze load compare --fail-on``. A
+    soak's drift flags never fail it. Exits 2 when the plan is refused, an operation it
+    names does not resolve, a soak's metrics route cannot be read, a sign-in fails, or a
+    sample comes back empty.
     """
 
-    from forze_load import ClosedRamp, LoadPlan, OpenRamp, run, summarize
+    from forze_load import ClosedRamp, LoadPlan, OpenRamp, Soak, run, summarize
 
     try:
         target = load_object(ref)
@@ -117,9 +124,25 @@ def run_command(
     if model == "closed" and not all(value.is_integer() for value in values):
         raise typer.BadParameter(f"closed-model steps are whole worker counts, got {steps!r}")
 
+    if soak_s is not None and len(values) != 1:
+        raise typer.BadParameter(f"a soak holds one load level: --steps takes one, got {steps!r}")
+
     try:
-        if model == "closed":
-            profile: ClosedRamp | OpenRamp = ClosedRamp(
+        if model not in ("closed", "open"):
+            raise typer.BadParameter("model must be 'closed' or 'open'")
+
+        if soak_s is not None:
+            profile: ClosedRamp | OpenRamp | Soak = Soak(
+                duration_s=soak_s,
+                window_s=window_s,
+                workers=int(values[0]) if model == "closed" else None,
+                rate=values[0] if model == "open" else None,
+                think_s=think_s,
+                stop_error_rate=stop_error_rate,
+            )
+
+        elif model == "closed":
+            profile = ClosedRamp(
                 steps=[int(value) for value in values],
                 step_s=step_s,
                 warm_s=warm_s,
@@ -127,13 +150,10 @@ def run_command(
                 stop_error_rate=stop_error_rate,
             )
 
-        elif model == "open":
+        else:
             profile = OpenRamp(
                 rates=values, step_s=step_s, warm_s=warm_s, stop_error_rate=stop_error_rate
             )
-
-        else:
-            raise typer.BadParameter("model must be 'closed' or 'open'")
 
         result = asyncio.run(run(target, profile, out=out))
 

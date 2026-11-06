@@ -37,6 +37,7 @@ from .plan import (
     validate_plan,
 )
 from .report import SCHEMA, RunWriter
+from .soak import MIN_FIT_WINDOWS, ServerSeries, drift_report
 from .stats import StepRecorder, classify, error_share, find_knee
 
 # ----------------------- #
@@ -149,7 +150,98 @@ class OpenRamp(_Ramp):
         _positive_steps(self.rates, "rates")
 
 
-type Profile = ClosedRamp | OpenRamp
+@attrs.frozen(kw_only=True)
+class Soak:
+    """A steady load for *duration_s*, one row per window, and drift flagged at the end.
+
+    The load is closed (*workers*) or open (*rate*), never both. Each window's row records
+    goodput beside latency, the client self-report, and the server's series scraped from
+    :attr:`~forze_load.LoadPlan.metrics`. After *warm_windows* windows every series is
+    fitted for upward drift (:func:`forze_load.soak.fit`). Flags never fail the run.
+    """
+
+    duration_s: float
+    """Seconds of load, rounded down to whole windows, warm-up included."""
+
+    window_s: float = 60.0
+    """Seconds per window: one row, and one scrape, each."""
+
+    warm_windows: int = 2
+    """Windows at the start written as rows, marked ``warm``, and left out of the fit."""
+
+    workers: int | None = None
+    """Closed model: workers that send, wait and send again."""
+
+    rate: float | None = attrs.field(default=None, converter=attrs.converters.optional(float))
+    """Open model: arrivals per second."""
+
+    think_s: float = 0.0
+    """Closed model: pause after each answer, per worker."""
+
+    arrivals: Literal["constant", "poisson"] = "constant"
+    """Open model: evenly spaced arrivals, or a Poisson process."""
+
+    stop_error_rate: float = 0.05
+    """Share of a window's calls answering 5xx (504 included) or failing in transport that
+    stops the soak."""
+
+    def __attrs_post_init__(self) -> None:
+        if (self.workers is None) == (self.rate is None):
+            raise exc.configuration("a soak takes workers (closed) or rate (open), exactly one")
+
+        if self.workers is not None and (
+            isinstance(self.workers, bool) or not isinstance(self.workers, int) or self.workers < 1
+        ):
+            raise exc.configuration("workers must be a whole number of at least 1")
+
+        if self.rate is not None and not (math.isfinite(self.rate) and self.rate > 0):
+            raise exc.configuration("rate must be a positive, finite number of arrivals a second")
+
+        if not (math.isfinite(self.window_s) and self.window_s > 0):
+            raise exc.configuration("window_s must be a positive, finite number of seconds")
+
+        if isinstance(self.warm_windows, bool) or not isinstance(self.warm_windows, int):
+            raise exc.configuration("warm_windows must be a whole number")
+
+        # RFC 0084 §5.8: drift is fitted only after a warm-up of at least two windows.
+        if self.warm_windows < 2:
+            raise exc.configuration("warm_windows must be at least 2")
+
+        needed = self.warm_windows + MIN_FIT_WINDOWS
+
+        if not math.isfinite(self.duration_s) or self.windows < needed:
+            raise exc.configuration(
+                f"a soak needs at least {needed} windows, {self.warm_windows} of warm-up and "
+                f"{MIN_FIT_WINDOWS} to fit: raise duration_s or lower window_s"
+            )
+
+        if not (math.isfinite(self.think_s) and self.think_s >= 0):
+            raise exc.configuration("think_s must be a finite number of seconds, at least 0")
+
+        if not 0.0 <= self.stop_error_rate <= 1.0:
+            raise exc.configuration("stop_error_rate must be a share between 0 and 1")
+
+    @property
+    def windows(self) -> int:
+        """Whole windows the soak runs."""
+
+        # Floor with a little slack: 0.3 / 0.05 is 5.999… in binary floating point.
+        return math.floor(self.duration_s / self.window_s + 1e-9)
+
+    @property
+    def step_s(self) -> float:
+        """A window runs as a step with no warm-up of its own."""
+
+        return self.window_s
+
+    @property
+    def warm_s(self) -> float:
+        """Zero: the soak warms up in whole windows, which it writes."""
+
+        return 0.0
+
+
+type Profile = ClosedRamp | OpenRamp | Soak
 
 
 @attrs.frozen
@@ -212,8 +304,12 @@ async def run(
     stop rule, or because a principal's samples all ran out, is a finished run: the summary
     says where and why.
 
+    A :class:`Soak` writes a row per window instead of per step, scrapes the plan's
+    ``metrics`` route once before sign-in and after every window, and ends with a summary
+    of drift instead of a knee.
+
     :param plan: Target, principals and scenarios.
-    :param profile: :class:`ClosedRamp` or :class:`OpenRamp`.
+    :param profile: :class:`ClosedRamp`, :class:`OpenRamp` or :class:`Soak`.
     :param out: JSON lines file to write, or ``None`` to only return the result.
     :param transport: An ``httpx`` transport to use instead of the network. An app served
         through it on the same event loop runs on the loop's thread, so the loop's CPU is
@@ -221,17 +317,17 @@ async def run(
     :returns: The meta record, the rows and the summary.
     :raises CoreException: ``configuration`` — the plan is refused (:func:`validate_plan`),
         an operation reference does not resolve (:func:`forze_load.catalog.resolve`), a
-        credential is missing, a sign-in fails, a sample fails or comes back empty, a
-        refresh fails after the token expired, or a scenario passes :meth:`Call.request` a
-        URL with a host.
+        soak's metrics route cannot be read, a credential is missing, a sign-in fails, a
+        sample fails or comes back empty, a refresh fails after the token expired, or a
+        scenario passes :meth:`Call.request` a URL with a host.
     """
 
     validate_plan(plan)
-    model = "closed" if isinstance(profile, ClosedRamp) else "open"
+    model, levels = _levels(profile)
     connections = (
-        max(profile.steps)
-        if isinstance(profile, ClosedRamp)
-        else max(inflight_cap(rate, plan.timeout_s) for rate in profile.rates)
+        int(max(levels))
+        if model == "closed"
+        else max(inflight_cap(rate, plan.timeout_s) for rate in levels)
     )
 
     async with (
@@ -259,6 +355,16 @@ async def run(
         ) as auth_client,
     ):
         catalog = await resolve(plan, auth_client)
+        server = (
+            ServerSeries(auth_client, plan.metrics)
+            if isinstance(profile, Soak) and plan.metrics is not None
+            else None
+        )
+
+        # Before sign-in, like the document: a route that is not there refuses the run.
+        if server is not None:
+            await server.baseline()
+
         state = _Run(
             plan=plan,
             catalog=catalog,
@@ -276,25 +382,40 @@ async def run(
 
             try:
                 if isinstance(profile, ClosedRamp):
-                    rows, stopped = await _closed(state, profile, writer)
+                    steps = [{"workers": n} for n in profile.steps]
+                    rows, stopped = await _closed(state, profile, writer, steps)
+
+                elif isinstance(profile, OpenRamp):
+                    rates = [{"rate": rate} for rate in profile.rates]
+                    rows, stopped = await _open(state, profile, writer, rates)
 
                 else:
-                    rows, stopped = await _open(state, profile, writer)
+                    rows, stopped = await _soak(state, profile, writer, server)
 
             finally:
                 probe.cancel()
                 await asyncio.gather(probe, return_exceptions=True)
 
-            # A step a stop cut short measured a shorter window and a smaller mix: no knee.
-            knee = find_knee([row for row in rows if not row.get("cut_short")], model=model)
-            summary = {
-                "kind": "summary",
-                "steps": len(rows),
-                "knee": knee["knee"],
-                "knee_confirmed": knee["confirmed"],
-                "note": knee["note"],
-                "stopped": stopped,
-            }
+            if isinstance(profile, Soak):
+                summary = {
+                    "kind": "summary",
+                    "windows": len(rows),
+                    "stopped": stopped,
+                    "drift": drift_report(rows, server, warm_windows=profile.warm_windows),
+                }
+
+            else:
+                # A step a stop cut short measured a shorter window and a smaller mix: no knee.
+                knee = find_knee([row for row in rows if not row.get("cut_short")], model=model)
+                summary = {
+                    "kind": "summary",
+                    "steps": len(rows),
+                    "knee": knee["knee"],
+                    "knee_confirmed": knee["confirmed"],
+                    "note": knee["note"],
+                    "stopped": stopped,
+                }
+
             writer.write(summary)
 
     return RunResult(meta=meta, rows=rows, summary=summary)
@@ -591,7 +712,7 @@ class _Run:
 
     async def step(
         self,
-        profile: _Ramp,
+        profile: _Ramp | Soak,
         key: Mapping[str, Any],
         latency: str,
     ) -> dict[str, Any]:
@@ -600,7 +721,8 @@ class _Run:
         Calls sent after the window closes count nowhere until the next step opens. The row
         waits (up to the request timeout) for the calls the step sent, and its rates use
         the measured window's real length. A :meth:`stop` ends the window early, and the
-        row then says ``cut_short``.
+        row then says ``cut_short``. A soak's window is a step whose key names it, and its
+        row is a ``window`` row.
         """
 
         opened = time.perf_counter()
@@ -621,7 +743,7 @@ class _Run:
         summary = step.summary(measured)
         scenarios = summary.pop("scenarios")
         row = {
-            "kind": "step",
+            "kind": "window" if "window" in key else "step",
             **key,
             "latency": latency,
             **summary,
@@ -650,19 +772,28 @@ class _Run:
 # ....................... #
 
 
+type _Finish = Callable[[dict[str, Any]], Awaitable[None]]
+"""Completes a row before it is written: a soak adds its time and its scrape."""
+
+
 async def _ramp(
     state: _Run,
-    profile: _Ramp,
+    profile: _Ramp | Soak,
     keys: Sequence[Mapping[str, Any]],
     prepare: Callable[[Mapping[str, Any]], Awaitable[None]],
     latency: str,
     writer: RunWriter,
+    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     rows: list[dict[str, Any]] = []
 
     for key in keys:
         await prepare(key)
         row = await state.step(profile, key, latency)
+
+        if finish is not None:
+            await finish(row)
+
         rows.append(row)
         writer.write(row)
 
@@ -679,8 +810,10 @@ async def _ramp(
 
 async def _closed(
     state: _Run,
-    profile: ClosedRamp,
+    profile: ClosedRamp | Soak,
     writer: RunWriter,
+    keys: Sequence[Mapping[str, Any]],
+    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     workers: list[asyncio.Task[None]] = []
     assign = _assignments(state.plan.principals)
@@ -693,9 +826,7 @@ async def _closed(
             workers.pop().cancel()
 
     try:
-        keys = [{"workers": n} for n in profile.steps]
-
-        return await _ramp(state, profile, keys, prepare, "closed", writer)
+        return await _ramp(state, profile, keys, prepare, "closed", writer, finish)
 
     finally:
         for task in workers:
@@ -706,8 +837,10 @@ async def _closed(
 
 async def _open(
     state: _Run,
-    profile: OpenRamp,
+    profile: OpenRamp | Soak,
     writer: RunWriter,
+    keys: Sequence[Mapping[str, Any]],
+    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     inflight: set[asyncio.Task[None]] = set()
     assign = _assignments(state.plan.principals)
@@ -723,15 +856,38 @@ async def _open(
         ]
 
     try:
-        keys = [{"rate": rate} for rate in profile.rates]
-
-        return await _ramp(state, profile, keys, prepare, "open", writer)
+        return await _ramp(state, profile, keys, prepare, "open", writer, finish)
 
     finally:
         for task in (*drivers, *inflight):
             task.cancel()
 
         await asyncio.gather(*drivers, *inflight, return_exceptions=True)
+
+
+async def _soak(
+    state: _Run,
+    profile: Soak,
+    writer: RunWriter,
+    server: ServerSeries | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """One load level, window after window; each row gets its time and its scrape."""
+
+    started = time.perf_counter()
+    level = {"workers": profile.workers} if profile.workers is not None else {"rate": profile.rate}
+    keys = [{"window": n, **level} for n in range(1, profile.windows + 1)]
+
+    async def finish(row: dict[str, Any]) -> None:
+        row["warm"] = row["window"] <= profile.warm_windows
+        row["t_s"] = round(time.perf_counter() - started, 3)
+
+        if server is not None:
+            row["server"] = await server.sample(row["window"])
+
+    if profile.workers is not None:
+        return await _closed(state, profile, writer, keys, finish)
+
+    return await _open(state, profile, writer, keys, finish)
 
 
 # ....................... #
@@ -762,7 +918,23 @@ def _sample_order(sample: Sample) -> tuple[str, str, int]:
 
 
 def _step_key(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: row[k] for k in ("workers", "rate") if k in row}
+    return {k: row[k] for k in ("window", "workers", "rate") if k in row}
+
+
+def _levels(profile: Profile) -> tuple[str, list[float]]:
+    """The profile's model and every load level it runs: workers or arrival rates."""
+
+    if isinstance(profile, ClosedRamp):
+        return "closed", [float(n) for n in profile.steps]
+
+    if isinstance(profile, OpenRamp):
+        return "open", list(profile.rates)
+
+    # A soak has exactly one of the two (`Soak.__attrs_post_init__`).
+    if profile.workers is not None:
+        return "closed", [float(profile.workers)]
+
+    return "open", [rate for rate in (profile.rate,) if rate is not None]
 
 
 def _stop_reason(row: Mapping[str, Any], stop_error_rate: float) -> dict[str, Any] | None:
