@@ -97,7 +97,10 @@ async def _create(call: Call) -> httpx.Response:
 
 
 async def _burn_then_list(call: Call) -> httpx.Response:
-    end = time.perf_counter() + 0.03  # 30 ms of client CPU on the event loop per call
+    # 100 ms of client CPU on the event loop per call: each burn holds the loop well past the
+    # 25 ms lag threshold, so even one worker is saturated whatever the server's latency. At
+    # 30 ms, one worker sat just under both thresholds when the server answered slowly.
+    end = time.perf_counter() + 0.1
 
     while time.perf_counter() < end:
         pass
