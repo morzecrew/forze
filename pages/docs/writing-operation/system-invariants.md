@@ -99,7 +99,7 @@ if not verdict.holds:
 
 !!! warning "`propose` is a filter, not a proof"
 
-    `holds=True` means "the write applied cleanly and the laws held *against the state the dry-run saw*". Under concurrency the answer can change between the dry-run and the real write (TOCTOU), and it is only as sound as the backend's rollback — so use it to filter and explain a proposed write, never to certify it safe. It also fails closed (`exc.precondition`) if called inside a transaction: a nested scope is only a savepoint, whose rollback isn't guaranteed across backends, so the dry-run's writes could ride the enclosing commit. The *proof* is the oracle below.
+    `holds=True` means "the write applied cleanly and the laws held *against the state the dry-run saw*". Under concurrency the answer can change between the dry-run and the real write (TOCTOU), and it is only as sound as the backend's rollback — so use it to filter and explain a proposed write, never to certify it safe. It also fails closed (`exc.precondition`) if called inside a transaction: a nested scope is only a savepoint, whose rollback isn't guaranteed across backends, so the dry-run's writes could ride the enclosing commit. And it refuses (`propose_cross_client`) a write that opens a scope on another client's route: that scope's own transaction rolls back as it exits, so the laws would be checked against the state before it. The *proof* is the oracle below.
 
 ## Prove it under simulation
 
