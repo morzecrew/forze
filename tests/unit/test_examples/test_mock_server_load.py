@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import httpx
 import pytest
+
+# Skipped, not failed, without the extras the recipe and the kit need.
+pytest.importorskip("fastapi")
+httpx = pytest.importorskip("httpx")
 
 from examples.recipes.mock_server.app import build_server
 from examples.recipes.mock_server.load import KEY_ENV, build_plan
