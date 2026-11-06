@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import math
 import sys
+import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,9 +36,11 @@ from forze_load import (
     compare_runs,
     read_run,
     run,
+    sample,
     summarize,
 )
-from forze_load.soak import ServerSeries, fit, parse_metrics, series_key
+from forze_load._seams import seeded_random
+from forze_load.soak import ServerSeries, drift_report, fit, parse_metrics, series_key
 
 pytestmark = pytest.mark.unit
 
@@ -216,6 +220,46 @@ class TestParser:
         with pytest.raises(ValueError):
             parse_metrics(f"forze_ok 1\n{line}\n")
 
+    @pytest.mark.parametrize(
+        ("line", "reason"),
+        [
+            ("9secret_name 1", "it does not start with a metric name"),
+            ("secret_name{secret_label=secret_value} 1", "its labels are malformed"),
+            ('secret_name{a="1" secret_label="2"} 1', "its labels are malformed"),
+            ("secret_name 1 2 secret_token", "it has no value, or more than a value"),
+            ("secret_name secret_token", "the value is not a number"),
+            ("secret_name 12 secret_token", "the timestamp is not a 64-bit integer"),
+            ('secret_name{a="secret\\qtoken"} 1', "a label value has an escape other than"),
+        ],
+    )
+    def test_a_parser_error_names_the_line_and_never_its_text(self, line: str, reason: str) -> None:
+        with pytest.raises(ValueError) as caught:
+            parse_metrics(f"forze_ok 1\n{line}\n")
+
+        message = str(caught.value)
+
+        assert message.startswith(f"line 2 is not Prometheus text: {reason}")
+        assert "secret" not in message
+
+    @pytest.mark.parametrize(
+        "timestamp", ["not-a-timestamp", "1.5", "99999999999999999999", "-9223372036854775809"]
+    )
+    def test_a_timestamp_must_be_a_64_bit_integer(self, timestamp: str) -> None:
+        with pytest.raises(ValueError, match="timestamp"):
+            parse_metrics(f"forze_requests_total 12 {timestamp}\n")
+
+    @pytest.mark.parametrize("timestamp", ["-5", "+5", "9223372036854775807"])
+    def test_a_signed_integer_timestamp_is_read_and_ignored(self, timestamp: str) -> None:
+        assert parse_metrics(f"forze_x 1 {timestamp}\n")[0].value == 1.0
+
+    def test_only_the_three_escapes_of_the_format_are_read(self) -> None:
+        sample = parse_metrics('forze_x{a="\\\\ \\" \\n"} 1\n')[0]
+
+        assert sample.labels["a"] == '\\ " \n'
+
+        with pytest.raises(ValueError, match="escape"):
+            parse_metrics('forze_x{a="\\t"} 1\n')
+
     def test_series_keys_sort_labels_drop_empty_ones_and_escape(self) -> None:
         assert series_key("m", {}) == "m"
         assert series_key("m", {"b": "2", "a": "1", "e": ""}) == 'm{a="1",b="2"}'
@@ -283,6 +327,12 @@ class TestFit:
         values = [1000.0 + 10.0 * i / 11 for i in range(12)]
 
         assert fit(_line(values), 12.0)["status"] == "steady"
+
+    def test_points_at_one_time_are_inconclusive_not_an_error(self) -> None:
+        assert fit([(1.0, v) for v in (1.0, 2.0, 3.0, 4.0)], 1.0) == {
+            "points": 4,
+            "status": "inconclusive",
+        }
 
     def test_fewer_points_than_quarters_are_not_fitted(self) -> None:
         assert fit(_line([1.0, 2.0, 3.0]), 3.0) == {"points": 3, "status": "too_few"}
@@ -492,9 +542,11 @@ class TestServerSeries:
             (_expo({"forze_g": 1.0}), "instance"),
             (_expo({"forze_g": 1.0}, instance=None), "none"),
             (
-                'target_info{service_instance_id="a"} 1\n'
-                'target_info{service_instance_id="b"} 1\n'
-                "forze_g 1\n",
+                (
+                    'target_info{service_instance_id="a"} 1\n'
+                    'target_info{service_instance_id="b"} 1\n'
+                    "forze_g 1\n"
+                ),
                 "interleaved",
             ),
             (
@@ -666,8 +718,8 @@ class TestSoakRun:
         ("answer", "error"),
         [
             (lambda _n: httpx.Response(503), "answered 503"),
-            (_undecodable, "failed (DecodingError)"),
-            (_token, "is not Prometheus text (forze_x has a value that is not a number)"),
+            (_undecodable, "request failed (DecodingError)"),
+            (_token, "line 1 is not Prometheus text: the value is not a number"),
         ],
         ids=["status", "undecodable", "token"],
     )
@@ -694,31 +746,33 @@ class TestSoakRun:
         result = await run(_plan(metrics=None), _SOAK, transport=httpx.MockTransport(failing))
         stopped = result.summary["stopped"]
 
-        # The warm-up never stops a soak; the first later window that got a call does.
+        # The warm-up never stops a soak; the first later window that got a call does. Its
+        # row is read while the next window runs, which then ends cut short.
         assert stopped["reason"] == "errors"
-        assert stopped["window"] == len(result.rows) > _SOAK.warm_windows
+        assert stopped["window"] > _SOAK.warm_windows
         assert stopped["workers"] == 1
+        assert len(result.rows) in (stopped["window"], stopped["window"] + 1)
+        assert all(row.get("cut_short") for row in result.rows[stopped["window"] :])
 
     async def test_a_cold_start_burst_in_the_warm_up_does_not_stop_a_soak(self) -> None:
-        scrapes = 0
+        first: list[float] = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal scrapes
-
-            if request.url.path == "/metrics":
-                scrapes += 1
-                return _leaking(scrapes)
-
             await asyncio.sleep(0.001)
+            first[:] = first or [time.perf_counter()]
 
-            # Scrape 3 closes window 2: every call of the warm-up answers 503.
-            return httpx.Response(503 if scrapes < 3 else 200)
+            # 0.3 s of 503 from the first call: window 1 and half of window 2, both warm-up;
+            # window 3 opens 0.4 s after the load starts, so the margin is 0.1 s.
+            return httpx.Response(503 if time.perf_counter() - first[0] < 0.3 else 200)
 
-        result = await run(_plan(), _SOAK, transport=httpx.MockTransport(handler))
+        soak = Soak(duration_s=1.2, window_s=0.2, workers=1)
+
+        result = await run(_plan(metrics=None), soak, transport=httpx.MockTransport(handler))
 
         assert len(result.rows) == 6
         assert result.summary["stopped"] is None
-        assert not any(row["outcomes"]["ok"] for row in result.rows[:2])
+        assert result.rows[0]["outcomes"]["server_error"] > 0
+        assert result.rows[0]["outcomes"]["ok"] == 0
 
     async def test_a_scrape_that_names_no_process_is_in_the_meta_line_before_sign_in(
         self,
@@ -750,11 +804,139 @@ class TestSoakRun:
         assert result.summary["stopped"] is None
         assert result.summary["drift"]["server"]["forze_g"]["status"] == "unattributed"
 
+    async def test_windows_stay_back_to_back_beside_a_slow_scrape(self) -> None:
+        async def slow_metrics(scrape: int) -> httpx.Response:
+            await asyncio.sleep(0.12 if scrape > 1 else 0.0)
+            return _leaking(scrape)
+
+        scrapes = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal scrapes
+
+            if request.url.path == "/metrics":
+                scrapes += 1
+                return await slow_metrics(scrapes)
+
+            await asyncio.sleep(0.001)
+
+            return httpx.Response(200)
+
+        soak = Soak(duration_s=1.2, window_s=0.2, workers=1)
+        began = time.perf_counter()
+
+        result = await run(_plan(), soak, transport=httpx.MockTransport(handler))
+        elapsed = time.perf_counter() - began
+
+        # No gap between windows: their lengths add up to the last one's end.
+        assert sum(row["duration_s"] for row in result.rows) == pytest.approx(
+            result.rows[-1]["t_s"], abs=0.02
+        )
+        # Six windows and the last scrape; a scrape between windows would add 0.6 s.
+        assert elapsed < 1.7
+        assert all("series" in row["server"] for row in result.rows)
+
+    async def test_open_arrivals_keep_their_schedule_across_windows(self) -> None:
+        sent: list[float] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            sent.append(time.perf_counter())
+            return httpx.Response(200)
+
+        rate = 5.0
+        stream = seeded_random(0, "arrivals")
+        due = list(itertools.accumulate(stream.expovariate(rate) for _ in range(5)))
+
+        await run(
+            _plan(metrics=None),
+            Soak(duration_s=1.2, window_s=0.2, rate=rate, arrivals="poisson"),
+            transport=httpx.MockTransport(handler),
+        )
+
+        # The plan's seed 0 schedules five arrivals across four window boundaries; restarting
+        # the schedule at each window would move every one after the first.
+        assert len(sent) >= 4
+        offsets = [t - sent[0] for t in sent]
+        assert offsets == pytest.approx([d - due[0] for d in due[: len(sent)]], abs=0.04)
+
+    async def test_a_principal_with_nothing_left_halts_the_soak(self) -> None:
+        doc = {
+            "paths": {
+                "/items/list": {"post": {"operationId": "items.list", "x-forze-kind": "query"}},
+                "/items/{id}": {
+                    "get": {
+                        "operationId": "items.get",
+                        "x-forze-kind": "query",
+                        "parameters": [{"name": "id", "in": "path", "required": True}],
+                    }
+                },
+            }
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/items/list":
+                return httpx.Response(200, json={"hits": [{"id": "gone"}]})
+
+            return httpx.Response(404)
+
+        plan = LoadPlan(
+            base_url="http://127.0.0.1:9",
+            principals=[Principal(name="viewer", mix={"items.get": 1})],
+            scenarios=[Scenario.op("items.get", path={"id": sample("items.list")})],
+            openapi=doc,
+            metrics=None,
+        )
+
+        result = await run(plan, _SOAK, transport=httpx.MockTransport(handler))
+
+        assert [row.get("cut_short") for row in result.rows] == [True]
+        assert result.summary["stopped"] == {
+            "window": 1,
+            "workers": 1,
+            "reason": "sample_exhausted",
+            "principal": "viewer",
+        }
+
+    async def test_a_scenario_that_raises_ends_the_soak_with_its_error(self) -> None:
+        async def broken(_call: Call) -> httpx.Response:
+            raise RuntimeError("scenario bug")
+
+        plan = attrs.evolve(_plan(metrics=None), scenarios=[Scenario("get", broken, writes=False)])
+
+        with pytest.raises(RuntimeError, match="scenario bug"):
+            await run(plan, _SOAK, transport=_app(_leaking))
+
     def test_a_metrics_url_with_a_host_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:
             asyncio.run(run(_plan(metrics="http://evil.example/metrics"), _SOAK))
 
         assert caught.value.code == "load_plan_invalid"
+
+
+class TestDriftReport:
+    def test_client_latency_fits_full_precision_window_ends(self) -> None:
+        # Six windows whose rounded `t_s` would all read 0.0.
+        rows = [{**_window(n, 2.0 * n), "t_s": 0.0} for n in range(1, 7)]
+        ends = [0.0001 * n for n in range(1, 7)]
+
+        report = drift_report(rows, ends, None, warm_windows=2)
+
+        assert report["client"]["p95"]["status"] == "flagged"
+        assert report["duration_s"] == 0.001
+
+    def test_a_window_cut_short_stays_out_of_the_client_fit(self) -> None:
+        rows = [_window(n, 10.0) for n in range(1, 7)] + [
+            {**_window(7, 10_000.0), "cut_short": True}
+        ]
+        server = _server()
+        _feed(server, [_expo({"forze_g": 5.0}) for _ in range(8)])
+
+        report = drift_report(rows, [float(n) for n in range(1, 8)], server, warm_windows=2)
+
+        assert report["client"]["p95"]["status"] == "steady"
+        assert report["client"]["p95"]["points"] == 4
+        # The cut-short window's scrape still counts for the server's series.
+        assert report["server"]["forze_g"]["points"] == 5
 
 
 class TestSoakProfile:
@@ -785,7 +967,6 @@ class TestSoakProfile:
         soak = Soak(duration_s=3659.0, workers=4)
 
         assert soak.windows == 60
-        assert (soak.step_s, soak.warm_s) == (60.0, 0.0)
 
 
 # ....................... #
@@ -847,11 +1028,72 @@ class TestSoakCompare:
         row = {**_window(1, 2.0), "outcomes": {}, "client": {"saturated": False}}
         row["misconfigured"] = False
 
-        flagged = summarize([row], {"drift": {"flagged": ["process_memory_usage_bytes"]}})
-        quiet = summarize([row], {"drift": {"flagged": []}})
+        steady = {"status": "steady"}
+        fitted = {"p50": steady, "p95": steady, "p99": steady}
+        flagged = summarize(
+            [row],
+            {
+                "drift": {
+                    "flagged": ["process_memory_usage_bytes"],
+                    "client": fitted,
+                    "server": {"process_memory_usage_bytes": {"status": "flagged"}, "g": steady},
+                }
+            },
+        )
 
         assert flagged == [
             "window=1: goodput 100.0/s, p95 2 ms, p99 2 ms, errors 0",
             "drift: process_memory_usage_bytes",
+            "server drift: 2 series fitted",
         ]
-        assert quiet[-1] == "drift: none flagged"
+
+    @pytest.mark.parametrize(
+        ("server", "line"),
+        [
+            (None, "server drift: not evaluated (no metrics route)"),
+            ({}, "server drift: not evaluated, no series scraped"),
+            (
+                {
+                    "a": {"status": "interleaved"},
+                    "b": {"status": "interleaved"},
+                    "c": {"status": "unattributed"},
+                },
+                "server drift: not evaluated, no series could be fitted (2 interleaved, 1 unattributed)",
+            ),
+            (
+                {"a": {"status": "steady"}, "b": {"status": "too_few"}},
+                "server drift: 1 series fitted, not fitted: 1 too_few",
+            ),
+        ],
+    )
+    def test_none_flagged_says_what_was_not_evaluated(
+        self, server: dict[str, Any] | None, line: str
+    ) -> None:
+        row = {**_window(1, 2.0), "outcomes": {}, "client": {"saturated": False}}
+        row["misconfigured"] = False
+        client = {
+            "p50": {"status": "too_few"},
+            "p95": {"status": "steady"},
+            "p99": {"status": "steady"},
+        }
+
+        lines = summarize([row], {"drift": {"flagged": [], "client": client, "server": server}})
+
+        assert lines[1:] == [
+            "drift: none flagged",
+            "client drift: 2 series fitted, not fitted: 1 too_few",
+            line,
+        ]
+
+    @pytest.mark.parametrize(("flag", "value"), [("warm", "false"), ("cut_short", "yes")])
+    def test_a_flag_that_is_not_a_boolean_refuses_the_file(
+        self, tmp_path: Path, flag: str, value: str
+    ) -> None:
+        path = tmp_path / "s.jsonl"
+        records = [{"kind": "meta", "schema": 1}, {**_window(3, 2.0), flag: value}]
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+        with pytest.raises(CoreException) as caught:
+            read_run(path)
+
+        assert caught.value.code == "load_run_file_invalid"

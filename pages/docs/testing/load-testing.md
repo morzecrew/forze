@@ -278,24 +278,29 @@ result = asyncio.run(run(plan, Soak(duration_s=4 * 3600, workers=32), out="soak.
 `Soak` takes `workers` for a closed load or `rate` for an open one (`--model open` on the
 CLI), never both. On the CLI, `--steps` names the one load level, and `--step-s` and
 `--warm-s`, which shape a ramp, are refused beside `--soak-s`, as `--window-s` is without
-it. Each `window_s` (default 60 s) writes a `window` row with a step row's fields, plus:
+it. The windows run back to back on a fixed schedule from the load's start, so every call
+counts in one and a soak lasts its windows plus the last window's drain and scrape. Each
+`window_s` (default 60 s) writes a `window` row with a step row's fields, plus:
 
 | Field | Meaning |
 | --- | --- |
 | `window` | The window's number, from 1 |
 | `warm` | `true` for the first `warm_windows` (default 2, at least 2), which the fit leaves out |
-| `t_s` | Seconds since the load started, taken once the calls the window sent have finished: its end, plus that wait |
-| `server` | The scrape after the window: `instances` (each `service_instance_id` it named) and `series`, or `error` when it failed |
+| `t_s` | Seconds since the load started, at the window's end, rounded to the millisecond (the fit reads the full value) |
+| `server` | The scrape the window's end started: `instances` (each `service_instance_id` it named) and `series`, or `error` when it failed |
 
 Writes during a soak grow the data, so the workload changes as it runs. Each row records
 goodput beside latency, so a slowdown can be told apart from more data. The warm-up windows
 are cold start, so they never stop a soak: the stop rule applies from the first window after
-them.
+them. A window's row is written once its calls have drained and its scrape has answered,
+both while the next window runs; a stop that row calls for ends that next window, which is
+written with `cut_short`.
 
 ### What the soak reads from the server
 
 `LoadPlan.metrics`, `/metrics` by default, is the path on the target the soak scrapes,
-without a credential: once before anyone signs in, then at the end of every window. A route
+without a credential: once before anyone signs in, then as every window ends, beside the
+next window and within `timeout_s`. A route
 that cannot be read before load stops the run, and the command exits 2; set
 `metrics=None` to soak on client numbers only. A scrape that fails later is recorded as the
 row's `server.error`, and the soak goes on. A point is stamped when its scrape was sent.
@@ -326,7 +331,10 @@ are fitted too.
 
 The summary's `drift` lists every `flagged` series and gives each one a `status`:
 `flagged`, `steady`, `sparse`, `at_capacity`, `too_few` (fewer than four windows after the
-warm-up), or one of the two below. Flags never fail the run: it exits 0, and reading them is yours.
+warm-up), `inconclusive` (every point at one time, so no slope), or one of the two below. A
+window a stop cut short stays out of the client's fit, since one slow answer can dominate
+its few calls; its scrape still counts. When nothing could be fitted, `forze load run` says
+so beside `drift: none flagged`, with the count of series per reason. Flags never fail the run: it exits 0, and reading them is yours.
 
 **Drift is computed only from scrapes of one process.** A scrape names its process through
 the `service_instance_id` label that `bootstrap_telemetry`'s resource puts on

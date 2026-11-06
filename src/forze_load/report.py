@@ -30,6 +30,8 @@ _LOWER_IS_WORSE = frozenset({"goodput"})
 _METRICS: tuple[str, ...] = ("goodput", "p50", "p95", "p99")
 _PERCENTILES: tuple[str, ...] = ("p50", "p95", "p99")
 _META_IGNORED = frozenset({"kind", "schema", "started_at"})
+_FLAGS: tuple[str, ...] = ("warm", "cut_short")
+_FITTED = frozenset({"flagged", "steady", "sparse", "at_capacity"})
 _META_LABELS: dict[str, str] = {
     "forze_load": "forze_load version",
     "client.cpus": "client cores",
@@ -120,7 +122,10 @@ def read_run(path: str | Path) -> RunFile:
     rows = [record for record in records if record.get("kind") in ("step", "window")]
 
     if not all(_is_step(row) for row in rows):
-        raise _invalid(f"{path} has a step row without a numeric key, goodput or latency")
+        raise _invalid(
+            f"{path} has a row without a numeric key, goodput or latency, or with a "
+            f"{' or '.join(_FLAGS)} that is not true or false"
+        )
 
     summary = next((record for record in records if record.get("kind") == "summary"), None)
 
@@ -134,7 +139,9 @@ def _is_number(value: Any) -> bool:
 
 def _is_step(row: Mapping[str, Any]) -> bool:
     """A step row ``compare`` can read: a finite key and goodput, and the compared percentiles
-    present, each a finite number or null (a percentile with no answered call)."""
+    present, each a finite number or null (a percentile with no answered call). The flags
+    ``compare`` branches on must be booleans when present: a string ``"false"`` is truthy,
+    and would drop a window from the gate without a word."""
 
     key = row.get("window", row.get("workers", row.get("rate")))
     ms = row.get("ms")
@@ -145,6 +152,7 @@ def _is_step(row: Mapping[str, Any]) -> bool:
         and isinstance(ms, dict)
         and all(name in ms for name in _PERCENTILES)
         and all(value is None or _is_number(value) for value in ms.values())
+        and all(isinstance(row.get(flag, False), bool) for flag in _FLAGS)
     )
 
 
@@ -388,8 +396,20 @@ def summarize(rows: Sequence[Mapping[str, Any]], summary: Mapping[str, Any]) -> 
         for row in rows
     ]
     if "drift" in summary:
-        flagged = summary["drift"]["flagged"]
+        drift = summary["drift"]
+        flagged = drift["flagged"]
         lines.append(f"drift: {', '.join(flagged) if flagged else 'none flagged'}")
+        client = _evaluated("client", drift["client"])
+
+        # "none flagged" must not read as "all clear" when nothing could be fitted.
+        if not client.endswith(" fitted"):
+            lines.append(client)
+
+        lines.append(
+            _evaluated("server", drift["server"])
+            if drift["server"] is not None
+            else "server drift: not evaluated (no metrics route)"
+        )
 
     else:
         knee = summary.get("knee")
@@ -402,3 +422,20 @@ def summarize(rows: Sequence[Mapping[str, Any]], summary: Mapping[str, Any]) -> 
         lines.append(f"stopped: {summary['stopped']}")
 
     return lines
+
+
+def _evaluated(side: str, fits: Mapping[str, Mapping[str, Any]]) -> str:
+    """How many of *side*'s series were fitted, and why the others were not."""
+
+    left_out = Counter(fit["status"] for fit in fits.values() if fit["status"] not in _FITTED)
+    fitted = len(fits) - sum(left_out.values())
+    reasons = ", ".join(f"{count} {status}" for status, count in sorted(left_out.items()))
+
+    if fitted:
+        return f"{side} drift: {fitted} series fitted" + (
+            f", not fitted: {reasons}" if reasons else ""
+        )
+
+    return f"{side} drift: not evaluated, " + (
+        f"no series could be fitted ({reasons})" if reasons else "no series scraped"
+    )

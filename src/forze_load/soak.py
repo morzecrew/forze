@@ -60,6 +60,8 @@ write time it truncated to the millisecond."""
 _NAME = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 _LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"\s*')
 _ESCAPE = re.compile(r"\\(.)")
+_ESCAPES = frozenset('\\"n')
+_TIMESTAMP = re.compile(r"[+-]?[0-9]+")
 _SUFFIXES: tuple[str, ...] = ("_bucket", "_count", "_sum", "_total")
 _NOT_FITTED = frozenset({"histogram", "summary"})
 
@@ -82,18 +84,21 @@ class MetricSample:
 def parse_metrics(text: str) -> list[MetricSample]:
     """Parse Prometheus text exposition format 0.0.4, as ``/metrics`` serves it.
 
-    Label values are unescaped (``\\\\``, ``\\"``, ``\\n``); timestamps are ignored; ``NaN``
-    and ``±Inf`` are read as floats. A histogram's ``_bucket``, ``_count`` and ``_sum``
-    samples take their family's type.
+    Label values are unescaped (``\\\\``, ``\\"``, ``\\n``, and no other escape); a
+    timestamp must be a 64-bit integer and is then ignored; ``NaN`` and ``±Inf`` are read as
+    floats. A histogram's ``_bucket``, ``_count`` and ``_sum`` samples take their family's
+    type.
 
     :raises ValueError: a sample line is malformed. The whole exposition is refused, as
-        Prometheus refuses the whole scrape.
+        Prometheus refuses the whole scrape. The message names the line by its number and
+        says what is wrong with it, and never repeats text from it: a misrouted answer can
+        carry anything, and the reason reaches the run file.
     """
 
     types: dict[str, str] = {}
     samples: list[tuple[str, dict[str, str], float]] = []
 
-    for raw in text.splitlines():
+    for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
 
         if not line:
@@ -107,7 +112,11 @@ def parse_metrics(text: str) -> list[MetricSample]:
 
             continue
 
-        samples.append(_sample(line))
+        try:
+            samples.append(_sample(line))
+
+        except ValueError as error:
+            raise ValueError(f"line {number} is not Prometheus text: {error}") from None
 
     return [
         MetricSample(name, labels, value, _type_of(name, types)) for name, labels, value in samples
@@ -118,8 +127,7 @@ def _sample(line: str) -> tuple[str, dict[str, str], float]:
     name = _NAME.match(line)
 
     if name is None:
-        # No excerpt: the reason reaches the run file, which holds no response bodies.
-        raise ValueError("a sample line does not start with a metric name")
+        raise ValueError("it does not start with a metric name")
 
     labels: dict[str, str] = {}
     rest = line[name.end() :].lstrip()
@@ -131,7 +139,7 @@ def _sample(line: str) -> tuple[str, dict[str, str], float]:
             label = _LABEL.match(rest)
 
             if label is None:
-                raise ValueError(f"malformed labels on {name[0]}")
+                raise ValueError("its labels are malformed")
 
             labels[label[1]] = _ESCAPE.sub(_unescape, label[2])
             rest = rest[label.end() :]
@@ -140,7 +148,7 @@ def _sample(line: str) -> tuple[str, dict[str, str], float]:
                 rest = rest[1:].lstrip()
 
             elif not rest.startswith("}"):
-                raise ValueError(f"malformed labels on {name[0]}")
+                raise ValueError("its labels are malformed")
 
         rest = rest[1:]
 
@@ -148,20 +156,30 @@ def _sample(line: str) -> tuple[str, dict[str, str], float]:
 
     # A value, then an optional timestamp.
     if not 1 <= len(fields) <= 2:
-        raise ValueError(f"{name[0]} has no value, or more than a value and a timestamp")
+        raise ValueError("it has no value, or more than a value and a timestamp")
 
     try:
         value = float(fields[0])
 
     except ValueError:
-        # No excerpt here either: the token could be anything the route answered.
-        raise ValueError(f"{name[0]} has a value that is not a number") from None
+        raise ValueError("the value is not a number") from None
+
+    if len(fields) == 2 and not _is_int64(fields[1]):
+        raise ValueError("the timestamp is not a 64-bit integer")
 
     return name[0], labels, value
 
 
 def _unescape(match: re.Match[str]) -> str:
+    # Only three escapes exist; reading another as its character could merge two series.
+    if match[1] not in _ESCAPES:
+        raise ValueError('a label value has an escape other than \\\\, \\" or \\n')
+
     return "\n" if match[1] == "n" else match[1]
+
+
+def _is_int64(token: str) -> bool:
+    return _TIMESTAMP.fullmatch(token) is not None and -(2**63) <= int(token) < 2**63
 
 
 def _type_of(name: str, types: Mapping[str, str]) -> str:
@@ -223,7 +241,7 @@ async def fetch_metrics(client: httpx.AsyncClient, path: str) -> list[MetricSamp
         response = await client.get(path, headers={"Accept": "text/plain"})
 
     except httpx.HTTPError as error:
-        raise ScrapeFailed(f"failed ({type(error).__name__})") from error
+        raise ScrapeFailed(f"request failed ({type(error).__name__})") from error
 
     if response.status_code != 200:
         raise ScrapeFailed(f"answered {response.status_code}")
@@ -232,7 +250,7 @@ async def fetch_metrics(client: httpx.AsyncClient, path: str) -> list[MetricSamp
         return parse_metrics(response.text)
 
     except ValueError as error:
-        raise ScrapeFailed(f"is not Prometheus text ({error})") from error
+        raise ScrapeFailed(str(error)) from error
 
 
 @attrs.define
@@ -279,7 +297,8 @@ class ServerSeries:
 
         except ScrapeFailed as error:
             raise exc.configuration(
-                f"The soak's metrics route {self.path!r} {error}. Serve Prometheus text there "
+                f"The soak's metrics route {self.path!r} cannot be read: {error}. Serve "
+                "Prometheus text there "
                 "(attach_metrics_route), or set LoadPlan.metrics=None for client numbers only",
                 code="load_metrics_unavailable",
             ) from error
@@ -472,7 +491,13 @@ def fit(points: Sequence[tuple[float, float]], duration_s: float) -> dict[str, A
 
     times = [t for t, _ in points]
     values = [value for _, value in points]
-    slope = statistics.linear_regression(times, values).slope
+
+    try:
+        slope = statistics.linear_regression(times, values).slope
+
+    except statistics.StatisticsError:  # every point at one time: there is no slope to read
+        return {"points": len(points), "status": "inconclusive"}
+
     quarter = len(values) // 4
     first = statistics.fmean(values[:quarter])
     last = statistics.fmean(values[-quarter:])
@@ -496,21 +521,29 @@ def fit(points: Sequence[tuple[float, float]], duration_s: float) -> dict[str, A
 
 def drift_report(
     rows: Sequence[Mapping[str, Any]],
+    ends: Sequence[float],
     server: ServerSeries | None,
     *,
     warm_windows: int,
 ) -> dict[str, Any]:
     """The soak summary's ``drift``: client latency and every server series, fitted.
 
-    The run's duration is the last window's end. Client latency percentiles are fitted
-    from the window rows; a window where no call answered has no point.
+    *ends* holds each row's window end, in seconds since the load started, at full
+    precision: the rows' ``t_s`` is rounded for the file. The run's duration is the last
+    window's end. Client latency percentiles are fitted from the window rows; a window where
+    no call answered has no point, and neither has a window a stop cut short, whose few
+    calls one slow answer can dominate.
     """
 
-    duration_s = float(rows[-1]["t_s"]) if rows else 0.0
-    fitted = [row for row in rows if row["window"] > warm_windows]
+    duration_s = ends[-1] if ends else 0.0
+    fitted = [
+        (end, row)
+        for row, end in zip(rows, ends, strict=True)
+        if row["window"] > warm_windows and not row.get("cut_short")
+    ]
     client = {
         name: fit(
-            [(row["t_s"], row["ms"][name]) for row in fitted if row["ms"][name] is not None],
+            [(end, row["ms"][name]) for end, row in fitted if row["ms"][name] is not None],
             duration_s,
         )
         for name in ("p50", "p95", "p99")

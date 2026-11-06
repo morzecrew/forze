@@ -228,18 +228,6 @@ class Soak:
         # Floor with a little slack: 0.3 / 0.05 is 5.999… in binary floating point.
         return math.floor(self.duration_s / self.window_s + 1e-9)
 
-    @property
-    def step_s(self) -> float:
-        """A window runs as a step with no warm-up of its own."""
-
-        return self.window_s
-
-    @property
-    def warm_s(self) -> float:
-        """Zero: the soak warms up in whole windows, which it writes."""
-
-        return 0.0
-
 
 type Profile = ClosedRamp | OpenRamp | Soak
 
@@ -305,9 +293,9 @@ async def run(
     stop rule, or because a principal's samples all ran out, is a finished run: the summary
     says where and why.
 
-    A :class:`Soak` writes a row per window instead of per step, scrapes the plan's
-    ``metrics`` route once before sign-in and after every window, and ends with a summary
-    of drift instead of a knee. Its meta line says how the first scrape ties series to a
+    A :class:`Soak` writes a row per window instead of per step, with no gap between
+    windows. It scrapes the plan's ``metrics`` route once before sign-in and as each window
+    closes, beside the next one, and ends with a summary of drift instead of a knee. Its meta line says how the first scrape ties series to a
     process (``server.attribution``); ``none`` or ``interleaved`` means no server series
     will be fitted.
 
@@ -396,15 +384,13 @@ async def run(
 
             try:
                 if isinstance(profile, ClosedRamp):
-                    steps = [{"workers": n} for n in profile.steps]
-                    rows, stopped = await _closed(state, profile, writer, steps)
+                    rows, stopped = await _closed(state, profile, writer)
 
                 elif isinstance(profile, OpenRamp):
-                    rates = [{"rate": rate} for rate in profile.rates]
-                    rows, stopped = await _open(state, profile, writer, rates)
+                    rows, stopped = await _open(state, profile, writer)
 
                 else:
-                    rows, stopped = await _soak(state, profile, writer, server)
+                    rows, stopped, ends = await _soak(state, profile, writer, server)
 
             finally:
                 probe.cancel()
@@ -415,7 +401,7 @@ async def run(
                     "kind": "summary",
                     "windows": len(rows),
                     "stopped": stopped,
-                    "drift": drift_report(rows, server, warm_windows=profile.warm_windows),
+                    "drift": drift_report(rows, ends, server, warm_windows=profile.warm_windows),
                 }
 
             else:
@@ -726,7 +712,7 @@ class _Run:
 
     async def step(
         self,
-        profile: _Ramp | Soak,
+        profile: _Ramp,
         key: Mapping[str, Any],
         latency: str,
     ) -> dict[str, Any]:
@@ -735,8 +721,7 @@ class _Run:
         Calls sent after the window closes count nowhere until the next step opens. The row
         waits (up to the request timeout) for the calls the step sent, and its rates use
         the measured window's real length. A :meth:`stop` ends the window early, and the
-        row then says ``cut_short``. A soak's window is a step whose key names it, and its
-        row is a ``window`` row.
+        row then says ``cut_short``.
         """
 
         opened = time.perf_counter()
@@ -757,7 +742,7 @@ class _Run:
         summary = step.summary(measured)
         scenarios = summary.pop("scenarios")
         row = {
-            "kind": "window" if "window" in key else "step",
+            "kind": "step",
             **key,
             "latency": latency,
             **summary,
@@ -786,36 +771,26 @@ class _Run:
 # ....................... #
 
 
-type _Finish = Callable[[dict[str, Any]], Awaitable[None]]
-"""Completes a row before it is written: a soak adds its time and its scrape."""
-
-
 async def _ramp(
     state: _Run,
-    profile: _Ramp | Soak,
+    profile: _Ramp,
     keys: Sequence[Mapping[str, Any]],
     prepare: Callable[[Mapping[str, Any]], Awaitable[None]],
     latency: str,
     writer: RunWriter,
-    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     rows: list[dict[str, Any]] = []
 
     for key in keys:
         await prepare(key)
         row = await state.step(profile, key, latency)
-
-        if finish is not None:
-            await finish(row)
-
         rows.append(row)
         writer.write(row)
 
         if state.halt is not None:
             return rows, {**_step_key(row), **state.halt}
 
-        # A soak's warm-up is cold start, as a ramp's `warm_s` is: a burst there stops nothing.
-        stopped = None if row.get("warm") else _stop_reason(row, profile.stop_error_rate)
+        stopped = _stop_reason(row, profile.stop_error_rate)
 
         if stopped is not None:
             return rows, stopped
@@ -825,10 +800,8 @@ async def _ramp(
 
 async def _closed(
     state: _Run,
-    profile: ClosedRamp | Soak,
+    profile: ClosedRamp,
     writer: RunWriter,
-    keys: Sequence[Mapping[str, Any]],
-    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     workers: list[asyncio.Task[None]] = []
     assign = _assignments(state.plan.principals)
@@ -841,7 +814,9 @@ async def _closed(
             workers.pop().cancel()
 
     try:
-        return await _ramp(state, profile, keys, prepare, "closed", writer, finish)
+        keys = [{"workers": n} for n in profile.steps]
+
+        return await _ramp(state, profile, keys, prepare, "closed", writer)
 
     finally:
         for task in workers:
@@ -852,10 +827,8 @@ async def _closed(
 
 async def _open(
     state: _Run,
-    profile: OpenRamp | Soak,
+    profile: OpenRamp,
     writer: RunWriter,
-    keys: Sequence[Mapping[str, Any]],
-    finish: _Finish | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     inflight: set[asyncio.Task[None]] = set()
     assign = _assignments(state.plan.principals)
@@ -871,7 +844,9 @@ async def _open(
         ]
 
     try:
-        return await _ramp(state, profile, keys, prepare, "open", writer, finish)
+        keys = [{"rate": rate} for rate in profile.rates]
+
+        return await _ramp(state, profile, keys, prepare, "open", writer)
 
     finally:
         for task in (*drivers, *inflight):
@@ -885,24 +860,149 @@ async def _soak(
     profile: Soak,
     writer: RunWriter,
     server: ServerSeries | None,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """One load level, window after window; each row gets its time and its scrape."""
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[float]]:
+    """One load level, window after window, with no gap between them.
 
+    The load starts once and runs to the end: one window closes and the next opens at the
+    same instant, on a fixed schedule from the load's start, so every call counts in a
+    window and open-model arrivals keep their phase. A closed window's calls drain, and its
+    scrape runs, beside the next window; its row is written, and the stop rule read, once
+    both are done. A stop found that way ends the window then running, which is written
+    cut short. Returns the rows, why the soak stopped, and each window's end in seconds
+    since the load started, at full precision, for the fit.
+    """
+
+    model, (level,) = _levels(profile)
+    key: dict[str, Any] = {"workers": int(level)} if model == "closed" else {"rate": level}
+    assign = _assignments(state.plan.principals)
+    inflight: set[asyncio.Task[None]] = set()
+    load = (
+        [
+            asyncio.create_task(state.worker(next(assign), profile.think_s))
+            for _ in range(int(level))
+        ]
+        if model == "closed"
+        else [asyncio.create_task(state.arrivals(level, profile.arrivals, inflight, assign))]
+    )
+    rows: list[dict[str, Any]] = []
+    ends: list[float] = []
+    pending: asyncio.Task[dict[str, Any]] | None = None
     started = time.perf_counter()
-    level = {"workers": profile.workers} if profile.workers is not None else {"rate": profile.rate}
-    keys = [{"window": n, **level} for n in range(1, profile.windows + 1)]
 
-    async def finish(row: dict[str, Any]) -> None:
-        row["warm"] = row["window"] <= profile.warm_windows
-        row["t_s"] = round(time.perf_counter() - started, 3)
+    def check() -> None:
+        if state.failure is not None:
+            raise state.failure
 
-        if server is not None:
-            row["server"] = await server.sample(row["window"])
+    def close(
+        window: int, recorder: StepRecorder, *, cut_short: bool
+    ) -> asyncio.Task[dict[str, Any]]:
+        ends.append(time.perf_counter() - started)
+        client = state.probe.report(
+            recorder.scheduled, recorder.behind, cpu_judged=state.cpu_judged
+        )
+        measured = max(time.perf_counter() - recorder.warm_until, 0.0)
+        row = {
+            "kind": "window",
+            "window": window,
+            **key,
+            "latency": model,
+            "warm": window <= profile.warm_windows,
+            "t_s": round(ends[-1], 3),
+        }
 
-    if profile.workers is not None:
-        return await _closed(state, profile, writer, keys, finish)
+        return asyncio.create_task(
+            _window_row(state, server, recorder, row, client, measured, cut_short=cut_short)
+        )
 
-    return await _open(state, profile, writer, keys, finish)
+    async def keep(task: asyncio.Task[dict[str, Any]]) -> dict[str, Any] | None:
+        """Write the closed window's row; why the soak stops after it, or ``None``."""
+
+        row = await task
+        check()
+        rows.append(row)
+        writer.write(row)
+
+        # A soak's warm-up is cold start, as a ramp's `warm_s` is: a burst there stops nothing.
+        return None if row["warm"] else _stop_reason(row, profile.stop_error_rate)
+
+    try:
+        for window in range(1, profile.windows + 1):
+            recorder = StepRecorder(warm_until=time.perf_counter())
+            state.current = recorder
+            state.probe.begin()
+
+            if pending is not None:
+                stopped, pending = await keep(pending), None
+
+                if stopped is not None:
+                    pending = close(window, recorder, cut_short=True)
+                    state.current = None
+                    await keep(pending)
+
+                    return rows, stopped, ends
+
+            with contextlib.suppress(TimeoutError):
+                deadline = started + window * profile.window_s
+                await asyncio.wait_for(
+                    state.interrupted.wait(), timeout=max(deadline - time.perf_counter(), 0.0)
+                )
+
+            check()
+            halt = state.halt
+            pending = close(window, recorder, cut_short=halt is not None)
+
+            if halt is not None:
+                state.current = None
+                await keep(pending)
+
+                return rows, {"window": window, **key, **halt}, ends
+
+        state.current = None
+        stopped = await keep(pending) if pending is not None else None
+
+        return rows, stopped, ends
+
+    finally:
+        state.current = None
+        tasks = [*load, *inflight, *([pending] if pending is not None else [])]
+
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _window_row(
+    state: _Run,
+    server: ServerSeries | None,
+    recorder: StepRecorder,
+    row: dict[str, Any],
+    client: dict[str, Any],
+    measured: float,
+    *,
+    cut_short: bool,
+) -> dict[str, Any]:
+    """Drain a closed window's calls and take its scrape side by side, then finish its row."""
+
+    drain = recorder.drain(state.plan.timeout_s + _DRAIN_MARGIN_S)
+
+    if server is None:
+        await drain
+
+    else:
+        _, row["server"] = await asyncio.gather(drain, server.sample(row["window"]))
+
+    summary = recorder.summary(measured)
+    scenarios = summary.pop("scenarios")
+    row.update(summary, client=client, scenarios=scenarios)
+
+    if state.exhausted:
+        row["sample_exhausted"], state.exhausted = state.exhausted, []
+
+    if cut_short:
+        row["cut_short"] = True
+
+    return row
 
 
 # ....................... #

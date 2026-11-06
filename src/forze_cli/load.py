@@ -76,12 +76,19 @@ def _warn_unattributed(meta: Mapping[str, Any]) -> None:
 
     attribution = meta.get("server", {}).get("attribution")
 
-    if attribution in ("none", "interleaved"):
-        named = "no instance" if attribution == "none" else "several instances"
+    if attribution == "none":
         typer.echo(
-            f"warning: the metrics scrape names {named} and its series do not name theirs, so "
-            "no server series will be fitted; client numbers still are. Name each process "
-            "with bootstrap_telemetry, or serve one scrape for every worker.",
+            "warning: the metrics scrape names no instance, so no server series will be "
+            "fitted; client numbers still are. Name each process with bootstrap_telemetry.",
+            err=True,
+        )
+
+    elif attribution == "interleaved":
+        # Series that name their own instance are still fitted; only the rest are at risk.
+        typer.echo(
+            "warning: the metrics scrape names several instances, so its unlabelled series "
+            "may not be fitted; series labelled service_instance_id still are. Serve one "
+            "scrape for every worker.",
             err=True,
         )
 

@@ -422,3 +422,24 @@ class TestSoak:
 
         assert result.exit_code == 2
         assert "soak" in result.output
+
+
+@pytest.mark.parametrize(
+    ("attribution", "warning"),
+    [
+        ("none", "names no instance, so no server series will be fitted"),
+        ("interleaved", "its unlabelled series may not be fitted; series labelled"),
+        ("instance", ""),
+        ("per_series", ""),
+        (None, ""),
+    ],
+)
+def test_the_start_warning_matches_the_attribution(
+    attribution: str | None, warning: str, capsys
+) -> None:
+    from forze_cli.load import _warn_unattributed
+
+    _warn_unattributed({"server": {"attribution": attribution}} if attribution else {})
+    err = capsys.readouterr().err
+
+    assert (warning in err) if warning else err == ""
