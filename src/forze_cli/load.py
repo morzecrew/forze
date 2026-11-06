@@ -238,10 +238,7 @@ def run_command(
 
 
 def _refusal(error: BaseException) -> CoreException | None:
-    """The refusal *error* carries: itself, or the first of a group made only of refusals."""
-
-    if isinstance(error, CoreException):
-        return error
+    """The first refusal of a group made only of refusals, as a task group raises them."""
 
     if isinstance(error, BaseExceptionGroup):
         leaves = list(_leaves(error))

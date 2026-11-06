@@ -10,7 +10,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from forze.base.exceptions import exc
 from forze_cli.app import app
+from forze_cli.load import _refusal
 from forze_load.report import SCHEMA
 
 pytestmark = pytest.mark.unit
@@ -503,3 +505,19 @@ def test_the_start_warning_matches_the_attribution(
     err = capsys.readouterr().err
 
     assert (warning in err) if warning else err == ""
+
+
+class TestRefusalInGroups:
+    def test_a_nested_group_of_refusals_is_a_refusal(self) -> None:
+        first = exc.configuration("first")
+        group = ExceptionGroup("outer", [ExceptionGroup("inner", [first]), exc.configuration("b")])
+
+        assert _refusal(group) is first
+
+    def test_a_group_mixing_a_bug_with_refusals_is_not_a_refusal(self) -> None:
+        group = ExceptionGroup("calls", [exc.configuration("a"), RuntimeError("bug")])
+
+        assert _refusal(group) is None
+
+    def test_a_plain_exception_is_not_a_refusal(self) -> None:
+        assert _refusal(RuntimeError("bug")) is None
