@@ -107,8 +107,9 @@ class TransactionScopeHandle:
     - **A scope on another route with a transaction of its own** — a route whose manager runs
       on another client, so it is not in a transaction when the scope opens (see
       :class:`~forze.application.contracts.transaction.TransactionallyEnlistable`). It commits
-      at its own exit, which the root cannot undo. So it rolls back instead when the root is
-      already marked by then, and :meth:`rollback_only` on the root refuses with a
+      at its own exit, which the root cannot undo, and that commit is the invocation's commit
+      point (a deadline after it is ``commit_ambiguous``). So it rolls back instead when the
+      root is already marked by then, and :meth:`rollback_only` on the root refuses with a
       ``precondition`` once such a scope may have committed. A dry run that spans such routes
       calls :meth:`rollback_only` before opening them.
     - **An exception after the mark** propagates as it would without it: the scope rolls back
@@ -580,6 +581,10 @@ class TransactionContext:
 
                         if independent and root is not None:
                             root._independent_commits.append(nested_route)  # pyright: ignore[reportPrivateUsage]
+                            # Its own commit runs as this block exits, which no later
+                            # rollback of the root undoes: a commit point for the invocation,
+                            # as the root's is, so a deadline after it is never retryable.
+                            mark_commit_started()
 
             except RollbackSignal as caught:
                 if caught is not nested_signal:

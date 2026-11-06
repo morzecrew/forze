@@ -155,7 +155,8 @@ dry run up front.
 - **A route on another client** opens a transaction of its own, which commits when its
   scope exits, and the root cannot undo that. Under a root already marked, such a scope
   rolls back too. Once one has exited, `rollback_only()` on the root raises
-  `exc.precondition` (`code="tx_rollback_after_independent_commit"`). So a dry run that
+  `exc.precondition` (`code="tx_rollback_after_independent_commit"`), and a deadline
+  after that commit is reported `commit_ambiguous`, never retryable. So a dry run that
   spans clients calls `rollback_only()` before it opens their scopes. Routes on the same
   client, such as `tx={"orders", "billing"}` in one deps module, share the root's
   transaction and need no care.

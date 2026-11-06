@@ -15,19 +15,25 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import attrs
 import pytest
 
+from forze.application.contracts.execution import Handler
 from forze.application.contracts.transaction import (
+    COMMIT_AMBIGUOUS_CODE,
     IsolationLevel,
     RollbackSignal,
+    TransactionManagerDepKey,
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
 )
+from forze.application.execution import Deps, ExecutionContext, bind_deadline
 from forze.application.execution.context.commit_state import (
     commit_started,
     reset_commit_started,
 )
 from forze.application.execution.context.transaction import TransactionContext
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.testing import context_from_deps
 
 # ----------------------- #
 
@@ -45,6 +51,8 @@ class _RecordingManager:
     savepoints: bool = True
     cancel_nested_rollback: bool = False
     """Cancel the task while a nested scope rolls back on request, as a deadline would."""
+    root_rollback_delay: float = 0.0
+    """How long a root rollback takes, so a deadline can land in it."""
     events: list[str] = attrs.field(factory=list)
     depth: int = 0
 
@@ -83,6 +91,9 @@ class _RecordingManager:
                 assert task is not None
                 task.cancel()
                 await asyncio.sleep(0)  # the rollback's round trip, where the cancel lands
+
+            if self.root_rollback_delay and level == "root":
+                await asyncio.sleep(self.root_rollback_delay)
 
             raise
 
@@ -397,6 +408,7 @@ class TestOtherRoutes:
             assert other.events == ["root:commit"]
 
     async def test_a_route_on_the_same_client_joins_and_is_not_refused(self) -> None:
+        reset_commit_started()
         a = _RecordingManager()
         tx = _routes(a=a, b=a)
 
@@ -407,6 +419,8 @@ class TestOtherRoutes:
             root.rollback_only()
 
         assert a.events == ["nested:commit", "root:RollbackSignal"]
+        # A scope that joins the root commits nothing on its own: no commit point.
+        assert commit_started() is False
 
     async def test_it_rolls_back_alone_without_savepoints(self) -> None:
         a, b = _RecordingManager(), _RecordingManager(savepoints=False)
@@ -417,3 +431,47 @@ class TestOtherRoutes:
 
         assert b.events == ["root:RollbackSignal"]
         assert a.events == ["root:commit"]
+
+    async def test_its_commit_is_a_commit_point(self) -> None:
+        reset_commit_started()
+        tx = _routes(a=_RecordingManager(), b=_RecordingManager())
+
+        async with tx.scope("a"):
+            async with tx.scope("b"):
+                pass
+
+            assert commit_started() is True
+
+        reset_commit_started()
+
+    async def test_a_deadline_in_the_refused_roots_rollback_is_not_retryable(self) -> None:
+        """Independent commit, late rollback_only(), a deadline while the root rolls back."""
+
+        reset_commit_started()
+        a, b = _RecordingManager(root_rollback_delay=10.0), _RecordingManager()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class DryRunDecidedLate(Handler[str, str]):
+            ctx: ExecutionContext
+
+            async def __call__(self, args: str) -> str:
+                async with self.ctx.tx_ctx.scope("a") as root:
+                    async with self.ctx.tx_ctx.scope("b"):
+                        pass  # commits on its own client
+
+                    root.rollback_only()  # refused; the root then rolls back, slowly
+
+                return args
+
+        ctx = context_from_deps(
+            Deps.routed({TransactionManagerDepKey: {"a": lambda _c: a, "b": lambda _c: b}})
+        )
+        registry = OperationRegistry(handlers={"op": lambda c: DryRunDecidedLate(ctx=c)}).freeze()
+
+        with bind_deadline(0.05), pytest.raises(CoreException) as caught:
+            await registry.resolve("op", ctx)("x")
+
+        assert b.events == ["root:commit"]
+        assert a.events == ["root:CoreException"]
+        assert caught.value.kind is ExceptionKind.INTERNAL
+        assert caught.value.code == COMMIT_AMBIGUOUS_CODE
