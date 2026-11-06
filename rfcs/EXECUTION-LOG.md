@@ -6778,7 +6778,8 @@ and the hub's 256-slot queue `hub.py:123-128` (`:120-126`). `ws.py:383`, `:637`,
 
 **Drift count: 1.** Fifteen entries, D-253 to D-267: one `drift` (D-267), twelve `spec-gap`,
 two `discovery`. D-267 departs from §7's wording as D-246 did; no decision row is departed
-from.
+from. A fresh-eyes review of `95855215a` raised ten findings, one of them already found and
+under way; all ten were fixed in `dda83b0eb`. The table at the end records each.
 
 **Where each item lives.** `Realtime`, the phases, matching, the storm and the reconnect rules
 in [`forze_load/realtime.py`](../src/forze_load/realtime.py); `Frame`, the event-stream parser
@@ -6833,9 +6834,11 @@ unchanged.
 - **Built:** `_wire.ws_connect` sends the upgrade through `httpx.AsyncClient.stream`, so the
   run's target guard, cookie policy and credential headers apply, and reads frames off the
   upgraded connection httpx hands back (`network_stream`). It reads text messages, fragments
-  included, skips binary ones, answers pings, sends one ping of its own (D-256), masks with
-  `secure_random_bytes`, and never sends a message. A frame over 16 MiB, a reserved opcode or
-  a broken connection ends the stream as a close. Row 2 holds.
+  included and kept across a pong between them (R-7), skips binary ones, answers pings, sends
+  one ping of its own (D-256), masks with `secure_random_bytes`, and never sends a message. A
+  frame over 16 MiB, a reserved opcode or a broken connection ends the stream as a close. The
+  event-stream reader splits lines itself, on CR, LF and CRLF only, and a line over 16 MiB
+  breaks the stream (R-8). Row 2 holds.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — the WebSocket transport is a minimal read-only
   RFC 6455 client over httpx's HTTP/1.1 upgrade; it answers pings and sends no message, so the
@@ -6862,27 +6865,29 @@ unchanged.
   which has no `retry:`, and on a run where nothing opens.
 - **Built:** each phase row counts, under `streams`:
   - `opened`, with `open_ms`: streams that opened;
-  - `refused`: an SSE answer other than 200, as `EventSource` gives up on one; a WebSocket
-    closed with 1008 before it answered the ping; an upgrade answered with another status than
-    101. That subscriber stays closed;
-  - `errors`: a transport failure, or another close before the ping's answer; retried after
-    one second;
+  - `refused`: an SSE answer other than 200, or not `text/event-stream`, as `EventSource`
+    gives up on one (R-1); a WebSocket closed with 1008 before it answered the ping; an
+    upgrade answered with another status than 101. That subscriber stays closed;
+  - `errors`: a transport failure before the stream opened, or another close before the
+    ping's answer; retried after one second;
   - `draining`: SSE 200 with `X-Error-Code: realtime_draining`, retried after its `retry:`;
     WebSocket 1012 before the ping's answer, retried after one second;
-  - `ended`: an open stream the server ended (an SSE end of stream, any WebSocket close, 1012
-    from a drain step and 1008 from an expired credential included), reopened with its resume
-    after the stream's last `retry:` or one second. The kit sends no `realtime.reauth`.
+  - `ended`: an open stream the server ended or the network cut (an SSE end of stream or a
+    broken read (R-5), any WebSocket close, 1012 from a drain step and 1008 from an expired
+    credential included), reopened with its resume after the stream's last `retry:` or one
+    second. The kit sends no `realtime.reauth`.
 
-  "Failed opens" are `refused` plus `errors`. The streams open in batches of `batch`, each
+  No reopen comes sooner than 50 ms, whatever `retry:` says, and `retry:` takes ASCII digits
+  only (R-8). "Failed opens" are `refused` plus `errors`. The streams open in batches of `batch`, each
   batch waited for up to `timeout_s`. When every stream is refused, the run stops before its
   first write, a finished run (row 36), with `stopped: {"phase": "steady", "reason":
   "no_stream"}`.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a WebSocket is open once its first ping is
   answered; a refused stream (SSE non-200, WebSocket 1008 before that, an upgrade other than
-  101) stays closed; draining answers, transport errors and streams the server ends are
-  reopened, after the server's `retry:` or one second; a run whose every stream is refused
-  stops before its first write as `no_stream`.
+  101, an SSE answer that is not an event stream) stays closed; draining answers, transport
+  errors and open streams that end are reopened, after the server's `retry:` or one second;
+  a run whose every stream is refused stops before its first write as `no_stream`.
 
 ## D-258 — A key closes `timeout_s` after its write's answer: missing, gap or late
 
@@ -6896,13 +6901,17 @@ unchanged.
   before its send, are not refused, and are in its audience. `timeout_s` after the answer the
   key closes: an expected subscriber that has not received it counts a `gap` when it held no
   open stream at the write's send, and `missing` otherwise. Gaps count in every phase, a
-  stream a drain ended included, not only in the storm. A frame for a closed key is `late`,
-  neither delivered nor a duplicate. Keys are held only until they close, so the run holds at
-  most rate × `timeout_s` of them. One key per write: a repeated key is expected once.
+  stream a drain ended included, not only in the storm. A closed key keeps the subscribers it
+  never reached: one of them receiving it later counts once as `late`, and any other frame for
+  a closed key counts nowhere (R-2). The expected and the received subscribers are bit sets,
+  and an audience is the union of per-principal bit sets, so a write costs a few big-integer
+  operations rather than a scan of every subscriber, and its sets are dropped when it closes
+  (R-4). One key per write: a repeated key is expected once.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — a write expects the subscribers in its audience
   that opened before its send; `timeout_s` after its answer each that has not received it is a
-  `gap` if it was down at the send and `missing` otherwise, and a later frame is `late`.
+  `gap` if it was down at the send and `missing` otherwise; a frame for a key a subscriber
+  missed, arriving later, counts once as `late`.
 
 ## D-259 — A frame that beats its write's answer waits for the answer to name its key
 
@@ -6913,7 +6922,9 @@ unchanged.
 - **Built:** such a frame is held under its key with its arrival time and repeats. The answer
   resolves it: timed (a negative answer → delivery), its repeats counted as duplicates, and
   dropped if its subscriber is not expected. A held frame no answer claims is let go after the
-  request timeout plus one second.
+  request timeout plus one second. A frame that arrives before the first write is not held:
+  it can only replay earlier traffic, as every first open does with the retained mailbox
+  (D-263, R-3).
 - **Class:** `discovery`.
 
 ## D-260 — Two phases, one row each, written once their keys close
@@ -6946,6 +6957,8 @@ unchanged.
   it reopened, its duplicates included. Only matched frames count: other traffic's replay has
   no write to compare with. `back_in_s` runs from the drop to the last stream's reopen, and is
   `null` while any stream that was dropped is still away; `back` counts those that returned.
+  Both cover the streams that had opened before the drop: one still retrying its first open
+  is restarted too, but was never dropped (R-6).
   The drop closes each connection without a close frame, as a network failure would.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0084):** `ASSUMED` — `replayed` counts frames a reopened stream
@@ -6975,8 +6988,9 @@ unchanged.
 - **RFC said:** a `device_id` per subscriber; silent on acks.
 - **Built:** the kit never acks, by `POST …/ack` or `realtime.ack`: an ack moves a device's
   cursor and lets the trim delete mailbox entries, a write to a shared environment the plan
-  never declared. So a stream reopened with no id replays from the stored cursor, which for a
-  device that never acked is the retained mailbox, up to 1000 entries a principal. Each
+  never declared. So every first open, and a stream reopened with no id, replays from the
+  stored cursor, which for a device that never acked is the retained mailbox, up to 1000
+  entries a principal (R-3). Each
   subscriber sends `device_id=forze-load-<n>`. forze's WebSocket route keys its cursor by the
   `WsConnection.client` the app's resolver returns, so that resolver must read the parameter;
   the docs say so.
@@ -7027,6 +7041,25 @@ unchanged.
   still unreleased, as D-246 did and the maintainer accepted. The entry stays within the
   house's 320 characters, so its saturated-client clause gave way.
 - **Class:** `drift`.
+
+## Review findings — 2026-11-06
+
+Fresh-eyes review of `95855215a`. R-1 was found while the review ran, and the review raised it
+too. Every fix has a test, run against the code without the fix, that fails there; R-7's and
+R-8's reproduce what the review reproduced.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | An SSE 200 that was not an event stream, a wrong path answering JSON say, counted as open, reopened every second and never reached `no_stream` | Fixed in `dda83b0eb`: refused, as `EventSource` refuses it (D-257) |
+| R-2 | Bug | `late` counted every frame for a closed key: duplicates and re-sends to streams that had it, and streams the write never expected | Fixed in `dda83b0eb`: a closed key keeps the subscribers it missed, and a late frame counts once, only there (D-258) |
+| R-3 | Risk | The kit never acks, so every first open replays the retained mailbox; each of those frames was held for up to the request timeout plus a second | Fixed in `dda83b0eb`: frames before the first write are not held (D-259); the docs say first opens replay (D-263) |
+| R-4 | Risk | Each answer scanned every subscriber and built a set of them, about 0.8 MB at 10,000 subscribers, kept per live write | Fixed in `dda83b0eb`: expected and received subscribers are bit sets, and an audience a union of per-principal bit sets (D-258) |
+| R-5 | Bug | An open SSE stream that broke mid-read counted as `errors` and ignored its `retry:`, while the same break on a WebSocket counted as `ended` | Fixed in `dda83b0eb`: `ended` on both (D-257) |
+| R-6 | Bug | A stream still retrying its first open when the storm dropped the rest kept `back_in_s` at `null`, and its first open counted as back | Fixed in `dda83b0eb`: `back` and `back_in_s` cover streams that had opened (D-261) |
+| R-7 | Bug | A pong between two fragments of a WebSocket message dropped the fragments before it | Fixed in `dda83b0eb`: fragments are kept across calls (D-255) |
+| R-8 | Risk | `retry: ²` passed `str.isdigit` and failed the run in `int`; `retry: 0` reopened with no floor; an event-stream line had no length cap | Fixed in `dda83b0eb`: ASCII digits only, a 50 ms floor, and a 16 MiB line breaks the stream (D-255, D-257) |
+| R-9 | Test | The test that other traffic's frames are let go passed whether they were or not | Fixed in `dda83b0eb`: the holding and `late` accounting are tested on the run directly |
+| R-10 | Docs | The docs said a frame's JSON is decoded only when `match` reads `data`, which holds on SSE only | Fixed in `dda83b0eb`: the docs and `Frame` say so |
 
 ---
 
