@@ -27,6 +27,7 @@ from forze_load import (
     run,
     sample,
 )
+from forze_load.catalog import _body_misfit
 from forze_load.plan import PlanScenario
 
 pytestmark = pytest.mark.unit
@@ -569,7 +570,7 @@ class TestDocumentShapes:
         result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
 
         assert result.meta["plan"]["skipped"] == {
-            "a.union": "its body schema is composed (allOf, anyOf or oneOf)"
+            "a.union": "its body schema uses keywords the kit does not evaluate: oneOf"
         }
 
 
@@ -695,6 +696,43 @@ class TestRouteInputs:
         ],
     )
     async def test_a_body_that_admits_an_empty_object_is_generated(self, schema) -> None:
+        doc = {"paths": {"/b": {"post": _op("a.batch", body=schema)}}}
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"a.batch"}
+
+    @pytest.mark.parametrize(
+        ("schema", "named"),
+        [
+            ({"type": "object", "not": {"maxProperties": 0}}, "not"),
+            ({"if": {"required": ["k"]}, "then": {"minProperties": 1}}, "if, then"),
+            ({"properties": {}, "patternProperties": {"^x": {}}}, "patternProperties"),
+            ({"dependentRequired": {"a": ["b"]}}, "dependentRequired"),
+        ],
+    )
+    async def test_a_keyword_the_kit_does_not_evaluate_skips_the_body(self, schema, named) -> None:
+        doc = {"paths": {"/a": {"get": _op("a.read")}, "/b": {"post": _op("a.batch", body=schema)}}}
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {
+            "a.batch": f"its body schema uses keywords the kit does not evaluate: {named}"
+        }
+
+    async def test_an_allowlisted_schema_still_generates(self) -> None:
+        schema = {
+            "type": "object",
+            "title": "Listing",
+            "description": "A page of rows.",
+            "properties": {"page": {"type": "integer", "default": 1}},
+            "additionalProperties": False,
+            "maxProperties": 3,
+            "nullable": False,
+            "examples": [{}],
+            "deprecated": False,
+            "$comment": "kept",
+        }
         doc = {"paths": {"/b": {"post": _op("a.batch", body=schema)}}}
 
         result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
@@ -840,6 +878,56 @@ class TestRouteInputs:
 
 
 class TestSampleBounds:
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"properties": {"size": {}}, "const": {}},
+            {"properties": {"size": {}}, "enum": [{}]},
+            {"properties": {"size": {}}, "maxProperties": 0},
+            {"properties": {"size": {"type": "integer", "maximum": 100}}},
+            {"properties": {"size": {"type": "string"}}},
+            {"properties": {"size": {"anyOf": [{"type": "integer"}]}}},
+            {"properties": {"size": {"$ref": "#/components/schemas/Size"}}},
+        ],
+    )
+    async def test_a_sample_body_its_schema_refuses_stops_the_run(self, schema) -> None:
+        doc = {
+            "paths": {
+                "/x/{id}": {"get": _op("x.get", params=_ID)},
+                "/x/list": {"post": _op("x.list", body=schema)},
+            }
+        }
+        plan = _plan(Scenario.op("x.get", path={"id": sample("x.list", size=500)}))
+
+        with pytest.raises(CoreException) as error:
+            await _run(_App({"ada": ["p1"]}, doc), plan)
+
+        assert error.value.code == "load_plan_invalid"
+        assert error.value.summary.startswith("sample('x.list') cannot call its operation: its ")
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"properties": {"size": {}}, "enum": [{"size": 5}]},
+            {"properties": {"size": {"type": "integer", "minimum": 1, "maximum": 5}}},
+            {"properties": {"size": {"exclusiveMinimum": 0}}, "additionalProperties": False},
+            {"properties": {"size": {}}, "required": ["size"], "maxProperties": 1},
+        ],
+    )
+    async def test_a_sample_body_its_schema_admits_is_sent(self, schema) -> None:
+        doc = {
+            "paths": {
+                "/x/{id}": {"get": _op("x.get", params=_ID)},
+                "/x/list": {"post": _op("x.list", body=schema)},
+            }
+        }
+        app = _App({"ada": ["p1"]}, doc)
+
+        await _run(app, _plan(Scenario.op("x.get", path={"id": sample("x.list", size=5)})))
+
+        listing = next(r for r in app.requests if r.url.path == "/x/list")
+        assert json.loads(listing.content) == {"size": 5}
+
     async def test_a_sample_keeps_no_more_than_its_size(self) -> None:
         doc = {**_DOC, "components": {"schemas": {"L": {"properties": {"page": {}}}}}}
         app = _App({"ada": [f"p{i}" for i in range(10)]}, doc)
@@ -1156,3 +1244,67 @@ class TestRunGuards:
 
 async def _ok(_request: httpx.Request) -> httpx.Response:
     return httpx.Response(200)
+
+
+class TestBodyMisfit:
+    """The body check, alone: whatever it does not model it refuses."""
+
+    @pytest.mark.parametrize(
+        ("schema", "body", "reason"),
+        [
+            (
+                {"properties": []},
+                {},
+                "its body schema has 'properties' or 'required' of the wrong shape",
+            ),
+            (
+                {"required": "size"},
+                {},
+                "its body schema has 'properties' or 'required' of the wrong shape",
+            ),
+            ({"additionalProperties": False}, {"size": 5}, "its body cannot carry ['size']"),
+            (
+                {"additionalProperties": {"type": "integer"}},
+                {"size": 5},
+                "its body cannot carry ['size']",
+            ),
+            ({"minProperties": "1"}, {}, "its body cannot be an empty object"),
+            (
+                {"properties": {"size": True}},
+                {"size": 5},
+                "its body's 'size' schema is not an object",
+            ),
+            (
+                {"properties": {"size": {"minimum": 10, "exclusiveMinimum": True}}},
+                {"size": 10},
+                "its body's 'size' cannot be 10",
+            ),
+            (
+                {"properties": {"size": {"maximum": 5, "exclusiveMaximum": True}}},
+                {"size": 5},
+                "its body's 'size' cannot be 5",
+            ),
+            (
+                {"properties": {"size": {"maximum": "100"}}},
+                {"size": 5},
+                "its body's 'size' schema has a bound that is not a number",
+            ),
+        ],
+    )
+    def test_it_refuses(self, schema, body, reason) -> None:
+        assert _body_misfit(schema, body) == reason
+
+    @pytest.mark.parametrize(
+        ("schema", "body"),
+        [
+            ({"properties": {"size": {"minimum": 5, "exclusiveMinimum": False}}}, {"size": 5}),
+            ({"properties": {"size": {"maximum": 5, "exclusiveMaximum": False}}}, {"size": 5}),
+            (
+                {"properties": {"size": {"type": ["integer", "null"], "nullable": True}}},
+                {"size": 5},
+            ),
+            ({"additionalProperties": True}, {}),
+        ],
+    )
+    def test_it_admits(self, schema, body) -> None:
+        assert _body_misfit(schema, body) is None

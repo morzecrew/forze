@@ -46,6 +46,47 @@ _ID = "id"
 _SIZE = "size"
 _JSON = "application/json"
 _METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
+
+_ANNOTATIONS = frozenset(
+    {
+        "title",
+        "description",
+        "default",
+        "example",
+        "examples",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+        "format",
+        "$comment",
+    }
+)
+"""Schema keywords that describe and never constrain."""
+
+_BODY_KEYWORDS = _ANNOTATIONS | {
+    "type",
+    "properties",
+    "required",
+    "minProperties",
+    "maxProperties",
+    "enum",
+    "const",
+    "additionalProperties",
+    "nullable",
+}
+"""Every keyword a body schema may use for the kit to judge a body against it."""
+
+_VALUE_KEYWORDS = _ANNOTATIONS | {
+    "type",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "enum",
+    "const",
+    "nullable",
+}
+"""Every keyword a property's schema may use for the kit to judge a number against it."""
 _PLACEHOLDER = re.compile(r"\{([^}/]+)\}")
 
 
@@ -78,17 +119,43 @@ class _Route:
     """The JSON media type the body is sent as: ``application/json`` when the route offers
     it, else its first ``application/*+json`` type; ``None`` when it takes no JSON."""
 
-    body_fields: frozenset[str]
-    body_requires: tuple[str, ...]
-    body_composed: bool
-    """The body schema is an ``allOf``, ``anyOf`` or ``oneOf``: what it requires is not read."""
+    body_schema: Mapping[str, Any]
+    """The body's JSON schema, ``$ref`` followed; ``{}`` when there is none to read."""
 
     body_unresolved: bool
     """The body schema is a ``$ref`` that is missing, external or circular."""
 
-    body_takes_object: bool
-    """The body schema accepts ``{}``: no non-object ``type``, no ``minProperties``, and an
-    ``enum`` or ``const`` that admits ``{}``."""
+    @property
+    def body_fields(self) -> frozenset[str]:
+        """The properties the body schema declares."""
+
+        fields = self.body_schema.get("properties")
+
+        return frozenset(fields) if isinstance(fields, dict) else frozenset()
+
+    @property
+    def body_requires(self) -> tuple[str, ...]:
+        """The fields the body schema requires at the top level."""
+
+        requires = self.body_schema.get("required")
+
+        return (
+            tuple(r for r in requires if isinstance(r, str)) if isinstance(requires, list) else ()
+        )
+
+    @property
+    def body_composed(self) -> bool:
+        """The body schema is an ``allOf``, ``anyOf`` or ``oneOf``: what it requires is not read."""
+
+        return any(k in self.body_schema for k in ("allOf", "anyOf", "oneOf"))
+
+    def sample_body(self, size: int) -> dict[str, int] | None:
+        """The body a sample sends: ``size`` when the schema declares it, else ``{}``."""
+
+        if not self.has_body:
+            return None
+
+        return {_SIZE: size} if _SIZE in self.body_fields else {}
 
     @property
     def body_json(self) -> bool:
@@ -111,30 +178,28 @@ class _Route:
 
         return QUERY if self.declared == QUERY else COMMAND
 
-    def unsendable(self, *, allow_id: bool) -> str | None:
-        """Why the route cannot be called with no input (with only an id if *allow_id*)."""
+    def unsendable(self, *, allow_id: bool, body: Mapping[str, Any] | None) -> str | None:
+        """Why the route cannot be called with no input (only an id if *allow_id*) and *body*.
+
+        *body* is the exact JSON body the kit would send, or ``None`` for none. It is judged
+        by :func:`_body_misfit`, which refuses whatever it does not model.
+        """
 
         needed = (self.path_params | self.required_query) - ({_ID} if allow_id else set())
 
         if needed or self.required_other:
             return f"needs {sorted(needed | self.required_other)}"
 
-        if self.body_required and not self.body_json:
+        if body is None:
+            return None
+
+        if not self.body_json:
             return "takes a body that is not JSON"
 
-        if self.has_body and self.body_unresolved:
+        if self.body_unresolved:
             return "its body schema cannot be resolved"
 
-        if self.has_body and self.body_composed:
-            return "its body schema is composed (allOf, anyOf or oneOf)"
-
-        if self.has_body and not self.body_takes_object:
-            return "its body cannot be an empty object"
-
-        if self.body_requires:
-            return f"its body requires {list(self.body_requires)}"
-
-        return None
+        return _body_misfit(self.body_schema, body)
 
 
 @attrs.define
@@ -240,9 +305,7 @@ class Catalog:
         """
 
         route = self._sample_routes[sample]
-        body = (
-            ({_SIZE: sample.size} if _SIZE in route.body_fields else {}) if route.has_body else None
-        )
+        body = route.sample_body(sample.size)  # the body _sample_route judged against the schema
         # The body's `size` if it has one, else the query's: a body without one must not hide it.
         params = (
             {_SIZE: sample.size}
@@ -471,7 +534,8 @@ class _Builder:
             return "named by another scenario"
 
         route = routes[0]
-        reason = route.unsendable(allow_id=True)
+        # A required body goes out as `{}`; an optional one is left out.
+        reason = route.unsendable(allow_id=True, body={} if route.body_required else None)
 
         if reason is not None:
             return reason
@@ -479,11 +543,15 @@ class _Builder:
         if _ID not in route.path_params | route.required_query:
             return None
 
-        lister = _sibling_list(key)
-        listing = self.index.get(lister, [])
+        ids = Sample(_sibling_list(key))
+        listing = self.index.get(ids.operation, [])
 
-        if len(listing) != 1 or listing[0].kind != QUERY or listing[0].unsendable(allow_id=False):
-            return f"no {lister!r} query to sample ids from"
+        if (
+            len(listing) != 1
+            or listing[0].kind != QUERY
+            or listing[0].unsendable(allow_id=False, body=listing[0].sample_body(ids.size))
+        ):
+            return f"no {ids.operation!r} query to sample ids from"
 
         return None
 
@@ -610,9 +678,6 @@ def _route(
     body_type = _JSON if _JSON in content else next(filter(_is_json_type, content), None)
     media = content[body_type] if body_type is not None else None
     schema = _deref(document, media.get("schema") if isinstance(media, dict) else None)
-    resolved = schema or {}
-    fields = resolved.get("properties")
-    requires = resolved.get("required")
 
     return _Route(
         operation=key,
@@ -630,35 +695,132 @@ def _route(
         has_body=bool(body),
         body_required=bool(body.get("required")),
         body_type=body_type,
-        body_fields=frozenset(fields) if isinstance(fields, dict) else frozenset(),
-        body_requires=tuple(r for r in requires if isinstance(r, str))
-        if isinstance(requires, list)
-        else (),
-        body_composed=any(k in resolved for k in ("allOf", "anyOf", "oneOf")),
+        body_schema=schema or {},
         body_unresolved=schema is None,
-        body_takes_object=_takes_empty_object(resolved),
     )
 
 
-def _takes_empty_object(schema: Mapping[str, Any]) -> bool:
-    """Whether *schema* accepts ``{}``, judged by the keywords that can refuse it outright."""
+def _body_misfit(schema: Mapping[str, Any], body: Mapping[str, Any]) -> str | None:
+    """Why *body*, the exact body the kit would send, does not fit *schema*, or ``None``.
 
+    Conservative by construction: only the keywords in :data:`_BODY_KEYWORDS` are evaluated,
+    and a schema with any other keyword at its top level is refused outright instead of half
+    read, so no keyword the kit does not model can let through a body the server refuses.
+    """
+
+    unknown = sorted(set(schema) - _BODY_KEYWORDS)
+
+    if unknown:
+        return f"its body schema uses keywords the kit does not evaluate: {', '.join(unknown)}"
+
+    fields = schema.get("properties", {})
+    requires = schema.get("required", [])
+
+    if not isinstance(fields, dict) or not (
+        isinstance(requires, list) and all(isinstance(r, str) for r in requires)
+    ):
+        return "its body schema has 'properties' or 'required' of the wrong shape"
+
+    missing = [field for field in requires if field not in body]
+
+    if missing:
+        return f"its body requires {missing}"
+
+    shown = json.dumps(body, sort_keys=True) if body else "an empty object"
+
+    if not (_admits_type(schema, {"object"}) and _counts_fit(schema, len(body))):
+        return f"its body cannot be {shown}"
+
+    if not _listed(schema, body):
+        return f"its body cannot be {shown}"
+
+    extra = sorted(set(body) - set(fields))
+
+    # `false` refuses them, and a schema for them is not evaluated: either way, refused.
+    if extra and schema.get("additionalProperties", True) is not True:
+        return f"its body cannot carry {extra}"
+
+    for key in sorted(set(body) & set(fields)):
+        reason = _value_misfit(fields[key], body[key])
+
+        if reason is not None:
+            return f"its body's {key!r} {reason}"
+
+    return None
+
+
+def _value_misfit(schema: Any, value: int) -> str | None:
+    """Why the number *value* does not fit a property's *schema*, judged the same way."""
+
+    if not isinstance(schema, dict):
+        return "schema is not an object"
+
+    unknown = sorted(set(schema) - _VALUE_KEYWORDS)
+
+    if unknown:
+        return f"schema uses keywords the kit does not evaluate: {', '.join(unknown)}"
+
+    low, high = schema.get("minimum"), schema.get("maximum")
+    above, below = schema.get("exclusiveMinimum"), schema.get("exclusiveMaximum")
+
+    # OpenAPI 3.0 writes an exclusive bound as `exclusiveMinimum: true` beside `minimum`.
+    if isinstance(above, bool):
+        low, above = (None, low) if above else (low, None)
+
+    if isinstance(below, bool):
+        high, below = (None, high) if below else (high, None)
+
+    bounds = (low, high, above, below)
+
+    if not all(b is None or _is_number(b) for b in bounds):
+        return "schema has a bound that is not a number"
+
+    fits = (
+        _admits_type(schema, {"integer", "number"})
+        and (low is None or value >= low)
+        and (high is None or value <= high)
+        and (above is None or value > above)
+        and (below is None or value < below)
+        and _listed(schema, value)
+    )
+
+    return None if fits else f"cannot be {value}"
+
+
+def _admits_type(schema: Mapping[str, Any], kinds: set[str]) -> bool:
     shape = schema.get("type")
-    minimum = schema.get("minProperties")
 
-    if not (shape is None or shape == "object" or (isinstance(shape, list) and "object" in shape)):
-        return False
+    if shape is None:
+        return True
 
-    if isinstance(minimum, int) and minimum > 0:
-        return False
+    names = shape if isinstance(shape, list) else [shape]
 
-    if "enum" in schema:  # a malformed enum admits nothing the kit can rely on
+    return bool(kinds & {name for name in names if isinstance(name, str)})
+
+
+def _counts_fit(schema: Mapping[str, Any], count: int) -> bool:
+    low, high = schema.get("minProperties", 0), schema.get("maxProperties")
+
+    if not _is_number(low) or not (high is None or _is_number(high)):
+        return False  # a bound the kit cannot read refuses
+
+    return count >= low and (high is None or count <= high)
+
+
+def _listed(schema: Mapping[str, Any], value: Any) -> bool:
+    """*value* is in the schema's ``enum`` and equals its ``const``, where those are set."""
+
+    if "enum" in schema:
         enum = schema["enum"]
 
-        if not isinstance(enum, list) or {} not in enum:
+        if not isinstance(enum, list) or value not in enum:
             return False
 
-    return "const" not in schema or schema["const"] == {}
+    return "const" not in schema or schema["const"] == value
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _is_json_type(media_type: str) -> bool:
@@ -753,10 +915,11 @@ def _sample_route(index: Mapping[str, list[_Route]], sample: Sample) -> _Route:
             code="load_op_mismatch",
         )
 
-    reason = route.unsendable(allow_id=False)
+    # Judged against the exact body the sample sends: `{"size": n}`, or `{}`.
+    reason = route.unsendable(allow_id=False, body=route.sample_body(sample.size))
 
     if reason is not None:
-        raise _invalid(f"sample({sample.operation!r}) cannot call its operation: it {reason}")
+        raise _invalid(f"sample({sample.operation!r}) cannot call its operation: {reason}")
 
     return route
 

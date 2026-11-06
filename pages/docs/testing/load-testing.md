@@ -123,7 +123,8 @@ one value at random. Each principal samples for itself, because an id one princi
 read may be forbidden to another.
 
 - A sample must read a `query` operation, and an empty one stops the run before load,
-  naming the principal and the operation.
+  naming the principal and the operation. The body it sends, `{"size": n}` or `{}`, must
+  fit the route's schema by the same rule as a sweep's (below), or the run is refused.
 - An id that answers 404 later, deleted by a write scenario or by someone else, counts as
   `not_found` and leaves the sample. A request that carries two sampled values drops
   neither: the 404 does not say which one is gone. A sample emptied by 404s retires its
@@ -140,19 +141,25 @@ read may be forbidden to another.
 `Scenario.reads("orders.")` generates one scenario per `query` operation whose key starts
 with the prefix and whose input the kit can fill without guessing:
 
-- no input, or a JSON body whose schema takes an object and requires no field, such as a
-  paginated list, sent as `{}`;
+- no input, or a JSON body whose schema accepts `{}`, such as a paginated list, sent as `{}`;
 - an `id`, in the path or the query, with an optional `rev`. Ids are sampled from the `list`
   operation beside the route: `orders.list` for `orders.get`.
 
+The body check is conservative by construction. It reads only `type`, `properties`,
+`required`, `minProperties`, `maxProperties`, `enum`, `const`, `additionalProperties` and
+`nullable`, plus annotations such as `title`, `description` and `default`, and judges the
+exact body it would send against them. A schema with any other keyword at its top level,
+such as `not`, `allOf` or `if`, is skipped rather than half read.
+
 Every other `query` route is recorded with its reason under `plan.skipped` in the meta line,
 and `forze load run` prints them: one that needs a header or a cookie, or whose body schema
-is composed, cannot be resolved, or takes no empty object, among them. `command` routes are
-never generated. A mix weights the group by its name, `reads` by default, and the weight is
-split evenly between the generated scenarios; the rows name each by its operation key. An
-operation another scenario of the plan already calls, by its name or as a `Scenario.op`
-under another name, is left to that scenario, and a sweep that generates nothing stops the
-run.
+cannot be resolved, uses a keyword the kit does not evaluate, or refuses `{}`, among them.
+`command` routes are never generated. A mix weights the group by its name, `reads` by
+default, and the weight is split evenly between the generated scenarios; the rows name each
+by its operation key. An operation another scenario of the plan already calls, by its name
+or as a `Scenario.op` under another name, is left to that scenario, and a sweep that
+generates nothing stops the run. An explicit `Scenario.op` body is checked for its required
+fields only.
 
 ## Run a ramp
 
