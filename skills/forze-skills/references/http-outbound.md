@@ -38,7 +38,7 @@ class OrdersClient(BaseHttpIntegration):
 orders_spec = build_http_service_spec(OrdersClient, name="orders")
 ```
 
-`async_http_op` also accepts `allows_empty_body=True` (an empty response body yields `response.model_construct()`) and `site=...` (override the tracing/exception label). `path` is a template relative to the service base URL and may contain `{placeholders}` filled from request fields.
+`async_http_op` also accepts `allows_empty_body=True` (an empty response body yields `response.model_construct()`) and `site=...` (override the tracing/exception label). For a non-JSON answer (CSV, text, XML, bytes), set `response_decoding="raw"` with `response=RawBody` (from `forze.application.contracts.http`, or a subclass; any other model is refused). The call returns the whole body as `RawBody(content, media_type, charset)`, and you parse `.text` or `.content` yourself. Error mapping, retries, deadlines and `max_response_bytes` are unchanged. `path` is a template relative to the service base URL and may contain `{placeholders}` filled from request fields.
 
 Path and query values read every field, declared defaults included, and skip `None`: an unset query field goes out with its default, a `None` one is not sent, and a `None` placeholder is refused. On a `GET` without `query_from` every non-path field is a query param. The body carries only the fields the caller set, so an explicit `None` is sent as `null` (PATCH semantics). To leave a query param out by default, default it to `None`.
 

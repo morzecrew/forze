@@ -6,7 +6,7 @@ import re
 from typing import Any, Final, Generic, Literal, TypeVar, final
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from forze.application.contracts.base import BaseSpec
 from forze.base.exceptions import exc
@@ -16,6 +16,7 @@ from forze.base.primitives import StrKey
 
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 HttpBodyEncoding = Literal["json", "form"]
+HttpResponseDecoding = Literal["json", "raw"]
 
 RESPONSE_ERROR_DETAIL: Final[str] = "response_error"
 """``details`` key carrying the validated body of a rejected response.
@@ -28,6 +29,45 @@ In = TypeVar("In", bound=BaseModel)
 Out = TypeVar("Out", bound=BaseModel)
 
 _PATH_PARAM_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+# ....................... #
+
+
+class RawBody(BaseModel):
+    """A success response body handed over undecoded.
+
+    What an operation declaring ``response_decoding="raw"`` returns — CSV, plain text, XML,
+    an archive: anything the caller parses itself. A subclass may add parsing helpers or a
+    validator over :attr:`media_type`; one that refuses the response surfaces as the error
+    a JSON body that fails validation raises."""
+
+    model_config = ConfigDict(frozen=True)
+
+    content: bytes
+    """The body exactly as received; ``b""`` for an empty one, such as a ``204``."""
+
+    media_type: str | None = None
+    """The response ``Content-Type`` without its parameters, lower-cased; ``None`` when absent."""
+
+    charset: str | None = None
+    """The ``charset`` parameter of the response ``Content-Type``, or ``None``."""
+
+    # ....................... #
+
+    @property
+    def text(self) -> str:
+        """:attr:`content` decoded with :attr:`charset`, or UTF-8 when there is none.
+
+        Undecodable bytes are replaced rather than raised, and so is a charset Python does not
+        know: the counterparty names it, so a typo there must not fail a body that is
+        otherwise fine."""
+
+        try:
+            return self.content.decode(self.charset or "utf-8", errors="replace")
+
+        except LookupError:
+            return self.content.decode("utf-8", errors="replace")
+
 
 # ....................... #
 
@@ -59,7 +99,8 @@ class HttpOperationSpec(Generic[In, Out]):
     """Request argument model; ``None`` for bodyless calls with no path params."""
 
     return_type: type[Out]
-    """Response model validated from JSON."""
+    """Response model: validated from JSON, or :class:`RawBody` (or a subclass) when
+    :attr:`response_decoding` is ``"raw"``."""
 
     query_from: frozenset[str] = attrs.field(factory=frozenset[str])
     """Request fields serialized as query parameters.
@@ -76,7 +117,9 @@ class HttpOperationSpec(Generic[In, Out]):
     """Optional tracing / exception site override."""
 
     allows_empty_body: bool = False
-    """When ``True``, an empty response body yields ``return_type.model_construct()``."""
+    """When ``True``, an empty response body yields ``return_type.model_construct()``.
+
+    Inert on a ``"raw"`` operation, where an empty body is ``RawBody(content=b"")``."""
 
     body_encoding: HttpBodyEncoding = "json"
     """How a request body is encoded — JSON, or ``application/x-www-form-urlencoded``.
@@ -86,6 +129,16 @@ class HttpOperationSpec(Generic[In, Out]):
     API speaks JSON, and they share a base URL and a credential. A form body carries scalars
     only — see :func:`~forze.application.integrations.http.form_fields`. Inert on a bodyless
     method: it describes how a body is encoded, and a ``GET`` has none."""
+
+    response_decoding: HttpResponseDecoding = "json"
+    """How a success response body is decoded — validated as JSON, or handed over raw.
+
+    ``"raw"`` is for a counterparty that does not answer JSON: a CSV export, plain text, XML,
+    a binary payload. The operation then returns the whole body as :attr:`return_type`, which
+    must be :class:`RawBody` or a subclass, and the caller parses it. Only the success body
+    changes: a rejected response is mapped exactly as on a JSON operation, :attr:`error_type`
+    included. For a body read as it arrives rather than whole, use
+    :meth:`~forze.application.contracts.http.HttpServicePort.stream`."""
 
     error_type: type[BaseModel] | None = None
     """Model an operation declares for its error responses, or ``None``.
@@ -131,6 +184,12 @@ class HttpOperationSpec(Generic[In, Out]):
                 raise exc.configuration(
                     f"HTTP operation {self.name!r}: query_from unknown fields {sorted(unknown)}",
                 )
+
+        if self.response_decoding == "raw" and not issubclass(self.return_type, RawBody):
+            raise exc.configuration(
+                f"HTTP operation {self.name!r}: response_decoding 'raw' requires return_type "
+                f"RawBody or a subclass, got {self.return_type.__name__}",
+            )
 
 
 # ....................... #

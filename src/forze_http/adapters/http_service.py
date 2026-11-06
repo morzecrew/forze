@@ -39,6 +39,21 @@ def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
 # ....................... #
 
 
+def _raw_fields(response: httpx.Response) -> dict[str, Any]:
+    """The :class:`~forze.application.contracts.http.RawBody` fields of *response*."""
+
+    media_type = response.headers.get("content-type", "").partition(";")[0].strip().lower()
+
+    return {
+        "content": response.content,
+        "media_type": media_type or None,
+        "charset": response.charset_encoding,
+    }
+
+
+# ....................... #
+
+
 def _declared_error(
     operation: HttpOperationSpec[Any, Any],
     error: BaseException,
@@ -203,7 +218,7 @@ class HttpServiceAdapter(HttpServicePort):
                 # summary stay whatever the shared mapper already makes of this status.
                 response.raise_for_status()
 
-            return self._parse_response(operation, response.content)
+            return self._parse_response(operation, response)
 
         except Exception as error:
             logger.debug(
@@ -269,9 +284,19 @@ class HttpServiceAdapter(HttpServicePort):
 
     # ....................... #
 
-    def _parse_response(self, operation: HttpOperationSpec[Any, Any], content: bytes) -> BaseModel:
-        if content:
+    def _parse_response(
+        self,
+        operation: HttpOperationSpec[Any, Any],
+        response: httpx.Response,
+    ) -> BaseModel:
+        content = response.content
+        raw = operation.response_decoding == "raw"
+
+        if raw or content:
             try:
+                if raw:
+                    return operation.return_type.model_validate(_raw_fields(response))
+
                 return operation.return_type.model_validate_json(content)
 
             except ValidationError as error:

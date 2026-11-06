@@ -94,5 +94,6 @@ def _operation_spec(
         site=descriptor.site,
         allows_empty_body=descriptor.allows_empty_body,
         body_encoding=descriptor.body_encoding,
+        response_decoding=descriptor.response_decoding,
         error_type=descriptor.error_type,
     )
