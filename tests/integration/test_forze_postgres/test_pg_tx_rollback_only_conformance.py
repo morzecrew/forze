@@ -168,16 +168,18 @@ async def test_a_dry_run_declared_first_covers_another_clients_route(two: _TwoCl
     assert await two.stored() == set()
 
 
-async def test_propose_rolls_back_a_scope_on_another_clients_route(two: _TwoClients) -> None:
+async def test_propose_refuses_a_scope_on_another_clients_route(two: _TwoClients) -> None:
     async def apply(ctx: ExecutionContext) -> None:
         await two.write(two.first, "first")
 
         async with ctx.tx_ctx.scope("b"):
             await two.write(two.second, "second")
 
-    verdict = await propose(two.ctx, apply, [], route="a")
+    # The checks would run after "b" rolled back, against the state before its write.
+    with pytest.raises(CoreException) as caught:
+        await propose(two.ctx, apply, [], route="a")
 
-    assert verdict.holds
+    assert caught.value.code == "propose_cross_client"
     assert await two.stored() == set()
 
 

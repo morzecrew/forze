@@ -134,6 +134,10 @@ class TransactionScopeHandle:
     """Routes of scopes opened inside this root, with transactions of their own, that left
     without rolling back, so they may have committed (set by :meth:`TransactionContext.scope`)."""
 
+    _independent: list[str] = attrs.field(factory=list, init=False)
+    """Routes of every scope opened inside this root with a transaction of its own, committed
+    or rolled back, in the order entered (set by :meth:`TransactionContext.scope`)."""
+
     # ....................... #
 
     @property
@@ -141,6 +145,17 @@ class TransactionScopeHandle:
         """Whether :meth:`rollback_only` was called on this scope."""
 
         return self._rollback
+
+    @property
+    def independent_routes(self) -> tuple[str, ...]:
+        """Routes of the scopes opened inside this root that ran a transaction of their own on
+        another client, in the order entered; empty on a nested scope.
+
+        Their writes are never this root's: each committed or rolled back as its own scope
+        exited, so nothing after that, a dry run's checks included, sees them uncommitted.
+        """
+
+        return tuple(self._independent)
 
     # ....................... #
 
@@ -554,6 +569,9 @@ class TransactionContext:
             nested = TransactionScopeHandle(
                 route=nested_route, nested_in=None if independent else tx
             )
+
+            if independent and root is not None:
+                root._independent.append(nested_route)  # pyright: ignore[reportPrivateUsage]
             nested_signal: RollbackSignal | None = None
             own_callbacks: list[_DeferredCallback] = []
             token_d = self.__tx_depth.set(depth + 1)

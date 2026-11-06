@@ -399,8 +399,13 @@ async def propose(
     ``holds=True`` as a guarantee; the DST oracle (:func:`~forze_dst.oracle.compile_oracle`) is the
     proof. The scope is marked
     :meth:`~forze.application.execution.TransactionScopeHandle.rollback_only` before *apply*
-    runs, so a scope *apply* opens on another client's route rolls back too, and the rollback
-    logs no error.
+    runs, so the rollback logs no error. A scope *apply* opens on another client's route runs
+    a transaction of its own that rolls back as it exits, before the checks could see it, so
+    such a proposal is refused rather than checked against the state before those writes.
+
+    :raises CoreException: ``precondition`` (``propose_inside_transaction``) inside an active
+        transaction scope; ``precondition`` (``propose_cross_client``) when *apply* opened a
+        scope on another client's route.
     """
 
     if ctx.tx_ctx.depth() > 0:
@@ -423,6 +428,17 @@ async def propose(
         except CoreException as rejection:
             apply_error.append(str(rejection))
         else:
+            # Those writes already rolled back with their own scopes: checks would miss them.
+            if tx.independent_routes:
+                routes = ", ".join(repr(r) for r in dict.fromkeys(tx.independent_routes))
+                raise exc.precondition(
+                    f"propose() cannot check writes apply made on route(s) {routes}: each ran "
+                    "a transaction of its own on another client, rolled back when its scope "
+                    "exited, so the checks would see the state before them. Keep apply's "
+                    "writes on routes that share the proposal's client.",
+                    code="propose_cross_client",
+                )
+
             results.extend([await evaluate(law, ctx, params) for law, params in checks])
 
     error = apply_error[0] if apply_error else None

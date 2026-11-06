@@ -407,6 +407,23 @@ class TestOtherRoutes:
         if isinstance(other, _RecordingManager):
             assert other.events == ["root:commit"]
 
+    async def test_the_root_lists_the_routes_with_transactions_of_their_own(self) -> None:
+        a, b = _RecordingManager(), _RecordingManager()
+        tx = _routes(a=a, b=b, same=a)
+
+        async with tx.scope("a") as root:
+            root.rollback_only()
+
+            async with tx.scope("same") as joined, tx.scope("b"):
+                pass
+
+            async with tx.scope("b"):
+                pass
+
+        # Rolled back or not, every scope on another client is listed; one that joins is not.
+        assert root.independent_routes == ("b", "b")
+        assert joined.independent_routes == ()
+
     async def test_a_route_on_the_same_client_joins_and_is_not_refused(self) -> None:
         reset_commit_started()
         a = _RecordingManager()
