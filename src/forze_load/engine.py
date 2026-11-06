@@ -562,6 +562,11 @@ class _Run:
             sent += 1
             # Yields even when behind, so the sends already started get to run.
             await asyncio.sleep(max(due - time.perf_counter(), 0.0))
+
+            # A halted run sends nothing more: the step drains, and no row would count it.
+            if self.halt is not None:
+                return
+
             step = self.measuring()
 
             if step is not None:

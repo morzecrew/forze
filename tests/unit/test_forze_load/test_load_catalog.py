@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -18,6 +19,7 @@ from forze_load import (
     Call,
     ClosedRamp,
     LoadPlan,
+    OpenRamp,
     Principal,
     RunResult,
     Scenario,
@@ -472,8 +474,9 @@ class TestSamples:
         )
 
         assert len(result.rows) == 1
-        assert "cut_short" not in result.rows[0]
-        assert result.summary["note"] == "one step, no comparison"
+        assert "cut_short" not in result.rows[0]  # whole, so `compare` gates it
+        # Its retirement still stops the knee search: the next step would run another mix.
+        assert result.summary["note"] == "mix changed at {'workers': 1}"
         assert result.summary["stopped"]["reason"] == "sample_exhausted"
 
 
@@ -872,3 +875,46 @@ class TestSampleBounds:
         await run(plan, ClosedRamp(steps=[1], step_s=0.1), transport=httpx.MockTransport(handler))
 
         assert at_listing == [2, 3]  # after sign-in, once more per sample
+
+    async def test_open_arrivals_stop_once_the_run_halts(self) -> None:
+        app = _App({"ada": ["p1"]})
+        app.gone = {"p1"}
+        handle = app.handler
+        halted: list[float] = []
+        slow_sends: list[float] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/slow":
+                slow_sends.append(time.perf_counter())
+                await asyncio.sleep(0.3)  # keeps the halted step draining
+
+                return httpx.Response(200)
+
+            if request.url.path == "/products/p1":
+                await asyncio.sleep(0.05)  # bob's slow calls are in flight by then
+
+            response = await handle(request)
+
+            if request.url.path == "/products/p1":
+                halted.append(time.perf_counter())
+
+            return response
+
+        async def slow(call: Call) -> httpx.Response:
+            return await call.request("GET", "/slow")
+
+        plan = _plan(
+            _GET,
+            Scenario("slow", slow, writes=False),
+            principals=[
+                Principal(name="ada", mix={"products.get": 1}, auth=_as("ada")),
+                Principal(name="bob", mix={"slow": 1}, auth=_as("bob")),
+            ],
+        )
+
+        result = await run(
+            plan, OpenRamp(rates=[100], step_s=1.0), transport=httpx.MockTransport(handler)
+        )
+
+        assert result.summary["stopped"]["reason"] == "sample_exhausted"
+        assert not [t for t in slow_sends if t > halted[0] + 0.05]

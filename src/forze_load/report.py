@@ -210,7 +210,11 @@ def compare_runs(
 
     Rows are matched by worker count or rate. Goodput is worse when it falls, latency when
     it rises. Without *fail_on* nothing fails: load runs vary far more than micro-benchmarks,
-    so a default threshold would make a gate flaky.
+    so a default threshold would make a gate flaky. A step that a stop cut short in either
+    run (``cut_short``) is reported with a warning and never gated: its window was shorter.
+
+    :raises CoreException: ``configuration`` (``load_compare_empty``) — *fail_on* is given
+        and no whole step appears in both runs.
     """
 
     # Another host, runtime or mix is another measurement, not a regression: say which.
@@ -221,10 +225,22 @@ def compare_runs(
     base_rows, head_rows = _keyed(base.rows), _keyed(head.rows)
     lines: list[str] = []
     failures: list[str] = []
+    gated = 0
 
     for key in [k for k in base_rows if k in head_rows]:
         cells: list[str] = []
         label = _label(key)
+        short = [
+            run
+            for run, rows in (("base", base_rows), ("head", head_rows))
+            if rows[key].get("cut_short")
+        ]
+
+        if short:
+            warnings.append(f"{label}: cut short in {' and '.join(short)}, not gated")
+
+        else:
+            gated += 1
 
         for metric in _METRICS:
             old, new = _metric(base_rows[key], metric), _metric(head_rows[key], metric)
@@ -232,7 +248,7 @@ def compare_runs(
             cells.append(f"{metric} {_fmt(old)} -> {_fmt(new)}{_fmt_change(change)}")
             limit = (fail_on or {}).get(metric)
 
-            if limit is None:
+            if limit is None or short:
                 continue
 
             # A latency the head run lost (no call answered) is not "unchanged": it fails.
@@ -247,15 +263,15 @@ def compare_runs(
     missing = sorted(set(base_rows) ^ set(head_rows))
     warnings.extend(f"{_label(key)}: only in one run" for key in missing)
 
-    if not lines:
-        # A gate that compared nothing must not pass: a run cut short before its first step
-        # writes only its meta line.
-        if fail_on:
-            raise exc.configuration(
-                "--fail-on needs at least one step present in both runs, and none matched",
-                code="load_compare_empty",
-            )
+    # A gate that compared nothing must not pass: a run stopped before its first step writes
+    # only its meta line, and a step cut short is never gated.
+    if fail_on and not gated:
+        raise exc.configuration(
+            "--fail-on needs at least one whole step present in both runs, and none matched",
+            code="load_compare_empty",
+        )
 
+    if not lines:
         warnings.append("no step matched between the runs: nothing was compared")
 
     return Comparison(lines=lines, warnings=warnings, failures=failures)

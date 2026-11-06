@@ -126,9 +126,11 @@ read may be forbidden to another.
   `not_found` and leaves the sample. A request that carries two sampled values drops
   neither: the 404 does not say which one is gone. A sample emptied by 404s retires its
   scenarios for that principal, and the step row lists them under `sample_exhausted`. The
-  principal's workers carry on with the rest of its mix. When nothing is left, the run ends
-  the step there and stops: the summary's `stopped` says `sample_exhausted` and names the
-  principal, and the step it cut short says `cut_short` and is never named the knee.
+  principal's workers carry on with the rest of its mix, but the knee search stops at that
+  step, because the steps after it run another mix. When nothing is left, the run ends the
+  step there and stops: the summary's `stopped` says `sample_exhausted` and names the
+  principal, and the step it cut short says `cut_short`. Such a step is never named the
+  knee, and `compare` reports it without gating on it.
 - Sampled ids never reach the output.
 
 ### Sweep the read routes
@@ -209,7 +211,7 @@ window's real length. A step row carries:
 | `client` | `loop_cpu`, `loop_cpu_judged`, `process_cpu`, `loop_lag_p99_ms`, `behind_schedule`, `saturated` |
 | `scenarios` | Calls, 2xx and latency per scenario |
 | `sample_exhausted` | Scenarios retired during the step, as `principal` and `scenario`, because 404s emptied their sample; present only when one was |
-| `cut_short` | `true` when a stop ended the step before its window did; such a step is never the knee. Present only then |
+| `cut_short` | `true` when a stop ended the step before its window did; such a step is never the knee, and `compare` never gates on it. Present only then |
 
 A transport failure (a refused connection, a timeout) is counted but has no latency.
 
@@ -222,8 +224,8 @@ The summary names the **knee**: in a closed ramp, the first step whose goodput i
 first rate whose p99 more than doubles, with at least 100 answered calls in each step, or
 whose goodput falls more than 5 % below the offered rate less its `conflict` and `not_found`
 answers; either is confirmed only when the next rate repeats it. A step whose client was
-saturated, or that was misconfigured, is never named and never confirms a knee; the
-summary's `note` says why no knee was named.
+saturated, that was misconfigured, or that retired scenarios (`sample_exhausted`) is never
+named and never confirms a knee; the summary's `note` says why no knee was named.
 
 ## Compare two runs
 
@@ -237,7 +239,9 @@ side. Without `--fail-on` the command only reports: load runs vary far more than
 micro-benchmarks, and a default threshold would make a CI gate flaky. With it, the command
 exits 1 when a named metric is worse by more than its share, or has a value in the base run
 and none in the head (no call answered), and 2 when a file cannot be read as a run or no step
-appears in both runs: a gate that compared nothing does not pass.
+appears in both runs: a gate that compared nothing does not pass. A step either run cut
+short (`cut_short`) is printed with a warning and never gated, since its window was shorter;
+a gate left with only such steps compared nothing, and exits 2 too.
 When the two meta lines differ in any field but the start time (the target,
 the client's cores, Python or event loop, the `forze_load` version, the profile, the
 principal weights or mixes), the command compares anyway and names each field in a warning:
