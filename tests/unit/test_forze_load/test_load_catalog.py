@@ -918,3 +918,185 @@ class TestSampleBounds:
 
         assert result.summary["stopped"]["reason"] == "sample_exhausted"
         assert not [t for t in slow_sends if t > halted[0] + 0.05]
+
+
+class TestRefusals:
+    """Every way the document or a sample can fail stops the run before load, as a refusal."""
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            httpx.ConnectError("refused"),
+            httpx.Response(200, text="<html>docs</html>"),
+            httpx.Response(200, json={"openapi": "3.1.0"}),
+        ],
+        ids=["transport", "not-json", "no-paths"],
+    )
+    async def test_a_document_that_cannot_be_read_is_refused(self, answer) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if isinstance(answer, Exception):
+                raise answer
+
+            return answer
+
+        with pytest.raises(CoreException) as error:
+            await run(
+                _plan(_GET),
+                ClosedRamp(steps=[1], step_s=0.1),
+                transport=httpx.MockTransport(handler),
+            )
+
+        assert error.value.code == "load_openapi_unavailable"
+
+    @pytest.mark.parametrize("content", [None, "{not json"], ids=["missing", "not-json"])
+    async def test_a_document_file_that_cannot_be_read_is_refused(self, tmp_path, content) -> None:
+        path = tmp_path / "openapi.json"
+
+        if content is not None:
+            path.write_text(content)
+
+        assert await _refused(_App({}), _plan(_GET, openapi=path)) == "load_openapi_unavailable"
+
+    @pytest.mark.parametrize(
+        "paths",
+        [
+            {"/x": {"parameters": {"q": 1}, "get": _op("x.read")}},
+            {"/x": {"get": {**_op("x.read"), "parameters": [{"$ref": "#/components/p/Gone"}]}}},
+        ],
+        ids=["path-parameters-not-a-list", "parameter-ref-gone"],
+    )
+    async def test_malformed_parameters_are_refused(self, paths) -> None:
+        assert await _refused(_App({}, {"paths": paths}), _plan(Scenario.op("x.read"))) == (
+            "load_openapi_unavailable"
+        )
+
+    async def test_an_operation_without_an_operation_id_is_not_indexed(self) -> None:
+        doc = {"paths": {"/a": {"get": _op("a.read"), "post": {"x-forze-kind": "query"}}}}
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert set(result.meta["plan"]["scenarios"]) == {"a.read"}
+
+    async def test_a_sweep_skips_a_required_body_that_is_not_json(self) -> None:
+        form = {"application/x-www-form-urlencoded": {"schema": {}}}
+        doc = {
+            "paths": {
+                "/a": {"get": _op("a.read")},
+                "/f": {
+                    "post": {**_op("a.form"), "requestBody": {"required": True, "content": form}}
+                },
+            }
+        }
+
+        result = await _run(_App({}, doc), _plan(Scenario.reads("a.")))
+
+        assert result.meta["plan"]["skipped"] == {"a.form": "takes a body that is not JSON"}
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            httpx.ConnectError("refused"),
+            httpx.Response(200, text="ids: p1"),
+            httpx.Response(200, json={"items": [{"id": "p1"}]}),
+        ],
+        ids=["transport", "not-json", "no-hits"],
+    )
+    async def test_a_sample_that_cannot_be_read_is_refused(self, answer) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/openapi.json":
+                return httpx.Response(200, json=_DOC)
+
+            if isinstance(answer, Exception):
+                raise answer
+
+            return answer
+
+        with pytest.raises(CoreException) as error:
+            await run(
+                _plan(_GET),
+                ClosedRamp(steps=[1], step_s=0.1),
+                transport=httpx.MockTransport(handler),
+            )
+
+        assert error.value.code == "load_sample_failed"
+        assert "p1" not in error.value.summary
+
+
+class TestRunGuards:
+    async def test_two_principals_running_out_stop_the_run_once(self) -> None:
+        app = _App({"ada": ["a1"], "bob": ["b1"]})
+        app.gone = {"a1", "b1"}
+        handle = app.handler
+
+        async def slow_gets(request: httpx.Request) -> httpx.Response:
+            if request.url.path in ("/products/a1", "/products/b1"):
+                await asyncio.sleep(0.02)  # both calls in flight when the first answers
+
+            return await handle(request)
+
+        plan = _plan(
+            _GET,
+            principals=[
+                Principal(name="ada", mix={"products.get": 1}, auth=_as("ada")),
+                Principal(name="bob", mix={"products.get": 1}, auth=_as("bob")),
+            ],
+        )
+
+        result = await run(
+            plan, ClosedRamp(steps=[2, 4], step_s=0.3), transport=httpx.MockTransport(slow_gets)
+        )
+
+        assert len(result.rows) == 1
+        assert result.summary["stopped"]["principal"] in {"ada", "bob"}  # the first one only
+        assert len(result.rows[0]["sample_exhausted"]) == 2
+
+    async def test_the_first_of_two_scenario_errors_is_the_one_raised(self) -> None:
+        raised: list[str] = []
+
+        async def broken(call: Call) -> httpx.Response:
+            await asyncio.sleep(0)  # both workers are inside a call before either raises
+            raised.append(call.principal)
+
+            raise RuntimeError(f"broken #{len(raised)}")
+
+        plan = LoadPlan(
+            base_url="http://127.0.0.1:9",
+            principals=[Principal(name="ada", mix={"broken": 1})],
+            scenarios=[Scenario("broken", broken, writes=False)],
+        )
+
+        with pytest.raises(RuntimeError, match="broken #1"):
+            await run(plan, ClosedRamp(steps=[2], step_s=0.5), transport=httpx.MockTransport(_ok))
+
+        assert len(raised) == 2
+
+    async def test_a_call_for_a_principal_with_nothing_left_sends_nothing(self) -> None:
+        from forze_load.catalog import resolve
+        from forze_load.engine import _Run
+        from forze_load.stats import StepRecorder
+
+        app = _App({"ada": ["p1"]})
+        plan = _plan(_GET)
+
+        async with httpx.AsyncClient(
+            base_url=plan.base_url, transport=httpx.MockTransport(app.handler)
+        ) as client:
+            state = _Run(
+                plan=plan,
+                catalog=await resolve(plan, client),
+                client=client,
+                auth_client=client,
+                cpu_judged=True,
+            )
+            state.mixes["ada"] = ([], [])  # an arrival scheduled before its principal ran out
+            step = StepRecorder(warm_until=0.0)
+
+            await state.call(plan.principals[0], time.perf_counter(), step)
+
+        assert app.paths() == ["/openapi.json"]
+        assert step.summary(1.0)["calls"] == 0
+        assert step.inflight == 0
+
+
+async def _ok(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200)
