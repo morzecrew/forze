@@ -1,13 +1,15 @@
 """Tests for HTTP service spec builder and descriptors."""
 
+import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.http import HttpServicePort, HttpServiceSpec
+from forze.application.contracts.http import HttpServicePort, HttpServiceSpec, RawBody
 from forze.application.integrations.http import (
     BaseHttpIntegration,
     async_http_op,
     build_http_service_spec,
 )
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -50,6 +52,23 @@ def test_build_http_service_spec() -> None:
     assert spec.name == "orders"
     assert "get_orders" in spec.operations
     assert spec.operations["get_orders"].method == "GET"
+
+
+def test_a_misspelled_response_decoding_is_refused_when_the_spec_is_built() -> None:
+    # The descriptor passes the value through; the spec it builds refuses it, before any call.
+    class _Csv(BaseHttpIntegration):
+        export = async_http_op(
+            request=None,
+            response=RawBody,
+            method="GET",
+            path="/export.csv",
+            response_decoding="RAW",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(CoreException, match="response_decoding must be one of") as raised:
+        build_http_service_spec(_Csv, name="csv")
+
+    assert raised.value.kind is ExceptionKind.CONFIGURATION
 
 
 async def test_descriptor_invoke() -> None:

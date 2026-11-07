@@ -1,3 +1,5 @@
+from typing import Any
+
 """Tests for HTTP service specs."""
 
 from enum import StrEnum
@@ -5,8 +7,8 @@ from enum import StrEnum
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.http import HttpOperationSpec, HttpServiceSpec
-from forze.base.exceptions import CoreException
+from forze.application.contracts.http import HttpOperationSpec, HttpServiceSpec, RawBody
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -143,3 +145,79 @@ class TestOperationResolution:
         )
 
         assert service.operation(copy) is service.operations["get"]
+
+
+# ....................... #
+
+
+class TestResponseDecoding:
+    def test_json_is_the_default(self) -> None:
+        op = HttpOperationSpec(name="get", method="GET", path="/", args_type=None, return_type=_Out)
+
+        assert op.response_decoding == "json"
+
+    @pytest.mark.parametrize("return_type", [RawBody, type("_Csv", (RawBody,), {})])
+    def test_raw_takes_a_raw_body(self, return_type: type[RawBody]) -> None:
+        op = HttpOperationSpec(
+            name="get",
+            method="GET",
+            path="/",
+            args_type=None,
+            return_type=return_type,
+            response_decoding="raw",
+        )
+
+        assert op.return_type is return_type
+
+    @pytest.mark.parametrize("decoding", ["RAW", "text", ""])
+    def test_an_unknown_response_decoding_is_refused(self, decoding: Any) -> None:
+        with pytest.raises(CoreException, match="response_decoding must be one of") as raised:
+            HttpOperationSpec(
+                name="get",
+                method="GET",
+                path="/",
+                args_type=None,
+                return_type=RawBody,
+                response_decoding=decoding,
+            )
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+    @pytest.mark.parametrize("return_type", [_Out, list[RawBody]], ids=["model", "alias"])
+    def test_raw_refuses_any_other_return_type(self, return_type: Any) -> None:
+        # A generic alias is no class: refused as configuration, not a TypeError.
+        with pytest.raises(CoreException, match="requires return_type RawBody") as raised:
+            HttpOperationSpec(
+                name="get",
+                method="GET",
+                path="/",
+                args_type=None,
+                return_type=return_type,
+                response_decoding="raw",
+            )
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
+class TestRawBodyText:
+    def test_it_decodes_with_the_charset(self) -> None:
+        assert RawBody(content="café".encode("latin-1"), charset="latin-1").text == "café"
+
+    def test_a_codec_that_refuses_replacement_falls_back_to_utf8(self) -> None:
+        # `idna` raises UnicodeError for errors="replace", whatever the bytes.
+        assert RawBody(content=b"hello", charset="idna").text == "hello"
+
+    def test_it_defaults_to_utf8(self) -> None:
+        assert RawBody(content="café".encode()).text == "café"
+
+    def test_undecodable_bytes_are_replaced(self) -> None:
+        assert RawBody(content=b"ok\xff").text == "ok\ufffd"
+
+    def test_an_unknown_charset_falls_back_to_utf8(self) -> None:
+        assert RawBody(content="café".encode(), charset="x-no-such-codec").text == "café"
+
+    def test_it_is_frozen(self) -> None:
+        body = RawBody(content=b"")
+
+        with pytest.raises(ValueError, match="frozen"):
+            body.content = b"x"  # type: ignore[misc]

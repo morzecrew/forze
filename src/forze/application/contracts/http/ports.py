@@ -47,6 +47,9 @@ class HttpServicePort(Protocol):
         chosen at runtime — from config, or from a registry — and there is no declaration to
         name.
 
+        An operation declaring ``response_decoding="raw"`` returns its whole body, unparsed,
+        as a :class:`~forze.application.contracts.http.RawBody`.
+
         :raises CoreException: ``validation`` when this service declares no such operation.
         """
 

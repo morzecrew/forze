@@ -60,6 +60,47 @@ resolved via `ctx.http.service(spec)`.
 |----------|----------|
 | Outbound HTTP service (typed operations) | `HttpServiceSpec.name` (`services`) |
 
+## Read a non-JSON response
+
+`invoke` validates a success body as JSON. For a counterparty that answers CSV, plain text,
+XML or bytes, declare the operation `response_decoding="raw"` with `RawBody` as its
+response, and `invoke` returns the whole body unparsed:
+
+```python
+import csv
+import io
+
+from forze.application.contracts.http import RawBody
+
+
+class Fred(BaseHttpIntegration):
+    series = async_http_op(
+        request=SeriesArgs,
+        response=RawBody,
+        method="GET",
+        path="/graph/fredgraph.csv",
+        response_decoding="raw",
+    )
+
+
+fred = Fred(port=ctx.http.service(fred_spec), spec=fred_spec)
+body = await fred.series(SeriesArgs(id="WALCL"))
+rows = list(csv.DictReader(io.StringIO(body.text)))
+```
+
+- `RawBody` carries `content` (the bytes as received), `media_type` (the `Content-Type`
+  without its parameters, lower-cased) and `charset`. `text` decodes `content` with the
+  charset, or UTF-8 when there is none, and replaces what it cannot decode.
+- Parsing is yours: there is no decoder hook. Parse `text` or `content` after the call, or
+  subclass `RawBody` to add a parser, or a validator over `media_type`. A subclass that
+  refuses the body raises the error of a JSON body that fails validation. Any response
+  model outside `RawBody` is refused at declaration.
+- An empty body, such as a `204`, is `RawBody(content=b"")`.
+- Only the success body changes. A rejected response is mapped as on a JSON operation,
+  `error_type` included. A resilience policy's retries, the deadline budget, the trace
+  context and `max_response_bytes` apply as they do to any `invoke`. `stream` on a raw
+  operation yields the bytes as it does for any other.
+
 ## Stream a response
 
 `invoke` reads the whole body and validates it. For a body you read as it arrives — a

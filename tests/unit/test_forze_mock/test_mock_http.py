@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.http import HttpOperationSpec, HttpServiceSpec
+from forze.application.contracts.http import HttpOperationSpec, HttpServiceSpec, RawBody
 from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule, MockHttpRegistry
 from tests.support.execution_context import context_from_modules
@@ -345,3 +345,48 @@ class TestMockHttpStreams:
 
         with pytest.raises(CoreException, match="must return bytes"):
             [chunk async for chunk in port.stream("ping")]
+
+
+# ....................... #
+
+RAW_SPEC = HttpServiceSpec(
+    name="fred",
+    operations={
+        "series": HttpOperationSpec(
+            name="series",
+            method="GET",
+            path="/graph/fredgraph.csv",
+            args_type=None,
+            return_type=RawBody,
+            response_decoding="raw",
+        ),
+    },
+)
+
+
+class TestMockHttpRawOperation:
+    @pytest.mark.parametrize(
+        ("answer", "expected"),
+        [
+            (b"a,b\n1,2\n", RawBody(content=b"a,b\n1,2\n")),
+            (None, RawBody(content=b"")),
+            (
+                RawBody(content=b"<rss/>", media_type="application/rss+xml"),
+                RawBody(content=b"<rss/>", media_type="application/rss+xml"),
+            ),
+        ],
+    )
+    async def test_the_handler_answers_the_body(
+        self, answer: bytes | RawBody | None, expected: RawBody
+    ) -> None:
+        registry = MockHttpRegistry().on("fred", "series", lambda _: answer)
+
+        result = await _ctx(registry).http.service(RAW_SPEC).invoke("series")
+
+        assert result == expected
+
+    async def test_stream_is_unchanged(self) -> None:
+        registry = MockHttpRegistry().on("fred", "series", lambda _: b"a,b\n")
+        port = _ctx(registry).http.service(RAW_SPEC)
+
+        assert [chunk async for chunk in port.stream("series")] == [b"a,b\n"]

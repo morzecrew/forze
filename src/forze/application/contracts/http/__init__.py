@@ -7,7 +7,9 @@ from .specs import (
     HttpBodyEncoding,
     HttpMethod,
     HttpOperationSpec,
+    HttpResponseDecoding,
     HttpServiceSpec,
+    RawBody,
     path_param_names,
 )
 
@@ -18,10 +20,12 @@ __all__ = [
     "HttpBodyEncoding",
     "HttpMethod",
     "HttpOperationSpec",
+    "HttpResponseDecoding",
     "HttpServiceDepKey",
     "HttpServiceDepPort",
     "HttpServiceDeps",
     "HttpServicePort",
     "HttpServiceSpec",
+    "RawBody",
     "path_param_names",
 ]

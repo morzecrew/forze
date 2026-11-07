@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A transaction scope can roll back on purpose, for dry runs, without logging an error.** `ctx.tx_ctx.scope(route)` yields a `TransactionScopeHandle`: `tx.rollback_only()` rolls back instead of committing. A nested one needs `TxCapabilities(savepoints=True)` (Postgres, strict mock); managers see `RollbackSignal`.
 
+- **Outbound HTTP operations can return a non-JSON body (CSV, text, bytes).** Declare `response_decoding="raw"` with `RawBody` as the response: `invoke` returns the whole body as `content`, `media_type` and `charset`, with a decoded `text`. Error mapping, retries, deadlines and `max_response_bytes` apply unchanged.
+
 ### Changed
 
 - **Storage keys and prefixes accept `=`, so a Hive-partitioned lake (`symbol=BTCUSDT/`) can be written through `ctx.storage`.** `forze_duckdb`'s `ParquetSource(hive_partitioning=True)` reads it back with partition pruning. Keys with a `..` segment or a leading `/` are still refused.

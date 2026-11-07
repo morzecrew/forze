@@ -32,7 +32,8 @@ from forze.base.primitives import StrKey
 HttpHandler = Callable[[Any], Any]
 """Handler for one operation: receives the (validated) args model or ``None`` and
 returns the response — a ``return_type`` instance, a dict to validate, ``None``
-for an empty body, or an awaitable of any of those.
+for an empty body, or an awaitable of any of those. A ``response_decoding="raw"``
+operation also takes ``bytes``, wrapped as its body.
 
 The parameter is ``Any`` because this is the *stored* shape, one dict holding the handlers
 for every operation on every service. What each handler actually accepts is stated where it
@@ -276,6 +277,9 @@ class MockHttpServiceAdapter(HttpServicePort):
         result: Any,
     ) -> BaseModel:
         return_type = operation.return_type
+
+        if operation.response_decoding == "raw" and isinstance(result, bytes | None):
+            return return_type(content=result or b"")
 
         if result is None:
             if operation.allows_empty_body or _return_type_allows_empty(return_type):
