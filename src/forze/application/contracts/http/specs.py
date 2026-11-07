@@ -59,13 +59,13 @@ class RawBody(BaseModel):
         """:attr:`content` decoded with :attr:`charset`, or UTF-8 when there is none.
 
         Undecodable bytes are replaced rather than raised, and so is a charset Python does not
-        know: the counterparty names it, so a typo there must not fail a body that is
-        otherwise fine."""
+        know, or one whose codec refuses replacement (``idna``): the counterparty names it,
+        so a typo there must not fail a body that is otherwise fine."""
 
         try:
             return self.content.decode(self.charset or "utf-8", errors="replace")
 
-        except LookupError:
+        except (LookupError, UnicodeError):
             return self.content.decode("utf-8", errors="replace")
 
 

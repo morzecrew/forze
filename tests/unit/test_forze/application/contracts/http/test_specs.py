@@ -203,6 +203,10 @@ class TestRawBodyText:
     def test_it_decodes_with_the_charset(self) -> None:
         assert RawBody(content="café".encode("latin-1"), charset="latin-1").text == "café"
 
+    def test_a_codec_that_refuses_replacement_falls_back_to_utf8(self) -> None:
+        # `idna` raises UnicodeError for errors="replace", whatever the bytes.
+        assert RawBody(content=b"hello", charset="idna").text == "hello"
+
     def test_it_defaults_to_utf8(self) -> None:
         assert RawBody(content="café".encode()).text == "café"
 
