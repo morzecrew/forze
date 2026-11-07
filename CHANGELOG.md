@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.23.0] - 2026-11-07
+
+### Added
+
 - **One Prometheus scrape can cover every worker of a pre-fork server.** Pass `snapshots=MetricsSnapshots(...)` to `attach_metrics_route` and run its `writer_step` in each worker: the route serves every worker's series, labelled `service_instance_id`, with an age gauge. Needs `worker_metrics_reader()` (exporter 0.66b0+).
 
 - **A minimal OpenTelemetry Collector recipe gives one Prometheus scrape across workers and hosts.** *The Grafana stack* page ships `assets/otel-collector/config.yaml`: every process pushes OTLP, each keeps its own `instance`, and with `honor_labels: true` on the scrape the shipped dashboards and alert rules apply.
@@ -3020,7 +3034,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.22.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/morzecrew/forze/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/morzecrew/forze/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/morzecrew/forze/compare/v0.19.0...v0.20.0
