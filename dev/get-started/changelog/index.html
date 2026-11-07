@@ -11013,6 +11013,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A transaction scope can roll back on purpose, for dry runs, without logging an error.</strong> <code>ctx.tx_ctx.scope(route)</code> yields a <code>TransactionScopeHandle</code>: <code>tx.rollback_only()</code> rolls back instead of committing. A nested one needs <code>TxCapabilities(savepoints=True)</code> (Postgres, strict mock); managers see <code>RollbackSignal</code>.</p>
 </li>
+<li>
+<p><strong>Outbound HTTP operations can return a non-JSON body (CSV, text, bytes).</strong> Declare <code>response_decoding="raw"</code> with <code>RawBody</code> as the response: <code>invoke</code> returns the whole body as <code>content</code>, <code>media_type</code> and <code>charset</code>, with a decoded <code>text</code>. Error mapping, retries, deadlines and <code>max_response_bytes</code> apply unchanged.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

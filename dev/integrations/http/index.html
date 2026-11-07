@@ -4269,6 +4269,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#read-a-non-json-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Read a non-JSON response
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stream-a-response" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6683,6 +6694,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#read-a-non-json-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Read a non-JSON response
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stream-a-response" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6873,6 +6895,44 @@ resolved via <code>ctx.http.service(spec)</code>.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="read-a-non-json-response">Read a non-JSON response<a class="headerlink" href="#read-a-non-json-response" title="Permanent link">&para;</a></h2>
+<p><code>invoke</code> validates a success body as JSON. For a counterparty that answers CSV, plain text,
+XML or bytes, declare the operation <code>response_decoding="raw"</code> with <code>RawBody</code> as its
+response, and <code>invoke</code> returns the whole body unparsed:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">csv</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.http</span><span class="w"> </span><span class="kn">import</span> <span class="n">RawBody</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Fred</span><span class="p">(</span><span class="n">BaseHttpIntegration</span><span class="p">):</span>
+    <span class="n">series</span> <span class="o">=</span> <span class="n">async_http_op</span><span class="p">(</span>
+        <span class="n">request</span><span class="o">=</span><span class="n">SeriesArgs</span><span class="p">,</span>
+        <span class="n">response</span><span class="o">=</span><span class="n">RawBody</span><span class="p">,</span>
+        <span class="n">method</span><span class="o">=</span><span class="s2">"GET"</span><span class="p">,</span>
+        <span class="n">path</span><span class="o">=</span><span class="s2">"/graph/fredgraph.csv"</span><span class="p">,</span>
+        <span class="n">response_decoding</span><span class="o">=</span><span class="s2">"raw"</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="n">fred</span> <span class="o">=</span> <span class="n">Fred</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="n">ctx</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">service</span><span class="p">(</span><span class="n">fred_spec</span><span class="p">),</span> <span class="n">spec</span><span class="o">=</span><span class="n">fred_spec</span><span class="p">)</span>
+<span class="n">body</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fred</span><span class="o">.</span><span class="n">series</span><span class="p">(</span><span class="n">SeriesArgs</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">"WALCL"</span><span class="p">))</span>
+<span class="n">rows</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">csv</span><span class="o">.</span><span class="n">DictReader</span><span class="p">(</span><span class="n">io</span><span class="o">.</span><span class="n">StringIO</span><span class="p">(</span><span class="n">body</span><span class="o">.</span><span class="n">text</span><span class="p">)))</span>
+</code></pre></div>
+<ul>
+<li><code>RawBody</code> carries <code>content</code> (the bytes as received), <code>media_type</code> (the <code>Content-Type</code>
+  without its parameters, lower-cased) and <code>charset</code>. <code>text</code> decodes <code>content</code> with the
+  charset, or UTF-8 when there is none, and replaces what it cannot decode.</li>
+<li>Parsing is yours: there is no decoder hook. Parse <code>text</code> or <code>content</code> after the call, or
+  subclass <code>RawBody</code> to add a parser, or a validator over <code>media_type</code>. A subclass that
+  refuses the body raises the error of a JSON body that fails validation. Any response
+  model outside <code>RawBody</code> is refused at declaration.</li>
+<li>An empty body, such as a <code>204</code>, is <code>RawBody(content=b"")</code>.</li>
+<li>Only the success body changes. A rejected response is mapped as on a JSON operation,
+  <code>error_type</code> included. A resilience policy's retries, the deadline budget, the trace
+  context and <code>max_response_bytes</code> apply as they do to any <code>invoke</code>. <code>stream</code> on a raw
+  operation yields the bytes as it does for any other.</li>
+</ul>
 <h2 id="stream-a-response">Stream a response<a class="headerlink" href="#stream-a-response" title="Permanent link">&para;</a></h2>
 <p><code>invoke</code> reads the whole body and validates it. For a body you read as it arrives — a
 streamed completion, a large export — <code>stream</code> takes the same operation and yields the
