@@ -20,6 +20,7 @@ from typing import Any, Final, cast
 from uuid import UUID
 
 import attrs
+import orjson
 
 from forze.base.scrubbing import sanitize
 
@@ -106,7 +107,12 @@ _RENDERABLE_LEAVES = (UUID, datetime, date, time, Decimal)
 idiomatically put in ``details``. Closed on purpose: a blanket ``default=str`` would
 stringify **arbitrary** objects *after* sanitization, minting fresh text the scrubber
 never saw (a client object's repr can carry a DSN); anything outside this set drops
-the whole context instead."""
+the whole context instead. orjson renders an ``Enum`` member as its value, which must
+itself be renderable."""
+
+_ORJSON_OPTIONS: Final[int] = orjson.OPT_PASSTHROUGH_DATETIME | orjson.OPT_PASSTHROUGH_DATACLASS
+"""Hand datetimes and dataclasses to :func:`_render_leaf` rather than orjson's own encoders,
+so they render exactly as on the stdlib path."""
 
 
 def _render_leaf(value: object) -> str:
@@ -129,8 +135,19 @@ def _jsonable(context: JsonDict) -> JsonDict:
     matches neither ``except*`` clause and unwinds the connection's whole task group.
     Coercing here keeps the envelope's contract true for every renderer at once:
     whatever it exposes IS renderable — and only the :data:`_RENDERABLE_LEAVES` types
-    render at all (see there for why this is not ``default=str``).
+    render at all (see there for why this is not ``default=str``). orjson writes a NaN or
+    infinite float as ``null`` (Starlette's ``JSONResponse`` refuses a bare ``NaN``); a
+    context that falls back to stdlib ``json`` keeps it.
     """
+
+    try:
+        dumped = orjson.dumps(context, default=_render_leaf, option=_ORJSON_OPTIONS)
+        return cast(JsonDict, orjson.loads(dumped))
+
+    except TypeError:
+        # orjson refuses what stdlib json still encodes (an int, float, bool or None key, an
+        # integer past 64 bits, a lone surrogate): retry there, which refuses the unrenderable
+        pass
 
     try:
         return cast(JsonDict, json.loads(json.dumps(context, default=_render_leaf)))

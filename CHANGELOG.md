@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
 
+- **An error context holding a NaN, an infinity or a plain `Enum` member now renders.** A non-finite float becomes `null`, where the HTTP error response used to fail on it, and an `Enum` member renders as its value instead of dropping the whole context.
+
 ### Security
 
 - **Two registries that share an operation key no longer share one resolved operation in an execution context.** `ExecutionContext.cached_operation` and `store_operation` take the registry first (**Breaking**).

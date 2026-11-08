@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import json
+
 import pytest
 
 from forze.base.exceptions import CoreException
@@ -28,6 +31,23 @@ def test_b64url_decode_rejects_non_dict() -> None:
     # ``[]`` base64url-encoded decodes to a list, not a ``{"s": ...}`` dict → ValueError.
     with pytest.raises(ValueError):
         _b64url_json_loads_dict("W10")
+
+
+@pytest.mark.parametrize("start", [0, 7, 10_000, 2**63 - 1])
+def test_b64url_token_is_the_compact_sorted_json_it_always_was(start: int) -> None:
+    # A token a client already holds must decode, and a new one must equal the old one.
+    raw = json.dumps({"s": start}, separators=(",", ":"), sort_keys=True).encode()
+
+    assert _b64url_json_dumps({"s": start}) == base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+@pytest.mark.parametrize("raw", [b'{"s":1e400}', b'{"s":NaN}', b"\xff\xfe", b'{"s":'])
+def test_cursor_token_that_is_not_a_finite_json_number_is_invalid(raw: bytes) -> None:
+    # A clean 400 — ``1e400`` used to decode to ``inf`` and escape as an OverflowError.
+    token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        _mock_cursor_start_and_limit({"after": token})
 
 
 def test_cursor_start_and_limit_after() -> None:
