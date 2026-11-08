@@ -88,7 +88,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    _resolved_op_cache: dict[StrKey, Any] | None = attrs.field(
+    _resolved_op_cache: dict[tuple[int, StrKey], tuple[object, Any]] | None = attrs.field(
         default=attrs.Factory(
             lambda self: {} if self.cache_operations else None,
             takes_self=True,
@@ -292,26 +292,33 @@ class ExecutionContext:
 
     # ....................... #
 
-    def cached_operation(self, op: StrKey) -> Any | None:
-        """Return a memoized resolved operation for this scope, or ``None``.
+    def cached_operation(self, registry: object, op: StrKey) -> Any | None:
+        """Return the operation *registry* resolved for *op* in this scope, or ``None``.
 
         ``None`` means either a cache miss or caching disabled; callers resolve
-        and then call :meth:`store_operation`.
+        and then call :meth:`store_operation`. Entries are per registry: two
+        registries that share an operation key keep separate resolved operations.
         """
 
         cache = self._resolved_op_cache
 
-        return cache.get(op) if cache is not None else None
+        if cache is None:
+            return None
+
+        hit = cache.get((id(registry), op))
+
+        return hit[1] if hit is not None else None
 
     # ....................... #
 
-    def store_operation(self, op: StrKey, resolved: Any) -> None:
-        """Memoize a resolved operation for this scope (no-op when disabled)."""
+    def store_operation(self, registry: object, op: StrKey, resolved: Any) -> None:
+        """Memoize the operation *registry* resolved for *op* (no-op when disabled)."""
 
         cache = self._resolved_op_cache
 
         if cache is not None:
-            cache[op] = resolved
+            # The entry holds *registry*, so its id cannot be reused while cached.
+            cache[(id(registry), op)] = (registry, resolved)
 
     # ....................... #
 

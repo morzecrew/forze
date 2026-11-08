@@ -76,6 +76,22 @@ class TestResolvedOperationCache:
         assert reg.resolve("echo", ctx_a) is not reg.resolve("echo", ctx_b)
 
     @pytest.mark.asyncio
+    async def test_cache_is_per_registry(self) -> None:
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class OtherHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                return f"other:{args}"
+
+        reg, _ = self._counting_registry()
+        other = OperationRegistry(handlers={"echo": lambda _ctx: OtherHandler()}).freeze()
+        ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))
+
+        assert await reg.resolve("echo", ctx)("a") == "result:a"
+        # Same key, same scope: the second registry resolves its own operation.
+        assert await other.resolve("echo", ctx)("a") == "other:a"
+        assert reg.resolve("echo", ctx) is reg.resolve("echo", ctx)
+
+    @pytest.mark.asyncio
     async def test_cached_operation_executes_equivalently(self) -> None:
         reg, _ = self._counting_registry()
         ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))

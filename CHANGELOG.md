@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+### Security
+
+- **Two registries that share an operation key no longer share one resolved operation in an execution context.** `ExecutionContext.cached_operation` and `store_operation` take the registry first (**Breaking**).
+
 ## [0.23.0] - 2026-11-07
 
 ### Added
