@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from weakref import WeakKeyDictionary
 
 import pytest
 
@@ -54,6 +55,13 @@ class TestPostgresConfig:
     def test_rejects_max_concurrent_queries_below_one(self) -> None:
         with pytest.raises(CoreException, match="max_concurrent_queries"):
             PostgresConfig(max_concurrent_queries=0)
+
+    def test_rejects_negative_check_idle_after(self) -> None:
+        with pytest.raises(CoreException, match="check_idle_after"):
+            PostgresConfig(check_idle_after=timedelta(milliseconds=-1))
+
+    def test_accepts_zero_check_idle_after(self) -> None:
+        assert PostgresConfig(check_idle_after=timedelta(0)).check_idle_after == timedelta(0)
 
     def test_warns_on_large_min_and_max_pool_size(self) -> None:
         mock_logger = MagicMock()
@@ -232,8 +240,8 @@ def _lost(_query: str) -> None:
     raise OperationalError("the connection is lost")
 
 
-def _checker(pool: MagicMock, timeout: timedelta = _BOUND) -> Any:
-    return _pool_check(lambda: pool, timeout)
+def _checker(pool: MagicMock, timeout: timedelta = _BOUND, **window: Any) -> Any:
+    return _pool_check(lambda: pool, timeout, **window)
 
 
 class TestPoolCheckCallback:
@@ -661,6 +669,94 @@ def _client_with_stub_pool() -> tuple[PostgresClient, _StubConn, _StubPool]:
     pool = _StubPool(conn)
     client._PostgresClient__pool = pool  # type: ignore[attr-defined]
     return client, conn, pool
+
+
+class TestPoolCheckIdleWindow:
+    """``check_idle_after``: a connection given back clean within the window skips its ping."""
+
+    _WINDOW = timedelta(milliseconds=500)
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_return_skips_the_ping(self) -> None:
+        conn = _ping_conn(None)
+        returned = {conn: asyncio.get_running_loop().time()}
+
+        await _checker(MagicMock(), returned=returned, idle_after=self._WINDOW)(conn)
+
+        conn.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("idle", "window"),
+        [
+            (1.0, _WINDOW),  # idle past the window
+            (0.0, timedelta(0)),  # a zero window pings even a just-returned connection
+            (None, _WINDOW),  # never given back: fresh from the pool's own connect
+        ],
+    )
+    async def test_otherwise_the_connection_is_pinged(
+        self, idle: float | None, window: timedelta
+    ) -> None:
+        conn = _ping_conn(None)
+        now = asyncio.get_running_loop().time()
+        returned = {} if idle is None else {conn: now - idle}
+
+        await _checker(MagicMock(), returned=returned, idle_after=window)(conn)
+
+        conn.execute.assert_awaited_once_with("")
+
+    @pytest.mark.asyncio
+    async def test_a_failed_ping_past_the_window_still_fails_and_sweeps(self) -> None:
+        """Failing the check is what makes psycopg_pool discard the connection."""
+
+        pool = MagicMock(check=AsyncMock())
+        conn = _ping_conn(_lost)
+        returned = {conn: asyncio.get_running_loop().time() - 1.0}
+
+        with pytest.raises(OperationalError):
+            await _checker(pool, returned=returned, idle_after=self._WINDOW)(conn)
+
+        pool.check.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_only_a_clean_checkout_records_its_return(self) -> None:
+        client, conn, _pool = _client_with_stub_pool()
+        returned: WeakKeyDictionary[Any, float] = WeakKeyDictionary()
+        client._PostgresClient__returned_at = returned  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError):
+            async with client._acquire():
+                raise RuntimeError("the operation failed")
+
+        assert conn not in returned
+
+        before = asyncio.get_running_loop().time()
+
+        async with client._acquire():
+            pass
+
+        assert returned[conn] >= before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("config", "records"),
+        [
+            (PostgresConfig(), True),
+            (PostgresConfig(check_idle_after=timedelta(0)), False),
+            (PostgresConfig(check_on_checkout=False), False),
+        ],
+    )
+    async def test_returns_are_recorded_only_when_the_window_can_skip_a_ping(
+        self, config: PostgresConfig, records: bool
+    ) -> None:
+        client = PostgresClient()
+
+        with patch("forze_postgres.kernel.client.client.AsyncConnectionPool") as pool_cls:
+            pool_cls.return_value.open = AsyncMock()
+            await client.initialize("postgresql://unused", config=config)
+
+        returned = client._PostgresClient__returned_at  # type: ignore[attr-defined]
+        assert (returned is not None) is records
 
 
 class TestStatementAutocommitPath:

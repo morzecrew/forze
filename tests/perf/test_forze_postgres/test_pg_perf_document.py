@@ -1,5 +1,6 @@
 """Performance tests for PostgresDocumentAdapter."""
 
+from typing import Literal
 from uuid import UUID
 
 import pytest
@@ -15,6 +16,7 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -58,11 +60,11 @@ class PerfReadDoc(ReadDocument):
 def execution_context(pg_client: PostgresClient):
     """Build execution context with Postgres deps."""
     configurable = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", "perf_docs"),
-            "write": ("public", "perf_docs"),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", "perf_docs"),
+            write=("public", "perf_docs"),
+            bookkeeping_strategy="application",
+        )
     )
     deps = Deps.plain(
         {
@@ -254,17 +256,17 @@ async def test_pg_document_find_many_large_benchmark(
 async def test_pg_document_find_read_validation_benchmark(
     async_benchmark,
     pg_client: PostgresClient,
-    read_validation: str,
+    read_validation: Literal["strict", "trusted"],
 ) -> None:
     """Benchmark find_page with strict vs trusted read validation."""
 
     configurable = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", "perf_docs"),
-            "write": ("public", "perf_docs"),
-            "bookkeeping_strategy": "application",
-            "read_validation": read_validation,
-        }
+        config=PostgresDocumentConfig(
+            read=("public", "perf_docs"),
+            write=("public", "perf_docs"),
+            bookkeeping_strategy="application",
+            read_validation=read_validation,
+        )
     )
     deps = Deps.plain(
         {

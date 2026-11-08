@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **The Postgres pool no longer pings a connection used in the last half second** (**behaviour change**). New `PostgresConfig.check_idle_after` (default 500 ms) sets the window; one the server ended inside it fails one operation. `timedelta(0)` pings every checkout.
 
 ### Fixed
 
