@@ -304,9 +304,7 @@ class TestIterBacklog:
 
         assert got == ids
         assert outcome.complete is True
-        assert [one["log_level"] for one in logs if "on_replay" in str(one["event"])] == [
-            "warning"
-        ]
+        assert [one["log_level"] for one in logs if "on_replay" in str(one["event"])] == ["warning"]
 
     async def test_a_raising_hook_never_replaces_the_drains_own_error(self) -> None:
         mailbox = _FailingMailbox()
@@ -488,6 +486,11 @@ class TestFrameEncoding:
             ({1: "é"}, '{"1":"\\u00e9"}'),
             ({"n": 2**64}, '{"n":18446744073709551616}'),
             ({"s": "\ud800"}, '{"s":"\\ud800"}'),
+            # ... with a non-finite float still written as null
+            (
+                {"n": 2**64, "x": float("nan"), "l": [float("-inf")]},
+                '{"n":18446744073709551616,"x":null,"l":[null]}',
+            ),
         ],
     )
     def test_wire_form(self, payload: dict[Any, Any], wire: str) -> None:
@@ -500,6 +503,23 @@ class TestFrameEncoding:
 
         assert jsonable_frame({"x": float("nan"), "s": "é"}) == {"x": None, "s": "é"}
         assert jsonable_frame({"n": 2**64, "s": "\ud800"}) == {"n": 2**64, "s": "\ud800"}
+
+    def test_nesting_too_deep_for_the_stdlib_falls_back(self) -> None:
+        import json
+
+        from forze.application.integrations.realtime import (
+            FRAME_UNSERIALIZABLE_CODE,
+            encode_frame,
+        )
+
+        deep: Any = []
+        for _ in range(100_000):
+            deep = [deep]
+
+        frame = json.loads(encode_frame({"type": "ack", "cid": "c1", "data": deep}))
+
+        assert frame["cid"] == "c1"
+        assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
 
     def test_fallback_code_is_overridable(self) -> None:
         import json

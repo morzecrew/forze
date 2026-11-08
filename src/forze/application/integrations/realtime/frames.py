@@ -17,10 +17,12 @@ Frames are compact JSON written by ``orjson``: non-ASCII text goes out as UTF-8 
 than ``\\u`` escapes, a ``UUID`` or an ``Enum`` as its JSON value, and ``NaN`` or an
 infinity as ``null`` (the stdlib wrote ``NaN``, which ``JSON.parse`` rejects). A
 ``datetime``, a dataclass, and anything else the stdlib refused still fall back. A value
-only orjson refuses (an int past 64 bits, a lone surrogate) keeps the stdlib encoding.
+only orjson refuses (an int past 64 bits, a lone surrogate) keeps the stdlib encoding, with
+``NaN`` and infinities still written as ``null``.
 """
 
 import json
+import math
 from collections.abc import Mapping
 from typing import Any, Final
 
@@ -69,14 +71,33 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
 # ....................... #
 
 
+def _finite(value: Any) -> Any:
+    """*value* with every ``NaN`` or infinite float replaced by ``None``, as orjson writes it."""
+
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+
+    if isinstance(value, Mapping):
+        return {k: _finite(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+
+    return value
+
+
+# ....................... #
+
+
 def _dumps(payload: Mapping[str, Any]) -> str:
     try:
         return orjson.dumps(payload, option=_ORJSON_OPTIONS).decode()
 
     except TypeError:
         # Ints past 64 bits, float subclasses, lone surrogates, non-str keys and nesting
-        # past 254 levels: orjson refuses them, the stdlib encoded them, so it still does.
-        return json.dumps(payload, separators=(",", ":"))
+        # past 254 levels: orjson refuses them, the stdlib encoded them, so it still does,
+        # with non-finite floats as ``null`` (a bare ``NaN`` is not JSON to a browser).
+        return json.dumps(_finite(payload), separators=(",", ":"))
 
 
 # ....................... #
@@ -99,7 +120,8 @@ def encode_frame(
     try:
         return _dumps(payload)
 
-    except (TypeError, ValueError) as error:
+    # RecursionError: nesting deeper than the stdlib (or the walk above) can follow.
+    except (TypeError, ValueError, RecursionError) as error:
         logger.critical_exception("Realtime frame is not JSON-serializable", exc=error)
 
         # The stdlib, not orjson: it encodes any scalar a correlation key may hold.
@@ -120,5 +142,5 @@ def jsonable_frame(
 
     encoded = encode_frame(payload, fallback_code=fallback_code)
 
-    # The stdlib parser: it also reads the ``NaN`` and big ints a stdlib-encoded frame holds.
+    # The stdlib parser: it also reads the big ints a stdlib-encoded frame holds.
     return json.loads(encoded)  # type: ignore[no-any-return]

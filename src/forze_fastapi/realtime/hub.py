@@ -103,7 +103,7 @@ class HubDelivery:
 
     A transport's frame for it is a function of the signal and its event id alone, so
     :meth:`frame` encodes it once for all the streams it reaches rather than once per
-    stream. Unpacks as ``signal, event_id``.
+    stream. Unpacks and indexes as the ``(signal, event_id)`` tuple it replaces.
     """
 
     signal: RealtimeSignal
@@ -118,6 +118,13 @@ class HubDelivery:
 
     def __iter__(self) -> Iterator[Any]:
         return iter((self.signal, self.event_id))
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> Any:
+        # Indexes like the ``(signal, event_id)`` tuple the queues used to hold.
+        return (self.signal, self.event_id)[index]
 
     # ....................... #
 

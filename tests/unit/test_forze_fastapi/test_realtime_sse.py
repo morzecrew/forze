@@ -645,6 +645,15 @@ class TestHubDelivery:
         assert HubDelivery(_signal(1), "e2").frame(sse) == "sse:e2"  # another delivery misses
         assert calls == ["sse", "ws", "sse"]
 
+    def test_reads_like_the_tuple_it_replaces(self) -> None:
+        signal = _signal(1)
+        delivery = HubDelivery(signal, "e1")
+        signal_out, event_id = delivery
+
+        assert (signal_out, event_id) == (signal, "e1")
+        assert len(delivery) == 2
+        assert (delivery[0], delivery[1], delivery[-1]) == (signal, "e1", "e1")
+
     def test_non_positive_queue_size_refused(self) -> None:
         with pytest.raises(CoreException):
             RealtimeSseHub(queue_size=0)
