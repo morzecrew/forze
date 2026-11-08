@@ -169,6 +169,76 @@ async def test_an_entry_expires_after_the_ttl(clock: _Clock, decodes: list[str])
     assert len(decodes) == 2, "the TTL counts from the first verification, not the last hit"
 
 
+async def test_an_entry_expiring_during_the_key_lookup_is_not_reused(
+    clock: _Clock, decodes: list[str]
+) -> None:
+    signer = _SlowSigner(secret=secrets.token_bytes(32), clock=clock)
+    svc = _svc(signer, verify_cache_ttl=timedelta(seconds=30))
+    token = await svc.issue_token(principal_id=uuid4())
+    await svc.verify_token(token)
+    clock.advance(29.9)
+
+    signer.delay = 0.2  # the lookup itself outlives the entry
+    await svc.verify_token(token)
+    assert len(decodes) == 2
+
+
+@attrs.define(slots=True)
+class _SlowSigner:
+    """An HS256 signer whose key lookup takes *delay* seconds of the test clock."""
+
+    secret: bytes
+    clock: _Clock
+    delay: float = 0.0
+    kid: str | None = None
+    algorithm: str = "HS256"
+
+    async def sign(self, signing_input: bytes) -> bytes:
+        return await Hs256Signer(secret=self.secret).sign(signing_input)
+
+    async def verification_key(self) -> Any:
+        self.clock.advance(self.delay)
+        return self.secret
+
+    async def public_jwk(self) -> dict[str, Any] | None:
+        return None
+
+
+@attrs.define(slots=True)
+class _JwkSigner:
+    """An HS256 signer that hands out one ``PyJWK`` object, which can change in place."""
+
+    secret: bytes
+    jwk: jwt.PyJWK = attrs.field(init=False)
+    kid: str | None = None
+    algorithm: str = "HS256"
+
+    def __attrs_post_init__(self) -> None:
+        k = jwt.utils.base64url_encode(self.secret).decode()
+        self.jwk = jwt.PyJWK({"kty": "oct", "k": k}, algorithm="HS256")
+
+    async def sign(self, signing_input: bytes) -> bytes:
+        return await Hs256Signer(secret=self.secret).sign(signing_input)
+
+    async def verification_key(self) -> Any:
+        return self.jwk
+
+    async def public_jwk(self) -> dict[str, Any] | None:
+        return None
+
+
+async def test_a_key_that_can_change_in_place_is_never_cached(
+    clock: _Clock, decodes: list[str]
+) -> None:
+    svc = _svc(_JwkSigner(secret=secrets.token_bytes(32)))
+    token = await svc.issue_token(principal_id=uuid4())
+
+    await svc.verify_token(token)
+    await svc.verify_token(token)
+
+    assert len(decodes) == 2
+
+
 async def test_a_changed_key_misses_and_refuses(clock: _Clock, decodes: list[str]) -> None:
     signer = _MutableSigner(secret=secrets.token_bytes(32))
     svc = _svc(signer)

@@ -10,6 +10,7 @@ from uuid import UUID
 import attrs
 import jwt
 import orjson
+from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
 from jwt.utils import base64url_encode
 
 from forze.base.exceptions import exc
@@ -25,6 +26,18 @@ _MAX_VERIFY_CACHE_TTL: Final[timedelta] = timedelta(minutes=5)
 _Verified = tuple[float, str | None, tuple[Any, ...], dict[str, Any]]
 """A remembered verification: its monotonic deadline, the header ``kid``, what ``jwt.decode``
 read besides the token (key, algorithm, issuer, audience) and the claims it returned."""
+
+_IMMUTABLE_KEY: Final = (
+    str,
+    bytes,
+    rsa.RSAPublicKey,
+    ec.EllipticCurvePublicKey,
+    ed25519.Ed25519PublicKey,
+    ed448.Ed448PublicKey,
+    dsa.DSAPublicKey,
+)
+"""Verification key types a cached verification may be compared against: a key that can change
+in place (a ``PyJWK``, a ``bytearray``) would still equal itself after the change."""
 
 _FLAT_CLAIM: Final = (str, int, float, type(None))
 """Claim value types a cached verification may hold; a tuple, as a union costs more per check."""
@@ -52,7 +65,8 @@ class AccessTokenConfig:
     """How long a token's verified signature and claims are reused for that same token; at
     most five minutes, zero to disable. A reuse still needs the same key, algorithm, issuer and
     audience, and still checks ``exp``/``iat``/``nbf``; session and revocation checks after it
-    run on every request."""
+    run on every request. A verification key that can change in place (a ``PyJWK``) is never
+    cached."""
 
     verify_cache_max_entries: int = 1024
     """Verified tokens kept; the least recently used goes first."""
@@ -281,7 +295,8 @@ class AccessTokenService:
         key = await verifier.verification_key()
         inputs = (key, verifier.algorithm, self.config.issuer, self.config.audience)
 
-        if hit is not None and hit[2] == inputs:
+        # The deadline again: ``verification_key()`` may have awaited past it.
+        if hit is not None and hit[2] == inputs and monotonic() < hit[0]:
             res = hit[3]
 
         else:
@@ -305,7 +320,12 @@ class AccessTokenService:
         _check_times(res, now=utcnow().timestamp(), leeway=leeway.total_seconds())
 
         # Flat claims only: the shallow copy a caller gets then shares nothing it could mutate.
-        if ttl and hit is None and all(isinstance(v, _FLAT_CLAIM) for v in res.values()):
+        if (
+            ttl
+            and hit is None
+            and isinstance(key, _IMMUTABLE_KEY)
+            and all(isinstance(v, _FLAT_CLAIM) for v in res.values())
+        ):
             self._remember(digest, (began + ttl, kid, inputs, res))
 
         return res
