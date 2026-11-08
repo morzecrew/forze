@@ -721,7 +721,7 @@ class FrozenOperationRegistry:
         op: StrKey,
         ctx: ExecutionContext,
     ) -> ResolvedOperation[Any, Any]:
-        cached = ctx.cached_operation(op)
+        cached = ctx.cached_operation(self, op)
 
         if cached is not None:
             return cached
@@ -773,6 +773,6 @@ class FrozenOperationRegistry:
             drain_gate=ctx.drain_gate,
         )
 
-        ctx.store_operation(op, resolved)
+        ctx.store_operation(self, op, resolved)
 
         return resolved

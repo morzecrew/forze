@@ -1,5 +1,8 @@
 """Unit tests for handler execution via OperationRegistry."""
 
+import gc
+import weakref
+
 import attrs
 import pytest
 
@@ -74,6 +77,62 @@ class TestResolvedOperationCache:
 
         # Different scopes do not share cached operations.
         assert reg.resolve("echo", ctx_a) is not reg.resolve("echo", ctx_b)
+
+    @pytest.mark.asyncio
+    async def test_cache_is_per_registry(self) -> None:
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class OtherHandler(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                return f"other:{args}"
+
+        reg, _ = self._counting_registry()
+        other = OperationRegistry(handlers={"echo": lambda _ctx: OtherHandler()}).freeze()
+        ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))
+
+        assert await reg.resolve("echo", ctx)("a") == "result:a"
+        # Same key, same scope: the second registry resolves its own operation.
+        assert await other.resolve("echo", ctx)("a") == "other:a"
+        assert reg.resolve("echo", ctx) is reg.resolve("echo", ctx)
+
+    def test_collected_registry_releases_its_entries(self) -> None:
+        ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))
+
+        for _ in range(3):
+            reg, _ = self._counting_registry()
+            reg.resolve("echo", ctx)
+            del reg
+            gc.collect()
+
+        assert ctx.cached_operation(object(), "echo") is None
+        assert not ctx._resolved_op_cache  # pyright: ignore[reportPrivateUsage]
+
+    def test_entry_of_another_object_under_the_same_id_is_never_served(self) -> None:
+        reg, _ = self._counting_registry()
+        other, _ = self._counting_registry()
+        ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))
+        cache = ctx._resolved_op_cache  # pyright: ignore[reportPrivateUsage]
+        assert cache is not None
+
+        # Two operations of one registry share its entry.
+        ctx.store_operation(reg, "a", 1)
+        ctx.store_operation(reg, "b", 2)
+        assert (ctx.cached_operation(reg, "a"), ctx.cached_operation(reg, "b")) == (1, 2)
+
+        # An entry under reg's id that points at another object (a recycled id) is a miss,
+        # is replaced on store, and a dying registry's callback leaves its replacement alone.
+        stale = (weakref.ref(other), {"a": "stale"})
+        cache[id(reg)] = stale
+        assert ctx.cached_operation(reg, "a") is None
+
+        ctx.store_operation(reg, "a", 3)
+        assert ctx.cached_operation(reg, "a") == 3
+
+        live = cache[id(reg)]  # keeps its weakref, and so the release callback, alive
+        cache[id(reg)] = stale
+        del reg
+        gc.collect()
+        assert live[0]() is None
+        assert list(cache.values()) == [stale]
 
     @pytest.mark.asyncio
     async def test_cached_operation_executes_equivalently(self) -> None:

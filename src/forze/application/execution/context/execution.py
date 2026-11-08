@@ -1,3 +1,4 @@
+import weakref
 from collections.abc import Callable
 from typing import Any, final
 
@@ -88,7 +89,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    _resolved_op_cache: dict[StrKey, Any] | None = attrs.field(
+    _resolved_op_cache: dict[int, tuple[weakref.ref[Any], dict[StrKey, Any]]] | None = attrs.field(
         default=attrs.Factory(
             lambda self: {} if self.cache_operations else None,
             takes_self=True,
@@ -292,26 +293,53 @@ class ExecutionContext:
 
     # ....................... #
 
-    def cached_operation(self, op: StrKey) -> Any | None:
-        """Return a memoized resolved operation for this scope, or ``None``.
+    def cached_operation(self, registry: object, op: StrKey) -> Any | None:
+        """Return the operation *registry* resolved for *op* in this scope, or ``None``.
 
         ``None`` means either a cache miss or caching disabled; callers resolve
-        and then call :meth:`store_operation`.
+        and then call :meth:`store_operation`. Entries are per registry: two
+        registries that share an operation key keep separate resolved operations.
         """
 
         cache = self._resolved_op_cache
 
-        return cache.get(op) if cache is not None else None
+        if cache is None:
+            return None
+
+        entry = cache.get(id(registry))
+
+        if entry is None or entry[0]() is not registry:
+            return None
+
+        return entry[1].get(op)
 
     # ....................... #
 
-    def store_operation(self, op: StrKey, resolved: Any) -> None:
-        """Memoize a resolved operation for this scope (no-op when disabled)."""
+    def store_operation(self, registry: object, op: StrKey, resolved: Any) -> None:
+        """Memoize the operation *registry* resolved for *op* (no-op when disabled).
+
+        *registry* is held weakly: once it is collected its entries are dropped, so a
+        registry frozen per call does not accumulate in a long-lived scope.
+        """
 
         cache = self._resolved_op_cache
 
-        if cache is not None:
-            cache[op] = resolved
+        if cache is None:
+            return
+
+        key = id(registry)
+        entry = cache.get(key)
+
+        if entry is None or entry[0]() is not registry:
+
+            def _release(ref: weakref.ref[Any], key: int = key) -> None:
+                if (current := cache.get(key)) is not None and current[0] is ref:
+                    del cache[key]
+
+            entry = (weakref.ref(registry, _release), {})
+            cache[key] = entry
+
+        entry[1][op] = resolved
 
     # ....................... #
 
