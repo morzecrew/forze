@@ -48,9 +48,8 @@ from forze_postgres.kernel.relation import (
     is_static_relation,
     resolve_postgres_qname,
 )
-from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
-from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
+from forze_postgres.kernel.sql.query.render import PsycopgFilterSqlCache, PsycopgValueCoercer
 
 # ----------------------- #
 
@@ -213,6 +212,22 @@ class PostgresGateway[M: BaseModel](
     Schema-independent (derived from read-model field names), so it is safe for the
     gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
 
+    _filter_sql_cache: PsycopgFilterSqlCache = attrs.field(
+        default=attrs.Factory(
+            lambda self: PsycopgFilterSqlCache(
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+            ),
+            takes_self=True,
+        ),
+        init=False,
+        eq=False,
+        repr=False,
+        hash=False,
+    )
+    """Per-gateway memo of rendered filter SQL by filter shape, bounded (see
+    :class:`~forze_postgres.kernel.sql.query.render.PsycopgFilterSqlCache`)."""
+
     filter_parser: QueryFilterExpressionParser = attrs.field(
         default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
         init=False,
@@ -321,14 +336,11 @@ class PostgresGateway[M: BaseModel](
 
             alias = self.filter_table_alias if table_alias is None else table_alias
 
-            r = PsycopgQueryRenderer(
+            query, params = self._filter_sql_cache.render(  # type: ignore[assignment]
+                expr,
                 types=types,
-                model_type=self.model_type,
-                nested_field_hints=self.nested_field_hints,
                 table_alias=alias,
             )
-
-            query, params = r.render(expr)  # type: ignore[assignment]
 
         query, params = self._add_tenant_where(query, params)  # type: ignore[assignment]
 

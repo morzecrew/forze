@@ -77,11 +77,17 @@ def collect_filter_field_roots(
 
 
 def _field_roots(
-    expr: QueryFilterExpression,  # type: ignore[valid-type]
+    expr: QueryFilterExpression | QueryExpr,  # type: ignore[valid-type]
     *,
     parser: QueryFilterExpressionParser | None = None,
 ) -> tuple[frozenset[str], frozenset[str]]:
-    """Every referenced root, and the ones that are the right-hand side of a field compare."""
+    """Every referenced root, and the ones that are the right-hand side of a field compare.
+
+    An already parsed *expr* is walked as it is, not parsed again.
+    """
+
+    if isinstance(expr, QueryExpr):
+        return _expr_roots(expr)
 
     return _expr_roots(
         parser.parse_filter(expr) if parser is not None else QueryFilterExpressionParser.parse(expr)
@@ -148,7 +154,7 @@ def validate_filterable_fields(
 
 
 def validate_runtime_filter_fields(
-    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    filters: QueryFilterExpression | QueryExpr | None,  # type: ignore[valid-type]
     *,
     model: type[BaseModel],
     materialized: frozenset[str] = frozenset(),
@@ -182,7 +188,8 @@ def validate_runtime_filter_fields(
     match the value at rest, and remains supported.
 
     *parser* is the one the filter will run under (a spec's :class:`QueryFilterLimits`);
-    the default limits apply when it is omitted.
+    the default limits apply when it is omitted. *filters* may be the AST that parser
+    already returned, so a caller that parses anyway parses once.
     """
 
     if filters is None:

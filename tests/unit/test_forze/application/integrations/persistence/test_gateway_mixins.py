@@ -89,6 +89,35 @@ def test_filter_parser_compile_filters_none() -> None:
     assert gw.compile_filters(None) is None
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _ModelFilterGateway(FilterParserMixin[_Model]):
+    model_type: type[_Model] = _Model
+    filter_limits: QueryFilterLimits | None = None
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
+
+
+def test_compile_filters_parses_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed: list[Any] = []
+    parse_filter = QueryFilterExpressionParser.parse_filter
+
+    def _counting(self: QueryFilterExpressionParser, filters: Any) -> Any:
+        parsed.append(filters)
+        return parse_filter(self, filters)
+
+    monkeypatch.setattr(QueryFilterExpressionParser, "parse_filter", _counting)
+    gw = _ModelFilterGateway()
+
+    assert gw.compile_filters({"$values": {"name": "x"}}) is not None
+    assert len(parsed) == 1
+
+    # The field check still runs on that one parse.
+    with pytest.raises(CoreException, match="not on the read model"):
+        gw.compile_filters({"$values": {"nmae": "x"}})
+
+
 class _OrderDomain(Document):
     qty: int
 

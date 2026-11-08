@@ -412,6 +412,28 @@ class TestValidateRuntimeFilterFields:
         assert ei.value.kind is ExceptionKind.PRECONDITION
         assert ei.value.code == "field_not_on_read_model"
 
+    def test_a_parsed_filter_is_checked_as_its_source(self) -> None:
+        from pydantic import BaseModel
+
+        from forze.application.contracts.querying import (
+            QueryFilterExpressionParser,
+            validate_runtime_filter_fields,
+        )
+
+        class _Doc(BaseModel):
+            id: str
+            name: str
+
+        validate_runtime_filter_fields(
+            QueryFilterExpressionParser.parse({"$values": {"name": "x"}}), model=_Doc
+        )
+
+        with pytest.raises(CoreException, match="not on the read model") as ei:
+            validate_runtime_filter_fields(
+                QueryFilterExpressionParser.parse({"$values": {"nmae": "x"}}), model=_Doc
+            )
+        assert ei.value.code == "field_not_on_read_model"
+
     def test_lenient_field_is_rejected(self) -> None:
         from pydantic import BaseModel
 
