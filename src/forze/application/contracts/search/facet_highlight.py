@@ -122,7 +122,21 @@ def _casefold(text: str) -> str:
     shift the offsets of a folded string away from the original and corrupt slicing. Folding
     per character and keeping the first code point keeps a 1:1 position mapping, so spans found
     in the folded text index the original text correctly.
+
+    The per-character fold is what the result must equal; one ``str.lower()`` call produces it
+    faster. ASCII lowers one-to-one. Elsewhere ``str.lower()`` departs from the per-character
+    fold only at ``Σ`` (``ς`` at a word's end) and ``İ`` (two code points), so those two are
+    pre-folded the per-character way; a length change means another code point expanded, and
+    the per-character loop decides.
     """
+
+    if text.isascii():
+        return text.lower()
+
+    folded = text.replace("Σ", "σ").replace("İ", "i").lower()
+
+    if len(folded) == len(text):
+        return folded
 
     return "".join(ch.lower()[:1] for ch in text)
 

@@ -17,7 +17,9 @@ import textwrap
 from typing import Any
 from uuid import UUID
 
+import hypothesis.strategies as st
 import pytest
+from hypothesis import given, settings
 from pydantic import BaseModel
 
 from forze.application.contracts.search import FederatedSearchReadModel
@@ -331,6 +333,49 @@ class TestHighlightsFollowTheirHit:
             {"label": ["y"]},
             {"label": ["<em>x</em>"]},
         ]
+
+
+# Any JSON-shaped id, NaN, infinities, big integers and unsorted mappings included, plus the
+# colliding ids above so equal ones turn up together.
+_JSON_IDS = st.one_of(
+    st.sampled_from(_ANY_IDS),
+    st.recursive(
+        st.none() | st.booleans() | st.integers() | st.floats() | st.text(max_size=4),
+        lambda inner: (
+            st.lists(inner, max_size=3) | st.dictionaries(st.text(max_size=2), inner, max_size=3)
+        ),
+        max_leaves=6,
+    ),
+)
+
+
+class TestTheKeysAreTheJsonTheyWere:
+    @settings(max_examples=300, deadline=None)
+    @given(rid=_JSON_IDS, label=st.text(max_size=6))
+    def test_each_key_is_the_sorted_json_dump(self, rid: Any, label: str) -> None:
+        hit = _AnyId(id=rid, label=label)
+        record = hit.model_dump(mode="json")
+
+        assert SearchResultSnapshot.federated_record_key_string("m", hit) == (
+            f"m\0{json.dumps(record, sort_keys=True)}"
+        )
+        assert SearchResultSnapshot.result_record_key_string(hit) == json.dumps(
+            record, sort_keys=True, ensure_ascii=False
+        )
+        assert SearchResultSnapshot._hit_id(hit) == (  # pyright: ignore[reportPrivateUsage]
+            None if record["id"] is None else json.dumps(record["id"], sort_keys=True)
+        )
+
+    @settings(max_examples=300, deadline=None)
+    @given(
+        rows=st.lists(st.tuples(_JSON_IDS, st.sampled_from(("a", "b"))), max_size=12),
+        k=st.sampled_from((1, 10, 60)),
+    )
+    def test_id_keys_merge_as_record_keys_do(self, rows: list[tuple[Any, str]], k: int) -> None:
+        hits: list[BaseModel] = [_AnyId(id=rid, label=label) for rid, label in rows]
+        legs: list[tuple[str, list[BaseModel], float]] = [("m", hits, 1.0), ("n", hits[::-1], 0.5)]
+
+        assert _merge(legs, k) == _oracle(legs, k)
 
 
 class TestTheOrderIsTheSameInEveryProcess:

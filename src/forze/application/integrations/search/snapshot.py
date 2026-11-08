@@ -69,6 +69,12 @@ tell sealed from legacy-plaintext records during a zero-downtime rollout."""
 _CIPHER_NOT_WARM = "core.crypto.cipher_not_warm"
 """Raised by the sync cipher when its data key rotated out from under a warmed batch."""
 
+_SORTED_JSON = json.JSONEncoder(sort_keys=True)
+"""``json.dumps(..., sort_keys=True)`` without building an encoder per call (same output)."""
+
+_SORTED_JSON_UNICODE = json.JSONEncoder(sort_keys=True, ensure_ascii=False)
+"""``json.dumps(..., sort_keys=True, ensure_ascii=False)``, built once (same output)."""
+
 # ....................... #
 
 
@@ -496,7 +502,7 @@ class SearchResultSnapshot:
 
     @staticmethod
     def result_record_key_string(hit: BaseModel) -> str:
-        return json.dumps(hit.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+        return _SORTED_JSON_UNICODE.encode(hit.model_dump(mode="json"))
 
     # ....................... #
 
@@ -510,7 +516,7 @@ class SearchResultSnapshot:
 
     @staticmethod
     def federated_record_key_string(member: str, hit: BaseModel) -> str:
-        payload = json.dumps(hit.model_dump(mode="json"), sort_keys=True)
+        payload = _SORTED_JSON.encode(hit.model_dump(mode="json"))
 
         return f"{member}\0{payload}"
 
@@ -530,7 +536,7 @@ class SearchResultSnapshot:
         if dumped.get("id") is None:
             return None
 
-        return json.dumps(dumped["id"], sort_keys=True)
+        return _SORTED_JSON.encode(dumped["id"])
 
     # ....................... #
 
@@ -750,13 +756,15 @@ class SearchResultSnapshot:
             if weight <= 0.0:
                 continue
 
+            w, fk = float(weight), float(k)
+
             for rank, rid in enumerate(ids, start=1):
                 key = (member, rid)
-                scores[key] = scores.get(key, 0.0) + float(weight) / (float(k) + float(rank))
+                scores[key] = scores.get(key, 0.0) + w / (fk + float(rank))
 
-        ordered = sorted(scores.keys(), key=lambda kk: (-scores[kk], kk[0], kk[1]))
+        ordered = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
 
-        return [(member, rid, scores[(member, rid)]) for member, rid in ordered]
+        return [(member, rid, score) for (member, rid), score in ordered]
 
     # ....................... #
 
