@@ -73,16 +73,23 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
 
 
 def _finite(value: Any) -> Any:
-    """*value* with every ``NaN`` or infinite float replaced by ``None``, as orjson writes it."""
+    """*value* with every ``NaN`` or infinite float replaced by ``None``, as orjson writes it.
+
+    Walks what the stdlib encoder walks, in its order, so a ``str`` that is also a
+    container stays a string and anything else is left for the stdlib to refuse.
+    """
+
+    if isinstance(value, (str, int)):
+        return value
 
     if isinstance(value, float):
         return value if math.isfinite(value) else None
 
-    if isinstance(value, Mapping):
-        return {k: _finite(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-
     if isinstance(value, (list, tuple)):
         return [_finite(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
 
     return value
 

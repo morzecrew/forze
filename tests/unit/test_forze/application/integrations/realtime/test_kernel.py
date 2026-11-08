@@ -9,7 +9,7 @@ the SSE route both consume these helpers, so their delivery semantics cannot dri
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import aclosing
 from enum import Enum
 from typing import Any
@@ -36,6 +36,10 @@ from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp
 
 # ----------------------- #
+
+
+class _StrMapping(str, Mapping[str, Any]):  # pyright: ignore[reportIncompatibleMethodOverride]
+    """A string that also claims to be a mapping: the stdlib encodes it as the string."""
 
 
 def _hlc(ms: int) -> HlcTimestamp:
@@ -491,6 +495,7 @@ class TestFrameEncoding:
                 {"n": 2**64, "x": float("nan"), "l": [float("-inf")]},
                 '{"n":18446744073709551616,"x":null,"l":[null]}',
             ),
+            ({"n": 2**64, "s": _StrMapping("x")}, '{"n":18446744073709551616,"s":"x"}'),
         ],
     )
     def test_wire_form(self, payload: dict[Any, Any], wire: str) -> None:
@@ -527,6 +532,13 @@ class TestFrameEncoding:
         frame = encode_frame({"type": "ack", "cid": float("nan"), "data": object()})
 
         assert frame.startswith('{"type":"ack","cid":null,"error":')
+
+    def test_fallback_frame_keeps_a_string_cid_that_is_also_a_mapping(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        frame = encode_frame({"type": "ack", "cid": _StrMapping("c1"), "data": object()})
+
+        assert frame.startswith('{"type":"ack","cid":"c1","error":')
 
     def test_fallback_code_is_overridable(self) -> None:
         import json
