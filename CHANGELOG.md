@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Postgres pool no longer pings a connection used in the last half second** (**behaviour change**). New `PostgresConfig.check_idle_after` (default 500 ms) sets the window; one the server ended inside it fails one operation. `timedelta(0)` pings every checkout.
 
 - **The realtime hub's live fan-out is 6–30× cheaper per delivered frame.** Its queues hold a `HubDelivery`, which still unpacks and indexes as `(signal, event_id)`. SSE and WebSocket frames are UTF-8 JSON from orjson: a `UUID` or an `Enum` goes out as its value, `NaN` or an infinity as `null` (**behaviour change**).
+- **`ForzeJwtTokenVerifier` reuses a repeat token's verified signature and claims: a repeat verify drops from ~50 to ~4 µs (HS256).** Set by `AccessTokenConfig.verify_cache_ttl` (30 s, at most 5 min, `0` disables) and `verify_cache_max_entries`. Expiry, session and revocation checks still run per request.
 
 ### Fixed
 

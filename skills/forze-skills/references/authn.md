@@ -167,6 +167,7 @@ check.
 - **Treating authz as domain-only state** — use authz ports for policy decisions that depend on external grants.
 - **Forgetting authn document specs need storage wiring** — `forze_identity.authn` and `forze_identity.authz` specs are still `DocumentSpec`s; `identity_mapping_spec` must allow neither cache nor history.
 - **Using `AccessTokenCredentials.scheme` / `profile` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
+- **Caching `ForzeJwtTokenVerifier` results in front of it** — it already reuses a token's verified signature and claims for `AccessTokenConfig.verify_cache_ttl` (30 s), only while the key, algorithm, issuer and audience are unchanged, and still runs the expiry, session and revocation checks on every request; a cache in front would skip those. A custom `SignerPort` whose `verification_key()` returns a new, non-equal object each call gets no reuse.
 - **Building `RevocationStates` twice, once per kernel** — two equal values still lose the authz skip, which compares by identity; build one and pass it to both.
 
 ## Reference
