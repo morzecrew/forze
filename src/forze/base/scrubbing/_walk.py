@@ -14,6 +14,12 @@ from .policy import (
 
 # ----------------------- #
 
+# Exact builtin scalars, returned as-is by the checks below: matching them by type first
+# skips the ABC ``isinstance`` chain (``Mapping``, ``Sequence``, ``BaseModel``) each pays.
+_PLAIN_SCALARS: frozenset[type] = frozenset({int, float, bool, type(None)})
+
+# ....................... #
+
 
 def _scrub_string(value: str, *, text_scrub: bool) -> str:
     return scrub_log_string(value) if text_scrub else value
@@ -31,6 +37,12 @@ def walk_value(
 ) -> Any:
     if depth > max_depth:
         return MAX_DEPTH_SENTINEL
+
+    if type(value) is str:
+        return _scrub_string(value, text_scrub=text_scrub)
+
+    if type(value) in _PLAIN_SCALARS:
+        return value
 
     if isinstance(value, SecretStr):
         return str(value)
@@ -112,7 +124,15 @@ def walk_mapping(
             out[key] = SECRET_PLACEHOLDER
             continue
 
-        if isinstance(value, Mapping):
+        if type(value) is str or type(value) in _PLAIN_SCALARS:
+            out[key] = walk_value(
+                value,
+                text_scrub=text_scrub,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+
+        elif isinstance(value, Mapping):
             out[key] = walk_mapping(
                 value,  # pyright: ignore[reportUnknownArgumentType]
                 text_scrub=text_scrub,

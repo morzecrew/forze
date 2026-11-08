@@ -1,6 +1,8 @@
 import sys
 import threading
 import traceback
+from functools import cache
+from types import ModuleType
 from typing import Any, cast
 
 import attrs
@@ -42,6 +44,40 @@ _EVENT_DICT_SANITIZE_SKIP: frozenset[str] = frozenset(
         "stack_info",
     }
 )
+
+# ....................... #
+
+
+@cache
+def _scrubbing() -> tuple[ModuleType, ModuleType]:
+    """``forze.base.scrubbing`` and its policy, imported on first use, once.
+
+    Importing ``forze.base.logging`` stays free of them (and of pydantic); an ``import``
+    statement in a processor would cost every event a fromlist lookup instead.
+    """
+
+    import forze.base.scrubbing as scrubbing
+    from forze.base.scrubbing import policy
+
+    return scrubbing, policy
+
+
+# ....................... #
+
+
+@cache
+def _otel_trace() -> ModuleType:
+    """``opentelemetry.trace``, imported on first use, once.
+
+    Only :class:`OpenTelemetryContextInjector` needs it, and it is only added to the
+    pipeline when OTel injection is enabled, so importing this module never pulls
+    ``opentelemetry``.
+    """
+
+    from opentelemetry import trace
+
+    return trace
+
 
 # ....................... #
 
@@ -108,13 +144,13 @@ class ExceptionFieldsSanitizer:
     """
 
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
-        from forze.base.scrubbing.policy import scrub_log_string
+        _, policy = _scrubbing()
 
         for key in (ERR_MESSAGE_KEY, ERR_STACK_KEY):
             value = event_dict.get(key)
 
             if isinstance(value, str):
-                event_dict[key] = scrub_log_string(value)
+                event_dict[key] = policy.scrub_log_string(value)
 
         event_dict.pop(RICH_EXC_INFO_KEY, None)
 
@@ -139,11 +175,7 @@ class OpenTelemetryContextInjector:
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
         """Inject OpenTelemetry context into the event dict."""
 
-        # Deferred import: this processor is only added to the pipeline when OTel
-        # injection is enabled, so importing this module never pulls ``opentelemetry``.
-        from opentelemetry import trace as otel_trace
-
-        span = otel_trace.get_current_span()
+        span = _otel_trace().get_current_span()
         ctx = span.get_span_context()
 
         if not ctx or not ctx.is_valid:
@@ -225,12 +257,7 @@ class EventDictSanitizer:
     # ....................... #
 
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
-        from forze.base.scrubbing import sanitize
-        from forze.base.scrubbing.policy import (
-            SECRET_PLACEHOLDER,
-            is_sensitive_key,
-            scrub_log_string,
-        )
+        scrubbing, policy = _scrubbing()
 
         for key in list(event_dict.keys()):
             if key in _EVENT_DICT_SANITIZE_SKIP:
@@ -247,11 +274,11 @@ class EventDictSanitizer:
                     else str(key)
                 )
 
-                if is_sensitive_key(key_name):
-                    event_dict[key] = SECRET_PLACEHOLDER
+                if policy.is_sensitive_key(key_name):
+                    event_dict[key] = policy.SECRET_PLACEHOLDER
                     continue
 
-                event_dict[key] = sanitize(
+                event_dict[key] = scrubbing.sanitize(
                     event_dict[key],
                     context="log",
                     text_scrub=self.text_scrub,
@@ -267,7 +294,7 @@ class EventDictSanitizer:
             event_value = event_dict.get("event")
 
             if isinstance(event_value, str):
-                event_dict["event"] = scrub_log_string(event_value)
+                event_dict["event"] = policy.scrub_log_string(event_value)
 
         return event_dict
 
