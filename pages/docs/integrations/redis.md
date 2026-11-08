@@ -15,7 +15,9 @@ pub-sub) — all behind Forze contracts.
 uv add 'forze[redis]'
 ```
 
-Needs a reachable Redis or Valkey server.
+Needs a reachable Redis or Valkey server. The extra also installs `hiredis`, the C
+reply parser that redis-py uses on its own whenever it is installed; it reads large
+replies (`MGET`, `HGETALL`, pipelines) several times faster than the pure-Python one.
 
 ## The client
 
