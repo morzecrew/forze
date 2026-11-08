@@ -481,6 +481,9 @@ class PostgresClient(PostgresClientPort):
     checkout check to skip a recent one's ping. ``None`` when every checkout is pinged (or none
     is); weak, so a connection the pool discards drops out."""
 
+    __idle_window: float = attrs.field(default=0.0, init=False)
+    """``check_idle_after`` in seconds: a checkout held this long or longer vouches for nothing."""
+
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
@@ -532,6 +535,7 @@ class PostgresClient(PostgresClientPort):
                 if config.check_on_checkout and config.check_idle_after > timedelta(0)
                 else None
             )
+            self.__idle_window = config.check_idle_after.total_seconds()
 
             pool = AsyncConnectionPool(
                 conninfo=dsn,
@@ -672,12 +676,30 @@ class PostgresClient(PostgresClientPort):
             async with pool.connection(timeout=timeout) as conn:
                 acquiring = False
                 _checkout_deadline.reset(deadline)
+                returned = self.__returned_at
+                taken = asyncio.get_running_loop().time() if returned is not None else 0.0
 
-                yield conn
+                try:
+                    yield conn
 
-                # Only a clean exit vouches for the connection; an error leaves it to the ping.
-                if (returned := self.__returned_at) is not None:
-                    returned[conn] = asyncio.get_running_loop().time()
+                except BaseException:
+                    # An error vouches for nothing: drop an earlier return, so the next
+                    # checkout pings the connection.
+                    if returned is not None:
+                        returned.pop(conn, None)
+
+                    raise
+
+                # A clean exit vouches for the connection only after a short checkout: one held
+                # past the window may have done its last I/O long before it came back.
+                if returned is not None:
+                    now = asyncio.get_running_loop().time()
+
+                    if now - taken < self.__idle_window:
+                        returned[conn] = now
+
+                    else:
+                        returned.pop(conn, None)
 
         except PoolTimeout as error:
             if not acquiring:

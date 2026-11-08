@@ -723,6 +723,7 @@ class TestPoolCheckIdleWindow:
         client, conn, _pool = _client_with_stub_pool()
         returned: WeakKeyDictionary[Any, float] = WeakKeyDictionary()
         client._PostgresClient__returned_at = returned  # type: ignore[attr-defined]
+        client._PostgresClient__idle_window = self._WINDOW.total_seconds()  # type: ignore[attr-defined]
 
         with pytest.raises(RuntimeError):
             async with client._acquire():
@@ -736,6 +737,30 @@ class TestPoolCheckIdleWindow:
             pass
 
         assert returned[conn] >= before
+
+        # A failed checkout after a clean one drops the earlier return.
+        with pytest.raises(RuntimeError):
+            async with client._acquire():
+                raise RuntimeError("the operation failed")
+
+        assert conn not in returned
+
+    @pytest.mark.asyncio
+    async def test_a_checkout_held_past_the_window_vouches_for_nothing(self) -> None:
+        client, conn, _pool = _client_with_stub_pool()
+        returned: WeakKeyDictionary[Any, float] = WeakKeyDictionary()
+        client._PostgresClient__returned_at = returned  # type: ignore[attr-defined]
+        client._PostgresClient__idle_window = 0.005  # type: ignore[attr-defined]
+
+        async with client._acquire():
+            pass
+
+        assert conn in returned
+
+        async with client._acquire():
+            await asyncio.sleep(0.02)
+
+        assert conn not in returned
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

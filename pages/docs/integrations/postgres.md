@@ -242,7 +242,8 @@ PostgresLifecycleModule(
   opens their replacements at once, up to `max_size` new connections, which is by design.
   The cost is one round trip per checkout of a connection idle for at least `check_idle_after`
   (half a second by default); a transaction checks out once. A connection given back without
-  an error more recently has just answered, so it skips the ping; if the server ended it in
+  an error more recently, from a checkout shorter than that, has just answered, so it skips
+  the ping; if the server ended it in
   that window, the operation it is handed to fails. To ping every checkout, pass
   `PostgresConfig(check_idle_after=timedelta(0))`. The acquire timeout
   covers both the wait for a connection and its ping, except that a ping always gets at least
