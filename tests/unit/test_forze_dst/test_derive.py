@@ -8,6 +8,8 @@ concurrent double-charge as the hand-written scenario.
 
 from __future__ import annotations
 
+import random
+
 import attrs
 from pydantic import BaseModel
 
@@ -164,6 +166,86 @@ class TestArgBuilderBranches:
         # No-input op: arg builder yields None.
         assert by_op["heartbeat"].requires == ()
         assert by_op["heartbeat"].arg(state, random.Random(0)) is None
+
+
+class _Line(BaseModel):
+    sku: str
+    qty: int
+    tags: list[str]
+
+
+class _ShipDTO(BaseModel):
+    order_id: str
+    carrier: str
+    weight: float
+    express: bool
+    note: str | None
+    lines: list[_Line]
+
+
+class _RefundDTO(BaseModel):
+    order_id: str
+    amount: int
+    reasons: dict[str, int]
+
+
+def _fresh_factory_arg(
+    input_type: type[BaseModel], state: ModelState, rng: random.Random
+) -> BaseModel:
+    """The arg builder as it was before factory reuse: a new factory class per input."""
+
+    from polyfactory.factories.pydantic_factory import ModelFactory
+
+    picks = {"order_id": state.pick("order", rng)}
+    factory = ModelFactory.create_factory(input_type)
+    factory.seed_random(rng.getrandbits(32))
+    generated = factory.build().model_dump()
+    generated.update(picks)
+    return input_type.model_validate(generated)
+
+
+class TestArgBuilderFactoryReuse:
+    def test_reused_factory_draws_what_a_fresh_one_did(self) -> None:
+        # Stored and recorded failing seeds must replay: the builder keeps one factory per
+        # rule across seeds, and every input still matches the per-input factory it replaced.
+        registry = OperationRegistry(
+            handlers={
+                "create_order": lambda _c: _CreateOrder(orders={}),
+                "ship_order": lambda _c: _CreateOrder(orders={}),
+                "refund_order": lambda _c: _CreateOrder(orders={}),
+            },
+            descriptors={
+                "ship_order": OperationDescriptor(
+                    input_type=_ShipDTO, output_type=None, description="Ship."
+                ),
+                "refund_order": OperationDescriptor(
+                    input_type=_RefundDTO, output_type=None, description="Refund."
+                ),
+            },
+        ).freeze()
+        by_op = {rule.op: rule for rule in derive_scenario(registry).act}
+
+        state = ModelState()
+        for handle in ("ord-1", "ord-2", "ord-3"):
+            state.add("order", handle)
+
+        reused: list[BaseModel] = []
+        fresh: list[BaseModel] = []
+
+        for seed in range(12):
+            reused_rng, fresh_rng = random.Random(seed), random.Random(seed)
+
+            # Interleaved, as an act sequence is: both factories share polyfactory's Faker.
+            for op, input_type in (
+                ("ship_order", _ShipDTO),
+                ("refund_order", _RefundDTO),
+                ("ship_order", _ShipDTO),
+            ):
+                reused.append(by_op[op].arg(state, reused_rng))
+                fresh.append(_fresh_factory_arg(input_type, state, fresh_rng))
+
+        assert reused == fresh
+        assert len({arg.model_dump_json() for arg in reused}) > 1  # inputs actually vary
 
 
 class TestHeuristics:

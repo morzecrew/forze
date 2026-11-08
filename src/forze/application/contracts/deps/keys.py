@@ -23,7 +23,7 @@ T = TypeVar("T")
 
 
 @final
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, frozen=True, cache_hash=True)  # hashed on every registry lookup
 class DepKey[T]:
     """Typed key used to identify dependencies in the kernel.
 

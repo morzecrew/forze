@@ -94,16 +94,24 @@ def _arg_builder(
     if input_type is None:
         return lambda _state, _rng: None
 
+    factory: Any = None
+
     def build(state: ModelState, rng: random.Random) -> Any:
+        nonlocal factory
+
         picks = {field: state.pick(entity, rng) for field, entity in entity_fields.items()}
         non_entity = set(input_type.model_fields) - set(entity_fields)
 
         if not non_entity:  # every field is an arranged handle — no generator needed
             return input_type(**picks)
 
-        from polyfactory.factories.pydantic_factory import ModelFactory
+        if factory is None:  # built once per rule: creating a factory class is the costly part
+            from polyfactory.factories.pydantic_factory import ModelFactory
 
-        factory = ModelFactory.create_factory(input_type)
+            factory = ModelFactory.create_factory(input_type)
+
+        # Re-seeding before every build replaces the factory's Random and re-seeds Faker, so a
+        # reused factory carries no draw state from one input to the next.
         factory.seed_random(rng.getrandbits(32))
         generated = factory.build().model_dump()
         generated.update(picks)
