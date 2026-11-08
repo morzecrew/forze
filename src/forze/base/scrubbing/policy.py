@@ -556,6 +556,11 @@ def scrub_log_string(text: str) -> str:
     if literals is not None:
         lowered = text.lower()
 
+        if not text.isascii():
+            # IGNORECASE matches ``ı`` and ``İ`` (which lowers to ``i`` + U+0307) to ``i``
+            # and ``ſ`` to ``s``; fold them too, or a ``paſſword=`` value skips the regex.
+            lowered = lowered.replace("\u0131", "i").replace("\u017f", "s").replace("\u0307", "")
+
         for literal in literals:
             if literal in lowered:
                 break
