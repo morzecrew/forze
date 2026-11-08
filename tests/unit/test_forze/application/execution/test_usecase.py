@@ -1,5 +1,7 @@
 """Unit tests for handler execution via OperationRegistry."""
 
+import gc
+
 import attrs
 import pytest
 
@@ -90,6 +92,18 @@ class TestResolvedOperationCache:
         # Same key, same scope: the second registry resolves its own operation.
         assert await other.resolve("echo", ctx)("a") == "other:a"
         assert reg.resolve("echo", ctx) is reg.resolve("echo", ctx)
+
+    def test_collected_registry_releases_its_entries(self) -> None:
+        ctx = ExecutionContext(deps=frozen_deps_from_deps(Deps()))
+
+        for _ in range(3):
+            reg, _ = self._counting_registry()
+            reg.resolve("echo", ctx)
+            del reg
+            gc.collect()
+
+        assert ctx.cached_operation(object(), "echo") is None
+        assert not ctx._resolved_op_cache  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
     async def test_cached_operation_executes_equivalently(self) -> None:

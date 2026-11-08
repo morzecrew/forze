@@ -1,3 +1,4 @@
+import weakref
 from collections.abc import Callable
 from typing import Any, final
 
@@ -88,7 +89,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    _resolved_op_cache: dict[tuple[int, StrKey], tuple[object, Any]] | None = attrs.field(
+    _resolved_op_cache: dict[int, tuple[weakref.ref[Any], dict[StrKey, Any]]] | None = attrs.field(
         default=attrs.Factory(
             lambda self: {} if self.cache_operations else None,
             takes_self=True,
@@ -305,20 +306,40 @@ class ExecutionContext:
         if cache is None:
             return None
 
-        hit = cache.get((id(registry), op))
+        entry = cache.get(id(registry))
 
-        return hit[1] if hit is not None else None
+        if entry is None or entry[0]() is not registry:
+            return None
+
+        return entry[1].get(op)
 
     # ....................... #
 
     def store_operation(self, registry: object, op: StrKey, resolved: Any) -> None:
-        """Memoize the operation *registry* resolved for *op* (no-op when disabled)."""
+        """Memoize the operation *registry* resolved for *op* (no-op when disabled).
+
+        *registry* is held weakly: once it is collected its entries are dropped, so a
+        registry frozen per call does not accumulate in a long-lived scope.
+        """
 
         cache = self._resolved_op_cache
 
-        if cache is not None:
-            # The entry holds *registry*, so its id cannot be reused while cached.
-            cache[(id(registry), op)] = (registry, resolved)
+        if cache is None:
+            return
+
+        key = id(registry)
+        entry = cache.get(key)
+
+        if entry is None or entry[0]() is not registry:
+
+            def _release(ref: weakref.ref[Any], key: int = key) -> None:
+                if (current := cache.get(key)) is not None and current[0] is ref:
+                    del cache[key]
+
+            entry = (weakref.ref(registry, _release), {})
+            cache[key] = entry
+
+        entry[1][op] = resolved
 
     # ....................... #
 
