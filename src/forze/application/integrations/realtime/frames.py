@@ -55,7 +55,8 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
     fallback: dict[str, Any] = {
         # JSON scalars only: a client cid may be any JSON scalar (int included), and
         # every one of these is provably serializable — unlike whatever broke the frame.
-        key: payload[key]
+        # A non-finite float goes out as null, like everywhere else on the wire.
+        key: _finite(payload[key])
         for key in _CORRELATION_KEYS
         if key in payload and isinstance(payload[key], (str, int, float, bool, type(None)))
     }

@@ -521,6 +521,13 @@ class TestFrameEncoding:
         assert frame["cid"] == "c1"
         assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
 
+    def test_fallback_frame_writes_a_non_finite_correlation_value_as_null(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        frame = encode_frame({"type": "ack", "cid": float("nan"), "data": object()})
+
+        assert frame.startswith('{"type":"ack","cid":null,"error":')
+
     def test_fallback_code_is_overridable(self) -> None:
         import json
 

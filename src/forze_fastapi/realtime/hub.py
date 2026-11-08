@@ -343,7 +343,11 @@ class RealtimeSseHub:
     # ....................... #
 
     def publish(self, signal: RealtimeSignal, tenant: UUID | None, *, event_id: str | None) -> None:
-        """Fan a signal out to every matching subscription (non-blocking, drop on full)."""
+        """Fan a signal out to every matching subscription (non-blocking, drop on full).
+
+        Every subscription shares *signal*, and its frames are encoded once for all of
+        them: do not mutate its payload after publishing it.
+        """
 
         matching = self._index.get((signal.audience_kind, tenant, signal.audience_name))
 
