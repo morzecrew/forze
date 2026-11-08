@@ -12,11 +12,19 @@ an encoded frame or a **masked fallback error frame** — never an exception.
 The fallback preserves the payload's correlation keys (``type``, ``cid``, ``id``,
 ``event`` — when they are plain strings) and carries a context-free internal error
 envelope, so it is provably serializable regardless of what broke the original.
+
+Frames are compact JSON written by ``orjson``: non-ASCII text goes out as UTF-8 rather
+than ``\\u`` escapes, a ``UUID`` or an ``Enum`` as its JSON value, and ``NaN`` or an
+infinity as ``null`` (the stdlib wrote ``NaN``, which ``JSON.parse`` rejects). A
+``datetime``, a dataclass, and anything else the stdlib refused still fall back. A value
+only orjson refuses (an int past 64 bits, a lone surrogate) keeps the stdlib encoding.
 """
 
 import json
 from collections.abc import Mapping
 from typing import Any, Final
+
+import orjson
 
 from forze.application._logger import logger
 
@@ -27,6 +35,9 @@ FRAME_UNSERIALIZABLE_CODE: Final[str] = "realtime_frame_unserializable"
 
 _CORRELATION_KEYS: Final[tuple[str, ...]] = ("type", "cid", "id", "event")
 """Payload keys the fallback frame preserves, so the client can still correlate it."""
+
+_ORJSON_OPTIONS: Final[int] = orjson.OPT_PASSTHROUGH_DATETIME | orjson.OPT_PASSTHROUGH_DATACLASS
+"""Refuse what the stdlib refused: orjson would otherwise encode these itself."""
 
 
 # ....................... #
@@ -58,6 +69,19 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
 # ....................... #
 
 
+def _dumps(payload: Mapping[str, Any]) -> str:
+    try:
+        return orjson.dumps(payload, option=_ORJSON_OPTIONS).decode()
+
+    except TypeError:
+        # Ints past 64 bits, float subclasses, lone surrogates, non-str keys and nesting
+        # past 254 levels: orjson refuses them, the stdlib encoded them, so it still does.
+        return json.dumps(payload, separators=(",", ":"))
+
+
+# ....................... #
+
+
 def encode_frame(
     payload: Mapping[str, Any],
     *,
@@ -73,11 +97,12 @@ def encode_frame(
     """
 
     try:
-        return json.dumps(payload, separators=(",", ":"))
+        return _dumps(payload)
 
     except (TypeError, ValueError) as error:
         logger.critical_exception("Realtime frame is not JSON-serializable", exc=error)
 
+        # The stdlib, not orjson: it encodes any scalar a correlation key may hold.
         return json.dumps(_fallback_frame(payload, code=fallback_code), separators=(",", ":"))
 
 
@@ -95,4 +120,5 @@ def jsonable_frame(
 
     encoded = encode_frame(payload, fallback_code=fallback_code)
 
+    # The stdlib parser: it also reads the ``NaN`` and big ints a stdlib-encoded frame holds.
     return json.loads(encoded)  # type: ignore[no-any-return]

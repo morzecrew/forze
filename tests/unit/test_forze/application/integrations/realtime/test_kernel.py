@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import aclosing
+from enum import Enum
+from typing import Any
+from uuid import UUID
 
 import pytest
 import structlog
@@ -448,8 +451,8 @@ class TestFrameEncoding:
         # the leaves that idiomatically leak into payloads — plus a hostile object
         "poison",
         [
-            __import__("uuid").uuid4(),
             __import__("datetime").datetime(2026, 1, 1),
+            __import__("datetime").date(2026, 1, 1),
             __import__("decimal").Decimal("1.5"),
             object(),
             {"nested": {object()}},
@@ -470,6 +473,33 @@ class TestFrameEncoding:
         assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
         assert frame["error"]["kind"] == "internal"
         assert "data" not in frame  # the poisoned value never reaches the wire
+
+    @pytest.mark.parametrize(
+        ("payload", "wire"),
+        [
+            # orjson's form: UTF-8 text, an escaped line break (an SSE data line stays one
+            # line), a UUID or an Enum as its JSON value, a non-finite float as null
+            ({"s": "héllo ✓"}, '{"s":"héllo ✓"}'),
+            ({"s": "a\nb\r\nc"}, '{"s":"a\\nb\\r\\nc"}'),
+            ({"u": UUID(int=1)}, '{"u":"00000000-0000-0000-0000-000000000001"}'),
+            ({"k": Enum("K", {"A": "a"}).A}, '{"k":"a"}'),
+            ({"x": float("nan"), "y": float("inf")}, '{"x":null,"y":null}'),
+            # what orjson refuses and the stdlib encoded keeps the stdlib's form
+            ({1: "é"}, '{"1":"\\u00e9"}'),
+            ({"n": 2**64}, '{"n":18446744073709551616}'),
+            ({"s": "\ud800"}, '{"s":"\\ud800"}'),
+        ],
+    )
+    def test_wire_form(self, payload: dict[Any, Any], wire: str) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        assert encode_frame(payload) == wire
+
+    def test_jsonable_frame_reads_back_either_encoding(self) -> None:
+        from forze.application.integrations.realtime import jsonable_frame
+
+        assert jsonable_frame({"x": float("nan"), "s": "é"}) == {"x": None, "s": "é"}
+        assert jsonable_frame({"n": 2**64, "s": "\ud800"}) == {"n": 2**64, "s": "\ud800"}
 
     def test_fallback_code_is_overridable(self) -> None:
         import json

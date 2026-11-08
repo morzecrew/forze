@@ -52,6 +52,7 @@ from forze.application.contracts.authn import (
     bind_authn_admission,
     current_authn_admission,
 )
+from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory, InvocationSurface
@@ -250,6 +251,13 @@ def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any
     """
 
     return encode_frame({"event": event, "id": event_id, "data": dict(payload)})
+
+
+def _live_frame(signal: RealtimeSignal, event_id: str | None) -> str:
+    """A hub delivery's frame, through :meth:`~forze_fastapi.realtime.hub.HubDelivery.frame`:
+    one encoding per signal for every socket it reaches."""
+
+    return _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
 
 
 async def _resolve(
@@ -673,10 +681,8 @@ def attach_realtime_ws_route(
                 return
 
             while True:  # until the drain ends the subscription: see _end_guard
-                signal, event_id = await subscription.queue.get()
-                await _send(
-                    _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
-                )
+                delivery = await subscription.queue.get()
+                await _send(delivery.frame(_live_frame))
 
         # ....................... #
 

@@ -51,7 +51,7 @@ from pydantic import BaseModel
 from starlette.types import Send
 
 from forze.application.contracts.authn import ClientIdentity
-from forze.application.contracts.realtime import MailboxEntry
+from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.context.lifecycle import scope_readiness
@@ -254,6 +254,13 @@ def _sse_frame(*, event: str, event_id: str | None, payload: dict[str, Any]) -> 
     lines.append(f"data: {encode_frame(envelope)}")
 
     return "\n".join(lines) + "\n\n"
+
+
+def _live_frame(signal: RealtimeSignal, event_id: str | None) -> str:
+    """A hub delivery's frame, through :meth:`~forze_fastapi.realtime.hub.HubDelivery.frame`:
+    one encoding per signal for every stream it reaches."""
+
+    return _sse_frame(event=signal.event, event_id=event_id, payload=signal.payload)
 
 
 # ....................... #
@@ -471,36 +478,42 @@ async def _live_frames(
     """The live tail: matched hub signals as SSE frames, keepalive comments between, until
     the subscription is ended."""
 
-    pending: asyncio.Task[Any] | None = None
+    queue = subscription.queue
+    keepalive = keepalive_interval.total_seconds()
+    waiting: asyncio.Timeout | None = None
+
+    def _cut_short(_: object) -> None:
+        # The end expires the wait under way, so the stream stops now, not at its keepalive.
+        if waiting is not None and not waiting.expired():
+            waiting.reschedule(asyncio.get_running_loop().time())
+
     ended = asyncio.ensure_future(subscription.ended.wait())
+    ended.add_done_callback(_cut_short)
 
     try:
         while not subscription.ended.is_set():
-            if pending is None:
-                pending = asyncio.ensure_future(subscription.queue.get())
+            try:
+                delivery = queue.get_nowait()
 
-            # Never cancel the pending get on timeout — a cancelled Queue.get can
-            # drop a wakeup; the same task just carries over the iteration.
-            done, _ = await asyncio.wait(
-                {pending, ended},
-                timeout=keepalive_interval.total_seconds(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            except asyncio.QueueEmpty:
+                try:
+                    # A Queue.get cancelled by the timeout leaves its item queued: this
+                    # stream is the queue's only reader, so the next pass takes it.
+                    async with asyncio.timeout(keepalive) as waiting:
+                        delivery = await queue.get()
 
-            if pending in done:
-                signal, event_id = pending.result()
-                pending = None
-                yield _sse_frame(
-                    event=signal.event, event_id=event_id, payload=dict(signal.payload)
-                )
+                except TimeoutError:
+                    if not subscription.ended.is_set():
+                        yield ": keepalive\n\n"
 
-            elif not done:
-                yield ": keepalive\n\n"
+                    continue
+
+                finally:
+                    waiting = None
+
+            yield delivery.frame(_live_frame)
 
     finally:
-        if pending is not None:
-            pending.cancel()
-
         ended.cancel()
 
 

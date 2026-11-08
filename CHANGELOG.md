@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Postgres pool no longer pings a connection used in the last half second** (**behaviour change**). New `PostgresConfig.check_idle_after` (default 500 ms) sets the window; one the server ended inside it fails one operation. `timedelta(0)` pings every checkout.
 
+- **The realtime hub's live fan-out is 6–30× cheaper per delivered frame.** Its queues hold a `HubDelivery`, which still unpacks as `signal, event_id`. SSE and WebSocket frames are UTF-8 JSON from orjson: a `UUID` or an `Enum` goes out as its value, `NaN` or an infinity as `null` (**behaviour change**).
+
 ### Fixed
 
 - ...
