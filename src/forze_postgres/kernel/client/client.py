@@ -23,6 +23,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import (
@@ -35,6 +36,7 @@ from contextlib import (
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, Literal, final, overload
+from weakref import WeakKeyDictionary
 
 import attrs
 from psycopg import AsyncConnection, Column, OperationalError, capabilities, pq, sql
@@ -292,6 +294,9 @@ def _report_sweep(sweep: asyncio.Task[None]) -> None:
 def _pool_check(
     pool: Callable[[], AsyncConnectionPool],
     timeout: timedelta,
+    *,
+    returned: Mapping[AsyncConnection, float] | None = None,
+    idle_after: timedelta = timedelta(0),
 ) -> Callable[[AsyncConnection], Awaitable[None]]:
     """Return a pool ``check`` callback: ping the connection, and sweep the pool if it is dead.
 
@@ -309,12 +314,20 @@ def _pool_check(
     can overrun its acquire timeout by that much. The sweep's own pings have no bound
     (``check()`` takes none): on a connection that stops answering it waits until TCP gives up.
 
+    A connection *returned* records as given back less than *idle_after* ago is handed out
+    without a ping (HikariCP's alive-bypass window). The sweep does not go through this
+    callback, so it still pings every idle connection.
+
     :param pool: Returns the pool the callback belongs to; called only on a failed check.
     :param timeout: The client's acquire timeout.
+    :param returned: Event-loop time each connection was last given back to the pool after a
+        clean checkout; ``None`` pings every checkout.
+    :param idle_after: Idle time from which a returned connection is pinged again.
     """
 
     seconds = timeout.total_seconds()
     floor = min(seconds, _PING_FLOOR)
+    window = idle_after.total_seconds()
     sweep: asyncio.Task[None] | None = None
 
     async def check(conn: AsyncConnection) -> None:
@@ -322,6 +335,14 @@ def _pool_check(
 
         loop = asyncio.get_running_loop()
         now = loop.time()
+
+        if (
+            returned is not None
+            and (last := returned.get(conn)) is not None
+            and now - last < window
+        ):
+            return
+
         deadline = now + seconds
 
         if (checkout := _checkout_deadline.get()) is not None:
@@ -452,6 +473,17 @@ class PostgresClient(PostgresClientPort):
     __gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     """Pool-wide limiter for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 
+    __returned_at: "WeakKeyDictionary[AsyncConnection, float] | None" = attrs.field(
+        default=None,
+        init=False,
+    )
+    """Event-loop time each connection was last given back after a clean checkout, read by the
+    checkout check to skip a recent one's ping. ``None`` when every checkout is pinged (or none
+    is); weak, so a connection the pool discards drops out."""
+
+    __idle_window: float = attrs.field(default=0.0, init=False)
+    """``check_idle_after`` in seconds: a checkout held this long or longer vouches for nothing."""
+
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
@@ -498,6 +530,13 @@ class PostgresClient(PostgresClientPort):
             if isinstance(dsn, SecretStr):
                 dsn = dsn.get_secret_value()
 
+            self.__returned_at = (
+                WeakKeyDictionary()
+                if config.check_on_checkout and config.check_idle_after > timedelta(0)
+                else None
+            )
+            self.__idle_window = config.check_idle_after.total_seconds()
+
             pool = AsyncConnectionPool(
                 conninfo=dsn,
                 open=False,
@@ -509,7 +548,14 @@ class PostgresClient(PostgresClientPort):
                 num_workers=config.num_workers,
                 configure=configure,
                 check=(
-                    _pool_check(lambda: pool, acquire_timeout) if config.check_on_checkout else None
+                    _pool_check(
+                        lambda: pool,
+                        acquire_timeout,
+                        returned=self.__returned_at,
+                        idle_after=config.check_idle_after,
+                    )
+                    if config.check_on_checkout
+                    else None
                 ),
                 reset=_pool_reset_transaction_attributes,
             )
@@ -630,8 +676,30 @@ class PostgresClient(PostgresClientPort):
             async with pool.connection(timeout=timeout) as conn:
                 acquiring = False
                 _checkout_deadline.reset(deadline)
+                returned = self.__returned_at
+                taken = asyncio.get_running_loop().time() if returned is not None else 0.0
 
-                yield conn
+                try:
+                    yield conn
+
+                except BaseException:
+                    # An error vouches for nothing: drop an earlier return, so the next
+                    # checkout pings the connection.
+                    if returned is not None:
+                        returned.pop(conn, None)
+
+                    raise
+
+                # A clean exit vouches for the connection only after a short checkout: one held
+                # past the window may have done its last I/O long before it came back.
+                if returned is not None:
+                    now = asyncio.get_running_loop().time()
+
+                    if now - taken < self.__idle_window:
+                        returned[conn] = now
+
+                    else:
+                        returned.pop(conn, None)
 
         except PoolTimeout as error:
             if not acquiring:

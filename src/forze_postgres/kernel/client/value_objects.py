@@ -80,6 +80,18 @@ class PostgresConfig:
     fails, and the pool discards that connection. The ping is an empty query, which carries no
     session state, so it is safe behind pgbouncer in transaction pooling; there it proves the
     link to pgbouncer.
+
+    A connection given back to the pool less than :attr:`check_idle_after` ago skips the ping.
+    """
+
+    check_idle_after: timedelta = timedelta(milliseconds=500)
+    """How long a connection must sit idle in the pool before :attr:`check_on_checkout` pings it.
+
+    A connection whose last checkout was shorter than this, and ended without an error less
+    than this long ago, is handed out unpinged: it has just answered, so the ping would almost
+    always pass and only add a round trip. One the server ended inside that window fails the operation it is handed to,
+    as with the check off; the pool then discards it. ``timedelta(0)`` pings every checkout.
+    Ignored when :attr:`check_on_checkout` is ``False``.
     """
 
     num_workers: int = 4
@@ -174,6 +186,9 @@ class PostgresConfig:
 
         if self.reconnect_timeout.total_seconds() <= 0:
             raise exc.configuration("Reconnect timeout must be positive")
+
+        if self.check_idle_after.total_seconds() < 0:
+            raise exc.configuration("check_idle_after must be greater than or equal to 0")
 
         if self.statement_timeout is not None and self.statement_timeout.total_seconds() <= 0:
             raise exc.configuration("Statement timeout must be positive")
