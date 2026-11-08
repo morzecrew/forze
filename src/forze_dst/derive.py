@@ -106,9 +106,9 @@ def _arg_builder(
             return input_type(**picks)
 
         if factory is None:  # built once per rule: creating a factory class is the costly part
-            from polyfactory.factories.pydantic_factory import ModelFactory
+            from forze_dst._input_factory import InputFactory
 
-            factory = ModelFactory.create_factory(input_type)
+            factory = InputFactory.create_factory(input_type)
 
         # Re-seeding before every build replaces the factory's Random and re-seeds Faker, so a
         # reused factory carries no draw state from one input to the next.

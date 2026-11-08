@@ -83,6 +83,7 @@ model_config  # unused variable (src/forze/domain/models/base.py:39)
 EVENT_EMITTER_STORE_FIELD  # unused variable (src/forze/domain/models/emitters.py:29)
 UPDATE_VALIDATOR_STORE_FIELD  # unused variable (src/forze/domain/validation/updates.py:28)
 row_count  # unused variable (src/forze_clickhouse/kernel/client/value_objects.py:104)
+_.__base_factory_overrides__  # unused attribute (src/forze_dst/_input_factory.py:158) — read by polyfactory
 berenson  # unused variable (src/forze_dst/conformance/anomalies.py:144)
 abort_engine_only  # unused variable (src/forze_dst/conformance/anomalies.py:148)
 NORMALIZED  # unused variable (src/forze_dst/conformance/catalog.py:40)

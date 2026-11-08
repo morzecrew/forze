@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
 
+- **A DST seed now derives the same date and time inputs on every run.** Inputs that `derive_scenario` and op cases generate took dates, times and `UUID1` values from the wall clock; they now come from the seed, before the simulated epoch (future-typed ones from 2100). A stored seed with such fields draws new values.
+
 ### Security
 
 - **Two registries that share an operation key no longer share one resolved operation in an execution context.** `ExecutionContext.cached_operation` and `store_operation` take the registry first (**Breaking**).
