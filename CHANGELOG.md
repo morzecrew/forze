@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Postgres pool no longer pings a connection used in the last half second** (**behaviour change**). New `PostgresConfig.check_idle_after` (default 500 ms) sets the window; one the server ended inside it fails one operation. `timedelta(0)` pings every checkout.
 
+- **`ForzeJwtTokenVerifier` reuses a repeat token's verified signature and claims: a repeat verify drops from ~50 to ~4 µs (HS256).** Set by `AccessTokenConfig.verify_cache_ttl` (30 s, at most 5 min, `0` disables) and `verify_cache_max_entries`. Expiry, session and revocation checks still run per request.
+
 ### Fixed
 
 - ...

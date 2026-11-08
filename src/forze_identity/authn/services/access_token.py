@@ -1,7 +1,10 @@
+import hashlib
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import timedelta
 from math import isfinite
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Final, NotRequired, TypedDict
 from uuid import UUID
 
 import attrs
@@ -10,11 +13,23 @@ import orjson
 from jwt.utils import base64url_encode
 
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import monotonic, utcnow
 
 from .signing import SignerPort
 
 # ----------------------- #
+
+_MAX_VERIFY_CACHE_TTL: Final[timedelta] = timedelta(minutes=5)
+"""The longest a verified token's signature and claims may be reused, as for the OIDC caches."""
+
+_Verified = tuple[float, str | None, tuple[Any, ...], dict[str, Any]]
+"""A remembered verification: its monotonic deadline, the header ``kid``, what ``jwt.decode``
+read besides the token (key, algorithm, issuer, audience) and the claims it returned."""
+
+_FLAT_CLAIM: Final = (str, int, float, type(None))
+"""Claim value types a cached verification may hold; a tuple, as a union costs more per check."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -33,11 +48,35 @@ class AccessTokenConfig:
     expires_in: timedelta = timedelta(minutes=15)
     """Expiration time of the token."""
 
+    verify_cache_ttl: timedelta = timedelta(seconds=30)
+    """How long a token's verified signature and claims are reused for that same token; at
+    most five minutes, zero to disable. A reuse still needs the same key, algorithm, issuer and
+    audience, and still checks ``exp``/``iat``/``nbf``; session and revocation checks after it
+    run on every request."""
+
+    verify_cache_max_entries: int = 1024
+    """Verified tokens kept; the least recently used goes first."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.expires_in.total_seconds() <= 0:
             raise exc.configuration("Expires in must be positive")
+
+        if (
+            not isinstance(self.verify_cache_ttl, timedelta)
+            or not timedelta(0) <= self.verify_cache_ttl <= _MAX_VERIFY_CACHE_TTL
+        ):
+            raise exc.configuration(
+                f"Verify cache TTL must be a timedelta between 0 and {_MAX_VERIFY_CACHE_TTL}",
+            )
+
+        if (
+            not isinstance(self.verify_cache_max_entries, int)
+            or isinstance(self.verify_cache_max_entries, bool)
+            or self.verify_cache_max_entries < 1
+        ):
+            raise exc.configuration("Verify cache max entries must be an integer of at least 1")
 
 
 # ....................... #
@@ -122,6 +161,14 @@ class AccessTokenService:
         init=False,
         repr=False,
     )
+
+    # SHA-256 of the token -> its last verification, least recently used first: see ``_decode``.
+    _verified: OrderedDict[bytes, _Verified] = attrs.field(
+        factory=OrderedDict[bytes, _Verified],
+        init=False,
+        repr=False,
+    )
+    _verified_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False, repr=False)
 
     # ....................... #
 
@@ -213,19 +260,35 @@ class AccessTokenService:
 
     # ....................... #
 
-    async def verify_token(
-        self,
-        token: str,
-        *,
-        leeway: timedelta = timedelta(seconds=10),
-    ) -> AccessTokenClaims:
-        try:
-            kid = jwt.get_unverified_header(token).get("kid")
-            verifier = self._verifier_for(kid)
+    async def _decode(self, token: str, *, leeway: timedelta) -> dict[str, Any]:
+        """Verify *token*'s signature and claims, reusing a recent verification of it.
 
+        ``jwt.decode`` here reads no clock, so its verdict depends only on the token, the key,
+        the algorithm, the issuer and the audience. An entry, keyed by the token's SHA-256, is
+        reused only while the token's ``kid`` still selects a verifier whose key and algorithm,
+        with the configured issuer and audience, equal those it was verified with, and for at
+        most :attr:`AccessTokenConfig.verify_cache_ttl` after the verification began. The time
+        claims are checked on every call, and only a token that passed every check is stored.
+        """
+
+        ttl = self.config.verify_cache_ttl.total_seconds()
+        began = monotonic()
+        digest = hashlib.sha256(token.encode()).digest() if ttl else b""
+        hit = self._recall(digest, now=began) if ttl else None
+
+        kid = hit[1] if hit is not None else jwt.get_unverified_header(token).get("kid")
+        verifier = self._verifier_for(kid)
+        key = await verifier.verification_key()
+        inputs = (key, verifier.algorithm, self.config.issuer, self.config.audience)
+
+        if hit is not None and hit[2] == inputs:
+            res = hit[3]
+
+        else:
+            hit = None
             res = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=token,
-                key=await verifier.verification_key(),
+                key=key,
                 algorithms=[verifier.algorithm],
                 issuer=self.config.issuer,
                 audience=self.config.audience,
@@ -238,9 +301,55 @@ class AccessTokenService:
                     "verify_nbf": False,
                 },
             )
-            _check_times(res, now=utcnow().timestamp(), leeway=leeway.total_seconds())
+
+        _check_times(res, now=utcnow().timestamp(), leeway=leeway.total_seconds())
+
+        # Flat claims only: the shallow copy a caller gets then shares nothing it could mutate.
+        if ttl and hit is None and all(isinstance(v, _FLAT_CLAIM) for v in res.values()):
+            self._remember(digest, (began + ttl, kid, inputs, res))
+
+        return res
+
+    # ....................... #
+
+    def _recall(self, digest: bytes, *, now: float) -> _Verified | None:
+        with self._verified_lock:
+            entry = self._verified.get(digest)
+
+            if entry is None:
+                return None
+
+            if now >= entry[0]:
+                del self._verified[digest]
+                return None
+
+            self._verified.move_to_end(digest)
+
+            return entry
+
+    # ....................... #
+
+    def _remember(self, digest: bytes, entry: _Verified) -> None:
+        with self._verified_lock:
+            self._verified[digest] = entry
+            self._verified.move_to_end(digest)
+
+            while len(self._verified) > self.config.verify_cache_max_entries:
+                self._verified.popitem(last=False)
+
+    # ....................... #
+
+    async def verify_token(
+        self,
+        token: str,
+        *,
+        leeway: timedelta = timedelta(seconds=10),
+    ) -> AccessTokenClaims:
+        try:
+            res = await self._decode(token, leeway=leeway)
 
             self._n_verified += 1
+            # A copy: the claims a cache entry holds are never handed out.
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
 
         except jwt.ExpiredSignatureError as err:
