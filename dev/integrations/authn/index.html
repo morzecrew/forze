@@ -7203,6 +7203,17 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   Refresh refuses to run inside a transaction the caller already opened: a reused refresh
   token's family is revoked in a transaction of its own, which an enclosing one would roll
   back.</li>
+<li><strong>Repeat bearer tokens:</strong> a token's verified signature and claims are reused for the next
+  requests carrying that same token, keyed by its SHA-256, for at most
+  <code>AuthnKernelConfig(access_token=AccessTokenConfig(verify_cache_ttl=...))</code> (30 s by default,
+  at most 5 minutes, <code>timedelta(0)</code> to turn it off), in at most <code>verify_cache_max_entries</code>
+  (1024) tokens. A reuse needs the key, algorithm, issuer and audience the token was verified
+  with, so a <code>kid</code> dropped from the verifiers, or a key the signer's <code>verification_key()</code> no
+  longer returns, refuses the token on the next request. <code>exp</code>, <code>iat</code> and <code>nbf</code> are checked
+  every time, and the session, revocation-state and eligibility checks run on every request,
+  reused or not. Only accepted tokens are kept. A custom <code>SignerPort</code> should return the same
+  key object, or one that compares equal, while the key is unchanged; otherwise nothing is
+  reused.</li>
 <li><strong>Overlapping refreshes:</strong> presenting a rotated refresh token again is reuse, and its
   whole family is revoked. Tabs sharing one refresh cookie hit that on a benign race.
   <code>AuthnKernelConfig(refresh_token=RefreshTokenConfig(reuse_grace=timedelta(seconds=10)))</code>

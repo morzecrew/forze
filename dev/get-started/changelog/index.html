@@ -11106,7 +11106,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The Postgres pool no longer pings a connection used in the last half second</strong> (<strong>behaviour change</strong>). New <code>PostgresConfig.check_idle_after</code> (default 500 ms) sets the window; one the server ended inside it fails one operation. <code>timedelta(0)</code> pings every checkout.</li>
+<li>
+<p><strong>The Postgres pool no longer pings a connection used in the last half second</strong> (<strong>behaviour change</strong>). New <code>PostgresConfig.check_idle_after</code> (default 500 ms) sets the window; one the server ended inside it fails one operation. <code>timedelta(0)</code> pings every checkout.</p>
+</li>
+<li>
+<p><strong><code>ForzeJwtTokenVerifier</code> reuses a repeat token's verified signature and claims: a repeat verify drops from ~50 to ~4 µs (HS256).</strong> Set by <code>AccessTokenConfig.verify_cache_ttl</code> (30 s, at most 5 min, <code>0</code> disables) and <code>verify_cache_max_entries</code>. Expiry, session and revocation checks still run per request.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -11114,7 +11119,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Two registries that share an operation key no longer share one resolved operation in an execution context.</strong> <code>ExecutionContext.cached_operation</code> and <code>store_operation</code> take the registry first (<strong>Breaking</strong>).</li>
+<li>
+<p><strong>Two registries that share an operation key no longer share one resolved operation in an execution context.</strong> <code>ExecutionContext.cached_operation</code> and <code>store_operation</code> take the registry first (<strong>Breaking</strong>).</p>
+</li>
+<li>
+<p><strong>Log scrubbing masks a secret whose name is spelled with a non-ASCII letter that matches an ASCII one case-insensitively.</strong> Such a log string used to reach the output unmasked.</p>
+</li>
 </ul>
 <h2 id="0230-2026-11-07"><a href="https://github.com/morzecrew/forze/compare/v0.22.0...v0.23.0">0.23.0</a> - 2026-11-07<a class="headerlink" href="#0230-2026-11-07" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
