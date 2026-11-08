@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
 
 ### Security
 
