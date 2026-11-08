@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Two registries that share an operation key no longer share one resolved operation in an execution context.** `ExecutionContext.cached_operation` and `store_operation` take the registry first (**Breaking**).
 
+- **Log scrubbing masks a secret whose name is spelled with a non-ASCII letter that matches an ASCII one case-insensitively.** Such a log string used to reach the output unmasked.
+
 ## [0.23.0] - 2026-11-07
 
 ### Added

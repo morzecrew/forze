@@ -1015,6 +1015,44 @@ class TestScrubPrefilterBehaviorIdentical:
         assert scrub_log_string(msg) == msg
 
 
+# IGNORECASE matches each of these to the ASCII letter beside it.
+_ASCII_TWINS: dict[str, tuple[str, ...]] = {
+    "i": ("\u0130", "\u0131"),
+    "k": ("\u212a",),
+    "s": ("\u017f",),
+}
+
+
+class TestPrefilterFoldsIgnorecaseTwins:
+    """A letter the regex reads as ASCII must not let its string skip the prefilter."""
+
+    def test_the_twins_are_the_folded_ones(self) -> None:
+        import re
+        import sys
+
+        everything = "".join(map(chr, range(0x80, sys.maxunicode + 1)))
+        twins = {
+            letter: tuple(sorted(re.findall(letter, everything, re.IGNORECASE)))
+            for letter in "abcdefghijklmnopqrstuvwxyz"
+        }
+
+        # The prefilter folds exactly these; a new twin would let a match skip it.
+        assert {k: v for k, v in twins.items() if v} == _ASCII_TWINS
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "pa\u017f\u017fword=fixture-7chr",
+            "sess\u0130on=fixture-7chr",
+            "credent\u0131al: fixture-7chr",
+            '{"to\u212aen": "fixture-7chr"}',
+        ],
+    )
+    def test_twin_spelled_secret_is_masked(self, text: str) -> None:
+        assert "fixture-7chr" not in scrub_log_string(text)
+        assert scrub_log_string(text) == _scrub_policy._log_string_re.sub(SECRET_PLACEHOLDER, text)
+
+
 # ....................... #
 
 
