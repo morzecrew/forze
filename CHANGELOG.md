@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Scrubbed logging costs about a quarter less per event.** A JSON `logger.info` with eight extras drops from ~50 to ~37 µs and log-context `sanitize` on the same fields from ~20 to ~7 µs; what gets masked is unchanged.
 
+- **The in-memory filter matcher no longer compares each row with every `$in` value.** `forze_mock` adapters and `compile_filter` work out `$in`, `$nin`, set-relation and `$like` / `$ilike` operands once per filter, with the same results: a mock `find_many` with a 200-value `$in` over 1,000 rows takes 2 ms, not 179.
+
 ### Fixed
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
