@@ -8,14 +8,29 @@ from typing import Annotated, Any, Generic, TypeAliasType, TypeVar, Union, get_a
 from uuid import UUID
 
 import attrs
-from pydantic import BaseModel, Field, PlainSerializer, TypeAdapter, WrapSerializer
+from pydantic import (
+    BaseModel,
+    Field,
+    PlainSerializer,
+    PydanticUserError,
+    TypeAdapter,
+    ValidationError,
+    WrapSerializer,
+)
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.base.primitives import advisory_lock_key
+from forze.base.scrubbing import sanitize_pydantic_errors
 from forze.base.serialization import stored_field_names_for
 from forze.domain.constants import ID_FIELD
-from forze.domain.models import AggregateRoot, BaseDTO, Document
+from forze.domain.models import (
+    AggregateRoot,
+    BaseDTO,
+    Document,
+    ReplaceOnUpdate,
+    replace_on_update_fields,
+)
 from forze.domain.models.document import is_invariant_check
 
 from ..base import BaseSpec
@@ -95,35 +110,64 @@ def _normalize_derived(
 # ....................... #
 
 
-def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
+def require_whole_update_matching(
+    dto: BaseModel, *, document: str, domain: type[Document] | None = None
+) -> None:
     """Refuse an ``update_matching`` patch that sets a field to a mapping or a model.
 
     ``update_matching`` writes its patch as it is, with no domain update, so such a value
     would replace the stored one with the fragment it names, where ``update`` and
     ``update_matching_strict`` merge it. A list or a scalar replaces the stored value either
-    way and is allowed. ``None`` is allowed too and stores ``NULL``, though an update resets a
-    field with a non-null default to that default; use ``update_matching_strict`` for that.
+    way and is allowed, and so is a field *domain* marks
+    :class:`~forze.domain.models.ReplaceOnUpdate`, which an update replaces too, when the
+    value is one of the field's type. ``None`` is allowed and stores ``NULL``, though an
+    update resets a field with a non-null default to that default; use
+    ``update_matching_strict`` for that.
 
     :param document: The document's name, for the message.
+    :param domain: The document's domain model, whose marked fields are allowed.
     :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
-        naming the fields.
+        naming the fields; ``validation`` (``update_matching_replacement_invalid``) for a
+        value a marked field's type refuses.
     """
 
-    merged = sorted(
+    whole = {
         name
         for name in dto.model_fields_set
         if isinstance(getattr(dto, name), (Mapping, BaseModel))
-    )
+    }
+    replaced = replace_on_update_fields(domain) if domain is not None else frozenset[str]()
 
-    if not merged:
+    if merged := sorted(whole - replaced):
+        raise exc.precondition(
+            f"update_matching cannot merge into {merged} on {document!r}: it would store the "
+            "patch in place of the stored value. Use update_matching_strict.",
+            code="update_matching_merge_unsupported",
+            details={"document": document, "fields": merged},
+        )
+
+    if domain is None or not whole:
         return
 
-    raise exc.precondition(
-        f"update_matching cannot merge into {merged} on {document!r}: it would store the "
-        "patch in place of the stored value. Use update_matching_strict.",
-        code="update_matching_merge_unsupported",
-        details={"document": document, "fields": merged},
-    )
+    # Stored whole and never read back through the domain here, a partial model or a
+    # mistyped mapping would leave a row the domain cannot load.
+    sent = dto.model_dump(include=whole, exclude_unset=True)
+
+    for name in sorted(whole):
+        try:
+            _stored_as(domain, name).validate_python(sent[name])
+
+        except ValidationError as error:
+            raise exc.validation(
+                f"update_matching cannot store {name!r} on {document!r}: the domain replaces "
+                "it whole, so the patch must hold a whole value of its type.",
+                code="update_matching_replacement_invalid",
+                details={
+                    "document": document,
+                    "field": name,
+                    "errors": sanitize_pydantic_errors(list(error.errors())),
+                },
+            ) from error
 
 
 # Annotation metadata that changes how a field dumps, not what it accepts.
@@ -197,7 +241,7 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
     names.update(
         name
         for name, field in domain.model_fields.items()
-        if any(not isinstance(m, _SERIALIZERS) for m in _field_metadata(field))
+        if any(not isinstance(m, (*_SERIALIZERS, ReplaceOnUpdate)) for m in _field_metadata(field))
     )
 
     return frozenset(names)
@@ -370,7 +414,13 @@ def _stored_as(domain: type[Document], field: str) -> TypeAdapter[Any]:
 
     form: Any = Annotated[info.annotation, *constraints] if constraints else info.annotation
 
-    return TypeAdapter(form, config=domain.model_config)
+    try:
+        return TypeAdapter(form, config=domain.model_config)
+
+    # A model, dataclass or TypedDict refuses an outer config: it validates under its own,
+    # in the model too. Any other error recurs below.
+    except PydanticUserError:
+        return TypeAdapter(form)
 
 
 def serialization_keys(
@@ -1365,6 +1415,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 # Likewise a serializer: the domain path diffs serialized dumps, and one may
                 # read a field the update changes.
                 serialized = sorted(_serialized_fields(domain))
+                replaced = replace_on_update_fields(domain)
                 merged = sorted(
                     {
                         name
@@ -1372,7 +1423,8 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                         for name, dto_field in dto.model_fields.items()
                         if (field := domain.model_fields.get(name)) is None
                         or field.frozen
-                        or _merged(field.annotation)
+                        # A field the domain replaces is written whole on either path.
+                        or (_merged(field.annotation) and name not in replaced)
                         # A nulled field takes its default, here one read off the stored row.
                         or field.default_factory_takes_validated_data
                         # The DTO validates the value; a narrower domain type (a ``Literal``

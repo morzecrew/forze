@@ -25,7 +25,13 @@ from forze.application.contracts.guarantees import UniqueTogether
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import (
+    BaseDTO,
+    CreateDocumentCmd,
+    Document,
+    ReadDocument,
+    ReplaceOnUpdate,
+)
 from forze.testing import context_from_modules, unguarded
 from forze_kits.aggregates import ChildCollectionChanges, ChildCollectionSync
 from forze_kits.domain.soft_deletion import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
@@ -916,6 +922,10 @@ class _Tagged(Document):
     labels: list[str] = Field(default_factory=list)
 
 
+class _ReplacedTagged(_Tagged):
+    tags: Annotated[dict[str, int], ReplaceOnUpdate()] = Field(default_factory=dict)
+
+
 class _CreateTagged(CreateDocumentCmd):
     order_id: UUID
     sku: str
@@ -979,6 +989,29 @@ class TestFieldsAnUpdateMerges:
             key_fields=("sku",),
             compare_fields=frozenset({"labels"}),
         )
+
+    async def test_a_mapping_the_domain_replaces_may_be_compared(
+        self, ctx: ExecutionContext
+    ) -> None:
+        spec = DocumentSpec(
+            name="replaced_tagged_lines",
+            read=_ReadTagged,
+            write=DocumentWriteTypes(
+                domain=_ReplacedTagged, create_cmd=_CreateTagged, update_cmd=_UpdateTagged
+            ),
+        )
+        sync = ChildCollectionSync(
+            child_spec=spec,
+            parent_fk="order_id",
+            key_fields=("sku",),
+            compare_fields=frozenset({"tags"}),
+        )
+        order = uuid4()
+        await _seed(ctx, spec, _CreateTagged(order_id=order, sku="a", tags={"x": 1, "y": 2}))
+
+        await _reconcile(ctx, sync, order, _CreateTagged(order_id=order, sku="a", tags={"y": 2}))
+
+        assert (await _children(ctx, spec, order))["a"].tags == {"y": 2}
 
 
 # ....................... #

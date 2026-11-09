@@ -46,6 +46,7 @@ from forze.domain.models import (
     CreateDocumentCmd,
     Document,
     ReadDocument,
+    ReplaceOnUpdate,
     invariant,
 )
 from forze.domain.validation import update_validator
@@ -1046,6 +1047,11 @@ class _TaggedUpdate(BaseDTO):
     tags: dict[str, str] | None = None
 
 
+class _ReplacedTagsDomain(Document):
+    name: str
+    tags: Annotated[dict[str, str], ReplaceOnUpdate()] = Field(default_factory=dict)
+
+
 def _named_write(domain: type[Document]) -> DocumentWriteTypes:
     return DocumentWriteTypes(domain=domain, create_cmd=_Create, update_cmd=_PydanticUpdate)
 
@@ -1058,6 +1064,16 @@ def test_json_only_serializers_allow_a_set_based_upsert() -> None:
     # The domain path diffs python-mode dumps, where these never run.
     DocumentSpec(
         name="doc", read=_Read, write=_named_write(_JsonShoutedDomain)
+    ).require_set_based_upsert()
+
+
+def test_a_mapping_the_domain_replaces_whole_allows_a_set_based_upsert() -> None:
+    DocumentSpec(
+        name="doc",
+        read=_Read,
+        write=DocumentWriteTypes(
+            domain=_ReplacedTagsDomain, create_cmd=_Create, update_cmd=_TaggedUpdate
+        ),
     ).require_set_based_upsert()
 
 
@@ -1100,9 +1116,15 @@ def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
             ),
             "randomized field encryption",
         ),
-        (DocumentSpec(name="doc", read=_Read, write=_named_write(_ValidatedDomain)), "update validators"),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ValidatedDomain)),
+            "update validators",
+        ),
         (DocumentSpec(name="doc", read=_Read, write=_named_write(_InvariantDomain)), "invariants"),
-        (DocumentSpec(name="doc", read=_Read, write=_named_write(_AggregateDomain)), "domain events"),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_AggregateDomain)),
+            "domain events",
+        ),
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_NormalizingDomain)),
             "fields the domain validates (name)",
