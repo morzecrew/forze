@@ -6,7 +6,19 @@ from copy import deepcopy
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
 from types import UnionType
-from typing import Any, ClassVar, Literal, Self, Union, cast, final, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    Self,
+    TypeAliasType,
+    Union,
+    cast,
+    final,
+    get_args,
+    get_origin,
+)
 from uuid import UUID
 
 from pydantic import BaseModel, Field, RootModel, model_validator
@@ -85,13 +97,35 @@ class ReplaceOnUpdate:
     model must be sent whole. A ``None`` for the field still resets it to its default.
 
     Read off the field of a pydantic model or pydantic dataclass, at any depth of the
-    document; on an arm of the field's union (``Annotated[dict[str, Any], ...] | None``) it
-    marks the field too.
+    document; on an arm of the field's union (``Annotated[dict[str, Any], ...] | None``) or
+    behind a ``type`` alias it marks the field too.
     """
 
 
 def _marks_replace(metadata: Iterable[Any]) -> bool:
     return any(isinstance(m, ReplaceOnUpdate) for m in metadata)
+
+
+def _annotation_marks_replace(annotation: Any) -> bool:
+    """Whether *annotation* carries :class:`ReplaceOnUpdate`, read through named aliases,
+    ``Annotated`` and union arms (pydantic lifts the marker only off a bare ``Annotated``)."""
+
+    alias = annotation if isinstance(annotation, TypeAliasType) else get_origin(annotation)
+
+    if isinstance(alias, TypeAliasType):
+        return _annotation_marks_replace(alias.__value__)
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _marks_replace(annotation.__metadata__) or _annotation_marks_replace(
+            get_args(annotation)[0]
+        )
+
+    if origin in (Union, UnionType):
+        return any(_annotation_marks_replace(arm) for arm in get_args(annotation))
+
+    return False
 
 
 _REPLACED_FIELDS: dict[type, frozenset[str]] = {}
@@ -113,13 +147,7 @@ def replace_on_update_fields(model: type[Any]) -> frozenset[str]:
     replaced = frozenset(
         name
         for name, info in fields.items()
-        if _marks_replace(info.metadata)
-        or (
-            get_origin(info.annotation) in (Union, UnionType)
-            and any(
-                _marks_replace(getattr(a, "__metadata__", ())) for a in get_args(info.annotation)
-            )
-        )
+        if _marks_replace(info.metadata) or _annotation_marks_replace(info.annotation)
     )
 
     # A model still waiting on a forward reference has its fields rebuilt later.

@@ -113,8 +113,8 @@ A list is replaced.
 
 To remove keys, mark the field `ReplaceOnUpdate`: an update then stores the value it sends,
 whole, so a key it leaves out is removed. A marked nested model must be sent whole, and `None`
-still resets the field to its default. The marker works on a field at any depth, and on one
-arm of a union.
+still resets the field to its default. The marker works on a field at any depth, on one arm
+of a union, and behind a `type` alias.
 
 ```python
 from typing import Annotated, Any

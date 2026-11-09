@@ -609,6 +609,33 @@ class TestReplaceOnUpdate:
         assert replace_on_update_fields(Point) == {"tags"}
         assert replace_on_update_fields(dict) == frozenset()
 
+    def test_the_marker_holds_behind_a_type_alias(self) -> None:
+        type Tags = Annotated[dict[str, Any], ReplaceOnUpdate()]
+        type Keyed[T] = Annotated[dict[str, T], ReplaceOnUpdate()]
+        type Outer = Tags
+
+        class Doc(Document):
+            a: Tags = {}
+            b: Tags | None = None
+            c: Keyed[int] = {}
+            d: Annotated[Outer, Field(default_factory=dict)]
+
+        assert replace_on_update_fields(Doc) == {"a", "b", "c", "d"}
+        after, _ = Doc(a={"x": 1, "y": 2}).update({"a": {"y": 2}})
+
+        assert after.a == {"y": 2}
+
+    def test_a_model_awaiting_a_forward_reference_is_read_again_once_built(self) -> None:
+        class Doc(Document):
+            tags: "Tags" = {}  # noqa: F821
+
+        assert replace_on_update_fields(Doc) == frozenset()
+
+        Tags = Annotated[dict[str, Any], ReplaceOnUpdate()]  # noqa: F841
+        Doc.model_rebuild()
+
+        assert replace_on_update_fields(Doc) == {"tags"}
+
     def test_a_historical_update_carries_the_whole_value(self) -> None:
         class Settings(CoreModel):
             prefs: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
@@ -626,6 +653,32 @@ class TestReplaceOnUpdate:
         after, _ = current.update(patch)
 
         assert (after.tags, after.settings.prefs, after.note) == ({"b": 2}, {"q": 2}, "concurrent")
+
+    def test_a_historical_update_finds_the_field_in_a_root_model_and_a_mapping(self) -> None:
+        class Settings(CoreModel):
+            prefs: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+
+        class RootSettings(RootModel[Settings]):
+            pass
+
+        class Doc(Document):
+            root: RootSettings = RootSettings(Settings())
+            by_key: dict[str, Settings] = {}
+            note: str = ""
+
+        old = Doc(
+            root=RootSettings(Settings(prefs={"p": 1, "q": 2})),
+            by_key={"k": Settings(prefs={"p": 1, "q": 2})},
+        )
+        current, _ = old.update({"note": "concurrent"})
+        patch = current.historical_update(
+            old, {"root": {"prefs": {"q": 2}}, "by_key": {"k": {"prefs": {"q": 2}}}}
+        )
+
+        assert patch is not None
+        after, _ = current.update(patch)
+
+        assert after.root.root.prefs == after.by_key["k"].prefs == {"q": 2}
 
     def test_a_historical_update_conflicts_with_any_change_to_the_field(self) -> None:
         class Doc(Document):

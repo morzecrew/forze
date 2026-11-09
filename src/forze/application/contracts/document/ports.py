@@ -750,7 +750,9 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         written as it is, it would replace the stored value where an update merges into it.
         Setting a field to a list or a scalar is allowed, and so is a mapping or model for a
         field the domain marks :class:`~forze.domain.models.ReplaceOnUpdate`, which an update
-        replaces too. Setting one to ``None`` stores ``NULL`` (an
+        replaces too, when it is a whole value of the field's type
+        (``update_matching_replacement_invalid`` otherwise). Setting one to ``None`` stores
+        ``NULL`` (an
         update would reset a field with a non-null default to that default instead).
 
         Postgres applies a single ``UPDATE … WHERE … RETURNING``; Mongo keyset-pages

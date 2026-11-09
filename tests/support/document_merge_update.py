@@ -44,6 +44,7 @@ class _MergeFields(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     extra: Any = None
     marks: Annotated[dict[str, Any], ReplaceOnUpdate()] = Field(default_factory=dict)
+    spot: Annotated[MergeAddress, ReplaceOnUpdate()] | None = None
 
 
 class MergeCreate(CreateDocumentCmd, _MergeFields):
@@ -65,6 +66,7 @@ class MergeUpdate(BaseDTO):
     items: list[dict[str, Any]] | None = None
     extra: Any = None
     marks: dict[str, Any] | None = None
+    spot: MergeAddressPatch | None = None
 
 
 SEED = MergeCreate(
@@ -190,7 +192,7 @@ async def assert_updates_replace(command: Any, query: Any) -> None:
 async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> None:
     """``update_matching`` writes its patch as it is, so it refuses one setting a field to a
     mapping or model (whatever the field's type), and still writes a scalar, a list, or a
-    mapping for a field the domain replaces whole."""
+    whole value for a field the domain replaces whole."""
 
     created = await command.create(SEED)
     by_id = {"$values": {"id": {"$eq": created.id}}}
@@ -221,3 +223,19 @@ async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> No
     await command.update_matching(by_id, MergeUpdate(marks={"z": 1}))
     stored = await query.get(created.id, skip_cache=True)
     assert stored.marks == {"z": 1}, stored.marks
+
+    # Never read back through the domain, a partial model would leave a row it cannot load.
+    try:
+        await command.update_matching(by_id, MergeUpdate(spot=MergeAddressPatch(city="Z")))
+
+    except CoreException as refused:
+        assert refused.code == "update_matching_replacement_invalid", refused.code
+
+    else:
+        raise AssertionError("update_matching stored a partial model")
+
+    assert (await query.get(created.id, skip_cache=True)).spot is None
+
+    await command.update_matching(by_id, MergeUpdate(spot=MergeAddressPatch(city="Z", street="Q")))
+    stored = await query.get(created.id, skip_cache=True)
+    assert stored.spot == MergeAddress(city="Z", street="Q"), stored.spot

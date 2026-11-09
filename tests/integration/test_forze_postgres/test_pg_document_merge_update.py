@@ -44,7 +44,8 @@ async def _table(pg_client: PostgresClient) -> str:
             address jsonb NOT NULL,
             items jsonb NOT NULL,
             extra jsonb,
-            marks jsonb NOT NULL
+            marks jsonb NOT NULL,
+            spot jsonb
         );
         """
     )
