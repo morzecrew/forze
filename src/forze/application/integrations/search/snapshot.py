@@ -753,7 +753,8 @@ class SearchResultSnapshot:
         scores: dict[tuple[str, str], float] = {}
 
         for member, ids, weight in leg_rows:
-            if weight <= 0.0:
+            # An empty leg converts nothing: a ``k`` too large for a float only fails a leg it scores.
+            if weight <= 0.0 or not ids:
                 continue
 
             w, fk = float(weight), float(k)

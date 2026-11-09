@@ -142,6 +142,15 @@ def test_merge_ids_matches_the_former_merge(
     )
 
 
+def test_merge_ids_of_empty_legs_never_converts_k() -> None:
+    merged = SearchResultSnapshot.weighted_rrf_merge_ids(
+        leg_rows=[("a", [], 1.0), ("b", [], 2.0)],
+        k=10**400,
+    )
+
+    assert merged == []
+
+
 def test_merge_ids_skips_nonpositive_weight() -> None:
     merged = SearchResultSnapshot.weighted_rrf_merge_ids(
         leg_rows=[("a", ["x"], 0.0), ("b", ["y"], 1.0)],
