@@ -209,20 +209,13 @@ _COMPOUND_SUFFIX = r"(?>(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6})"
 # the number (``tokens2=`` as well as ``token2s=``), as the key heuristic reads both.
 _TERM_AFFIX = r"s?(?:\d{1,4})?s?"
 
+# What follows a vocabulary term in each value form: affix, compound suffix, separator, value.
+_ASSIGNMENT_TAIL = _TERM_AFFIX + _COMPOUND_SUFFIX + r"\s*[=:]\s*\S+"
+_QUOTED_KEY_TAIL = _TERM_AFFIX + _COMPOUND_SUFFIX + r"[\"']\s*[=:]\s*" + _QUOTED_VALUE
+
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    "(?:"
-    + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS)
-    + ")"
-    + _TERM_AFFIX
-    + _COMPOUND_SUFFIX
-    + r"\s*[=:]\s*\S+",
-    "(?:"
-    + "|".join(_LOG_QUOTED_KEY_TERM_FRAGMENTS)
-    + ")"
-    + _TERM_AFFIX
-    + _COMPOUND_SUFFIX
-    + r"[\"']\s*[=:]\s*"
-    + _QUOTED_VALUE,
+    "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + ")" + _ASSIGNMENT_TAIL,
+    "(?:" + "|".join(_LOG_QUOTED_KEY_TERM_FRAGMENTS) + ")" + _QUOTED_KEY_TAIL,
 )
 
 # The email and userinfo fragments below are length-bounded AND possessive. Their
@@ -325,10 +318,19 @@ def _compile_log_string_re() -> re.Pattern[str]:
 #
 # If ANY registered fragment yields no extractable required literal (e.g. a raw
 # ``\d{16}`` card pattern), the prefilter is disabled outright
-# (``_log_string_literals = None``) and every string goes to the regex — the
+# (``_log_string_prefilter = None``) and every string goes to the regex — the
 # prefilter must never be allowed to skip a string the regex would scrub.
 # Non-ASCII literals also disable the prefilter: ``str.lower`` and regex
 # IGNORECASE casefolding can disagree outside ASCII.
+#
+# The literals are kept per alternative, so a string that passes the prefilter
+# runs only the alternatives whose literals it contains, not all ~50 of them at
+# every position. The alternatives are the combined regex's top-level branches,
+# with each term-vocabulary fragment distributed over its terms: ``(?:a|b)T`` and
+# ``(?:a)T|(?:b)T`` try the same matches in the same order. An alternative whose
+# literals are all absent can match nowhere in the string, so leaving it out
+# cannot change which branch wins at any position; :func:`_sub_first_alternative`
+# then replays the alternation's leftmost-first scan over the ones left.
 
 
 def _literals_from_nodes(nodes: Any) -> frozenset[str] | None:
@@ -433,32 +435,105 @@ def _fragment_required_literals(fragment: str) -> frozenset[str] | None:
 # ....................... #
 
 
-def _derive_log_string_literals() -> tuple[str, ...] | None:
-    """Build the prefilter literal set; ``None`` disables the prefilter."""
+def _log_string_alternatives() -> tuple[str, ...]:
+    """The combined log-string regex as its ordered top-level alternatives."""
 
-    all_literals: set[str] = set()
-
-    for fragment in (
-        *_LOG_ASSIGNMENT_FRAGMENTS,
+    return (
+        *(f"(?:{term}){_ASSIGNMENT_TAIL}" for term in _LOG_ASSIGNMENT_TERM_FRAGMENTS),
+        *(f"(?:{term}){_QUOTED_KEY_TAIL}" for term in _LOG_QUOTED_KEY_TERM_FRAGMENTS),
         *_LOG_STRING_EXTRAS,
         *_EXTRA_LOG_STRING_PATTERNS,
-    ):
-        literals = _fragment_required_literals(fragment)
-
-        if not literals:
-            return None  # safety: one opaque fragment disables the prefilter
-
-        all_literals.update(literals)
-
-    # Drop literals that contain another literal (the shorter one subsumes them).
-    pruned = tuple(
-        sorted(
-            lit
-            for lit in all_literals
-            if not any(other != lit and other in lit for other in all_literals)
-        )
     )
-    return pruned
+
+
+# ....................... #
+
+
+_LogStringPrefilter = tuple[tuple[str, ...], dict[str, tuple[tuple[int, str], ...]]]
+"""The prefilter literals, and per literal the ``(position, source)`` alternatives needing it."""
+
+
+def _derive_log_string_prefilter() -> _LogStringPrefilter | None:
+    """Build the prefilter; ``None`` disables it.
+
+    Positions order the alternatives as in the combined regex. With a capturing group
+    anywhere, the combined regex stays the one alternative: a backreference resolves
+    against the combined numbering.
+    """
+
+    alternatives = _log_string_alternatives()
+    literal_sets = [_fragment_required_literals(source) for source in alternatives]
+
+    if not all(literal_sets):
+        return None  # safety: one opaque fragment disables the prefilter
+
+    if _log_string_re.groups:
+        alternatives = (_log_string_re.pattern,)
+        literal_sets = [frozenset[str]().union(*literal_sets)]  # type: ignore[arg-type]
+
+    index: dict[str, list[tuple[int, str]]] = {}
+
+    for position, (source, literals) in enumerate(zip(alternatives, literal_sets, strict=True)):
+        for literal in literals or ():
+            index.setdefault(literal, []).append((position, source))
+
+    return tuple(index), {literal: tuple(entries) for literal, entries in index.items()}
+
+
+# ....................... #
+
+
+@lru_cache(maxsize=512)
+def _compile_alternative(source: str) -> re.Pattern[str]:
+    # Keyed by the pattern text alone (the flags are fixed), so a policy change can
+    # never serve a stale pattern; compiled on first use to keep import cheap.
+    return re.compile(source, _SCRUB_FLAGS)
+
+
+# ....................... #
+
+_MAX_SPLIT_ALTERNATIVES = 10
+"""Above this many candidate alternatives the combined regex scans once instead."""
+
+
+def _sub_first_alternative(text: str, sources: Sequence[str]) -> str:
+    """``re.sub`` by the alternation of *sources* (in order), without compiling it.
+
+    Replays the alternation's scan: the leftmost match wins, a tie goes to the earlier
+    alternative, and the scan resumes where the replaced match ends. Every alternative
+    requires a literal, so no match is empty and resuming needs no empty-match rule.
+    """
+
+    patterns = [_compile_alternative(source) for source in sources]
+
+    if len(patterns) == 1:
+        return patterns[0].sub(SECRET_PLACEHOLDER, text)
+
+    pending = [pattern.search(text) for pattern in patterns]
+    parts: list[str] = []
+    pos = 0
+
+    while True:
+        first: re.Match[str] | None = None
+
+        for match in pending:
+            if match is not None and (first is None or match.start() < first.start()):
+                first = match
+
+        if first is None:
+            break
+
+        parts += (text[pos : first.start()], SECRET_PLACEHOLDER)
+        pos = first.end()
+        # A pending match starting inside the replaced span is gone; look again past it.
+        pending = [
+            match if match is None or match.start() >= pos else pattern.search(text, pos)
+            for pattern, match in zip(patterns, pending, strict=True)
+        ]
+
+    parts.append(text[pos:])
+
+    return "".join(parts)
 
 
 # ....................... #
@@ -480,22 +555,23 @@ def _rebuild_matchers() -> None:
     Single chokepoint for pattern mutation: recompiles both combined regexes,
     clears the :func:`is_sensitive_key` memo (its entries are only valid for
     one pattern set), and re-derives the :func:`scrub_log_string` prefilter
-    literals. Every mutator of the pattern lists must call this.
+    literals (the combined regex first: the derivation reads it). Every mutator
+    of the pattern lists must call this.
     """
 
-    global _sensitive_key_re, _log_string_re, _log_string_literals
+    global _sensitive_key_re, _log_string_re, _log_string_prefilter
 
     _sensitive_key_re = _compile_sensitive_key_re()
     _log_string_re = _compile_log_string_re()
     _is_sensitive_key_cached.cache_clear()
-    _log_string_literals = _derive_log_string_literals()
+    _log_string_prefilter = _derive_log_string_prefilter()
 
 
 # ....................... #
 
 _sensitive_key_re: re.Pattern[str]
 _log_string_re: re.Pattern[str]
-_log_string_literals: tuple[str, ...] | None
+_log_string_prefilter: _LogStringPrefilter | None
 
 _rebuild_matchers()
 
@@ -518,7 +594,9 @@ def register_sensitive_patterns(
     Registering a *log_strings* fragment with no extractable required literal
     (e.g. ``r"\\d{16}"``) disables the fast literal prefilter for
     :func:`scrub_log_string`; scrubbing stays correct but every string pays the
-    full combined-regex cost.
+    full combined-regex cost. A fragment with a capturing group keeps the prefilter,
+    but a string that passes it runs the full combined regex rather than only the
+    patterns whose literals it contains.
     """
 
     _EXTRA_SENSITIVE_KEY_PATTERNS.extend(pattern for pattern in keys if pattern)
@@ -548,24 +626,34 @@ def scrub_log_string(text: str) -> str:
 
     Fast path: if the derived literal prefilter is active and *text* contains
     none of the required literals, no pattern can match and *text* is returned
-    untouched without running the combined regex.
+    untouched without running the combined regex. Otherwise only the patterns
+    whose literals *text* contains run, with the combined regex's result.
     """
 
-    literals = _log_string_literals
+    prefilter = _log_string_prefilter
 
-    if literals is not None:
-        lowered = text.lower()
+    if prefilter is None:
+        return _log_string_re.sub(SECRET_PLACEHOLDER, text)
 
-        if not text.isascii():
-            # IGNORECASE matches ``ı`` and ``İ`` (which lowers to ``i`` + U+0307) to ``i``
-            # and ``ſ`` to ``s``; fold them too, or a ``paſſword=`` value skips the regex.
-            lowered = lowered.replace("\u0131", "i").replace("\u017f", "s").replace("\u0307", "")
+    literals, alternatives = prefilter
+    lowered = text.lower()
 
-        for literal in literals:
-            if literal in lowered:
-                break
+    if not text.isascii():
+        # IGNORECASE matches ``ı`` and ``İ`` (which lowers to ``i`` + U+0307) to ``i``
+        # and ``ſ`` to ``s``; fold them too, or a ``paſſword=`` value skips the regex.
+        lowered = lowered.replace("\u0131", "i").replace("\u017f", "s").replace("\u0307", "")
 
-        else:
-            return text
+    hits = [literal for literal in literals if literal in lowered]
 
-    return _log_string_re.sub(SECRET_PLACEHOLDER, text)
+    if not hits:
+        return text
+
+    entries: Sequence[tuple[int, str]] = alternatives[hits[0]]
+
+    if len(hits) > 1:
+        entries = sorted({entry for hit in hits for entry in alternatives[hit]})
+
+    if len(entries) > _MAX_SPLIT_ALTERNATIVES:
+        return _log_string_re.sub(SECRET_PLACEHOLDER, text)
+
+    return _sub_first_alternative(text, [source for _, source in entries])
