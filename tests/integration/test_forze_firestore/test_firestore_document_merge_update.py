@@ -26,6 +26,7 @@ from tests.support.document_merge_update import (
     MergeRead,
     MergeUpdate,
     assert_updates_merge,
+    assert_updates_replace,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -57,3 +58,4 @@ async def test_an_update_merges_into_a_stored_mapping_and_model(
     )
 
     await assert_updates_merge(ctx.document.command(spec), ctx.document.query(spec))
+    await assert_updates_replace(ctx.document.command(spec), ctx.document.query(spec))

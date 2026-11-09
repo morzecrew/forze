@@ -1,14 +1,16 @@
 """Domain document models and commands."""
 
 import itertools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import is_dataclass
+from dataclasses import dataclass, is_dataclass
 from datetime import datetime
-from typing import Any, ClassVar, Literal, Self, cast
+from types import UnionType
+from typing import Any, ClassVar, Literal, Self, Union, cast, final, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel, Field, RootModel, model_validator
+from pydantic.fields import FieldInfo
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
@@ -72,14 +74,70 @@ def is_invariant_check(func: Any) -> bool:
     return getattr(func, "__forze_invariant_check__", False) is True
 
 
+@final
+@dataclass(frozen=True, slots=True)
+class ReplaceOnUpdate:
+    """Field marker: an update replaces the field's value whole instead of merging into it.
+
+    By default an update merges into a mapping, ``Any`` or nested-model field, so the keys it
+    leaves out are kept. Mark a field ``Annotated[dict[str, Any], ReplaceOnUpdate()]`` and the
+    value an update sends is the value stored: a key it leaves out is removed, and a nested
+    model must be sent whole. A ``None`` for the field still resets it to its default.
+
+    Read off the field of a pydantic model or pydantic dataclass, at any depth of the
+    document; on an arm of the field's union (``Annotated[dict[str, Any], ...] | None``) it
+    marks the field too.
+    """
+
+
+def _marks_replace(metadata: Iterable[Any]) -> bool:
+    return any(isinstance(m, ReplaceOnUpdate) for m in metadata)
+
+
+_REPLACED_FIELDS: dict[type, frozenset[str]] = {}
+
+
+def replace_on_update_fields(model: type[Any]) -> frozenset[str]:
+    """The fields of *model* marked :class:`ReplaceOnUpdate`.
+
+    :param model: A pydantic model or pydantic dataclass; any other type has none.
+    :returns: The names of the marked fields.
+    """
+
+    replaced = _REPLACED_FIELDS.get(model)
+
+    if replaced is not None:
+        return replaced
+
+    fields: Mapping[str, FieldInfo] = getattr(model, "__pydantic_fields__", {})
+    replaced = frozenset(
+        name
+        for name, info in fields.items()
+        if _marks_replace(info.metadata)
+        or (
+            get_origin(info.annotation) in (Union, UnionType)
+            and any(
+                _marks_replace(getattr(a, "__metadata__", ())) for a in get_args(info.annotation)
+            )
+        )
+    )
+
+    # A model still waiting on a forward reference has its fields rebuilt later.
+    if getattr(model, "__pydantic_complete__", True):
+        _REPLACED_FIELDS[model] = replaced
+
+    return replaced
+
+
 def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
     """Merge an update *patch* into *before*, the python-mode dump of *live*.
 
     The rule is read off the live value, whatever the annotation (a union, an alias): into a
     model or a dataclass the patch merges field by field, and a ``None`` drops its field so
     revalidation gives it its default (or refuses it when it has none). Into anything else (a
-    mapping, an ``Any`` value) it merges key by key and stores a ``None`` as null. A list, or
-    a value with nothing stored to merge into, replaces the stored one.
+    mapping, an ``Any`` value) it merges key by key and stores a ``None`` as null. A list, a
+    field marked :class:`ReplaceOnUpdate`, or a value with nothing stored to merge into,
+    replaces the stored one.
 
     :param live: The value *before* is a dump of: the document, or a value inside it.
     :param before: Python-mode dump of *live*.
@@ -91,6 +149,7 @@ def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
         live = cast(Any, live.root)
 
     declared = isinstance(live, BaseModel) or (is_dataclass(live) and not isinstance(live, type))
+    replaced = replace_on_update_fields(type(live)) if declared else frozenset[str]()
     out = dict(before)
 
     for k, v in patch.items():
@@ -100,7 +159,7 @@ def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
             out.pop(k, None)
 
         # Any mapping: an ``Any`` field dumps a custom one (a ``MappingProxyType``) as it is.
-        elif isinstance(v, dict) and isinstance(current, Mapping):
+        elif isinstance(v, dict) and isinstance(current, Mapping) and k not in replaced:
             if declared:
                 inner = getattr(live, k, None)
 
@@ -112,6 +171,40 @@ def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
 
         else:
             out[k] = v
+
+    return out
+
+
+def _whole_where_replaced(live: Any, patch: JsonDict, after: JsonDict) -> JsonDict:
+    """*patch*, a merge patch into *live*, with each field marked :class:`ReplaceOnUpdate`
+    taken whole from *after*: a merge patch holds only the keys that changed, and applied to a
+    field an update replaces it would store just those.
+
+    :param live: The value *patch* applies to, walked as :func:`_merge_update` walks it.
+    :param patch: Merge patch from *live*'s dump to *after*.
+    :param after: The dump *patch* leads to.
+    :returns: *patch* with whole values for the marked fields.
+    """
+
+    if isinstance(live, RootModel):
+        live = cast(Any, live.root)
+
+    declared = isinstance(live, BaseModel) or (is_dataclass(live) and not isinstance(live, type))
+    replaced = replace_on_update_fields(type(live)) if declared else frozenset[str]()
+    out = dict(patch)
+
+    for k, v in patch.items():
+        if k in replaced and k in after:
+            out[k] = after[k]
+
+        elif isinstance(v, dict) and isinstance(after.get(k), Mapping):
+            if declared:
+                inner = getattr(live, k, None)
+
+            else:
+                inner = cast(Mapping[str, Any], live).get(k) if isinstance(live, Mapping) else None
+
+            out[k] = _whole_where_replaced(inner, cast(JsonDict, v), cast(JsonDict, after[k]))
 
     return out
 
@@ -407,7 +500,8 @@ class Document(CoreModel):
         * merges them into the current state and **re-validates** the result, so the
           returned instance always carries properly typed field values (a field set to
           ``None`` takes its default, a nested model merges field by field, a mapping or
-          ``Any`` value merges key by key and stores a ``None`` in it, a list is replaced),
+          ``Any`` value merges key by key and stores a ``None`` in it, a list or a field
+          marked :class:`ReplaceOnUpdate` is replaced),
         * computes a JSON merge-style diff over canonical (python-mode, validated)
           values — a patch that validates to the current state yields an empty diff
           and returns ``self`` unchanged (no ``last_update_at`` bump); inside a mapping or
@@ -568,7 +662,12 @@ class Document(CoreModel):
 
         logger.trace("Historical consistency conflict=%s", has_conflict)
 
-        return None if has_conflict else old_upd_diff
+        if has_conflict:
+            return None
+
+        # Touches are compared per top-level field, so a field holding a replaced value is
+        # unchanged since ``old`` here, and its whole value from ``old`` + ``data`` is the one.
+        return _whole_where_replaced(old, old_upd_diff, old_upd_state)
 
 
 # ....................... #

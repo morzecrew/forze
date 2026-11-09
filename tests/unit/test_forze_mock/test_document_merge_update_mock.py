@@ -15,6 +15,7 @@ from tests.support.document_merge_update import (
     MergeUpdate,
     assert_update_matching_refuses_a_merge,
     assert_updates_merge,
+    assert_updates_replace,
 )
 
 pytestmark = pytest.mark.unit
@@ -32,4 +33,5 @@ async def test_an_update_merges_into_a_stored_mapping_and_model() -> None:
     )
 
     await assert_updates_merge(doc, doc)
+    await assert_updates_replace(doc, doc)
     await assert_update_matching_refuses_a_merge(doc, doc)

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **An update replaces a field marked `ReplaceOnUpdate` whole, so a key it leaves out is removed.** Use `Annotated[dict[str, Any], ReplaceOnUpdate()]` from `forze.domain.models`, at any depth. Unmarked mappings still merge key by key. `ChildCollectionSync` accepts a marked mapping as a compare field.
 
 ### Changed
 

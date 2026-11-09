@@ -560,7 +560,7 @@ refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`
 revision history, materialized fields, a `SerializedBy` guarantee or randomized field
 encryption; a domain with update validators, invariants, domain events, or pydantic validators,
 constraints or serializers of its own (model-level, or on any field; a JSON-only serializer does not count); or an update field the domain lacks, freezes, merges
-(a model or mapping) or derives from the other fields. A table
+(a model or mapping not marked `ReplaceOnUpdate`) or derives from the other fields. A table
 keyed by more than the id (and tenant), or a column an update can write that Postgres cannot
 compare, takes the usual path instead. Mongo, Firestore and the mock apply the same refusals
 and then write through their usual path.
@@ -585,7 +585,7 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 |--------|-----------|-------|
 | `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False, merge=True)` | optimistic — a stale `rev` is merged through history, or refused (`revision_mismatch`) without history or with `merge=False` ([details](../../writing-operation/concurrency-conflicts.md#refusing-any-change-since-you-read)); `return_diff` adds the change `JsonDict`, a merge patch holding the values the caller set on every backend (a `StrEnum` stays a member, a datetime is as given), not the store's column coercion |
 | `update_many` | `update_many(updates, *, return_new=True, return_diff=False, merge=True)` | per-row update (`KeyedUpdate`: id, rev, dto) with OCC |
-| `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a field set to a mapping or model, which only an update merges; not on Firestore; `return_new=False` → rows-updated count |
+| `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a field set to a mapping or model, which only an update merges, unless the domain marks it [`ReplaceOnUpdate`](../../core-concepts/domain-layer.md#rules-live-with-the-data); not on Firestore; `return_new=False` → rows-updated count |
 | `update_matching_strict` | `update_matching_strict(filters, dto, *, return_new=True, chunk_size=None)` | like `update_many` (per-row OCC + domain apply) over a filter |
 | `touch` / `touch_many` | `touch(pk, *, rev=None, return_new=True)` | bump `rev` and `last_update_at` only; with `rev` (`revs=` per id on `touch_many`), only a document still at it |
 

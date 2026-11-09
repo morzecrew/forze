@@ -19,24 +19,30 @@ from forze.domain.models import (
     DocumentHistory,
     DomainEvent,
     ReadDocument,
+    ReplaceOnUpdate,
     event_emitter,
     invariant,
+    replace_on_update_fields,
 )
 from forze.domain.validation import update_validator
 
 # ----------------------- #
 
+
 class SampleDocument(Document):
     name: str
     value: int = 0
+
 
 class Address(CoreModel):
     street: str
     city: str
 
+
 class NestedDocument(Document):
     address: Address
     due: datetime
+
 
 class TestDocumentBasics:
     def test_default_fields(self) -> None:
@@ -60,6 +66,7 @@ class TestDocumentBasics:
         doc = SampleDocument(name="test")
         with pytest.raises(CoreException):
             doc.update({"created_at": doc.created_at})
+
 
 class TestDocumentUpdate:
     def test_applies_diff_and_bumps_last_update(self) -> None:
@@ -87,6 +94,7 @@ class TestDocumentUpdate:
         after, diff = doc.update({"name": "new", "value": 99})
         assert after.name == "new"
         assert after.value == 99
+
 
 class TestDocumentUpdateCanonicalization:
     """Update merges into python-mode state and fully re-validates the result."""
@@ -280,6 +288,7 @@ class TestDocumentUpdateCanonicalization:
         assert diff["address"] == {"city": "NY"}
         assert "label" not in diff["address"]
         assert after.address.label == "main, NY"
+
 
 class TestJsonValueUpdate:
     """A JSON value (a mapping, ``Any``) merges key by key and stores the ``None`` values in
@@ -517,6 +526,118 @@ class TestJsonValueUpdate:
         assert not current.validate_historical_consistency(old, {"meta": {"k": None}})
 
 
+class TestReplaceOnUpdate:
+    """A field marked ``ReplaceOnUpdate`` stores the value an update sends, whole."""
+
+    def test_a_key_the_update_leaves_out_is_removed(self) -> None:
+        class Doc(Document):
+            tags: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+
+        doc = Doc(tags={"a": 1, "b": 2})
+        after, diff = doc.update({"tags": {"b": 2}})
+
+        assert after.tags == {"b": 2}
+        assert diff["tags"] == {"a": None}
+        assert after.stored_changes(diff)["tags"] == {"b": 2}
+
+    def test_a_null_in_the_value_is_stored_and_a_null_field_resets(self) -> None:
+        class Doc(Document):
+            tags: Annotated[dict[str, Any], ReplaceOnUpdate()] = {"d": 0}
+
+        doc = Doc(tags={"a": 1})
+
+        assert doc.update({"tags": {"b": None}})[0].tags == {"b": None}
+        assert doc.update({"tags": None})[0].tags == {"d": 0}
+
+    def test_a_marked_model_is_validated_as_sent(self) -> None:
+        class Settings(CoreModel):
+            theme: str
+            font: str = "mono"
+
+        class Doc(Document):
+            settings: Annotated[Settings, ReplaceOnUpdate()]
+
+        doc = Doc(settings=Settings(theme="dark", font="serif"))
+
+        assert doc.update({"settings": {"theme": "light"}})[0].settings == Settings(theme="light")
+
+        with pytest.raises(ValidationError, match="theme"):
+            doc.update({"settings": {"font": "sans"}})
+
+    def test_a_marked_mapping_of_models_replaces_every_entry(self) -> None:
+        class Item(CoreModel):
+            qty: int = 1
+            note: str = "n"
+
+        class Doc(Document):
+            items: Annotated[dict[str, Item], ReplaceOnUpdate()] = {}
+
+        doc = Doc(items={"a": Item(qty=5, note="x"), "b": Item()})
+        after, _ = doc.update({"items": {"a": {"qty": 6}}})
+
+        assert after.items == {"a": Item(qty=6)}
+
+    def test_the_marker_holds_in_a_nested_model_and_on_a_union_arm(self) -> None:
+        class Settings(CoreModel):
+            prefs: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+            seen: dict[str, Any] = {}
+
+        class Doc(Document):
+            settings: Settings
+            opt: Annotated[dict[str, Any], ReplaceOnUpdate()] | None = None
+
+        doc = Doc(settings=Settings(prefs={"a": 1}, seen={"x": 1}), opt={"k": 1})
+        after, _ = doc.update({"settings": {"prefs": {"b": 2}, "seen": {"y": 2}}, "opt": {"j": 2}})
+
+        assert after.settings == Settings(prefs={"b": 2}, seen={"x": 1, "y": 2})
+        assert after.opt == {"j": 2}
+
+    def test_the_marked_fields_are_listed(self) -> None:
+        @dataclass
+        class Point:
+            tags: Annotated[dict[str, Any], ReplaceOnUpdate()]
+
+        class Doc(Document):
+            a: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+            b: Annotated[dict[str, Any] | None, Field(default=None), ReplaceOnUpdate()]
+            c: Annotated[dict[str, Any], ReplaceOnUpdate()] | None = None
+            # On an entry, not on the field: the mapping itself still merges.
+            d: dict[str, Annotated[dict[str, Any], ReplaceOnUpdate()]] = {}
+            e: dict[str, Any] = {}
+
+        assert replace_on_update_fields(Doc) == {"a", "b", "c"}
+        assert replace_on_update_fields(Point) == {"tags"}
+        assert replace_on_update_fields(dict) == frozenset()
+
+    def test_a_historical_update_carries_the_whole_value(self) -> None:
+        class Settings(CoreModel):
+            prefs: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+
+        class Doc(Document):
+            tags: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+            settings: Settings = Settings()
+            note: str = ""
+
+        old = Doc(tags={"a": 1, "b": 2}, settings=Settings(prefs={"p": 1, "q": 2}))
+        current, _ = old.update({"note": "concurrent"})
+        patch = current.historical_update(old, {"tags": {"b": 2}, "settings": {"prefs": {"q": 2}}})
+
+        assert patch is not None
+        after, _ = current.update(patch)
+
+        assert (after.tags, after.settings.prefs, after.note) == ({"b": 2}, {"q": 2}, "concurrent")
+
+    def test_a_historical_update_conflicts_with_any_change_to_the_field(self) -> None:
+        class Doc(Document):
+            tags: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+
+        old = Doc(tags={"a": 1, "b": 2})
+        current, _ = old.update({"tags": {"a": 1, "b": 2, "c": 3}})
+
+        # Written whole, the update would drop ``c``.
+        assert current.historical_update(old, {"tags": {"b": 2}}) is None
+
+
 class TestMaterializeUpdateIsolation:
     """Pin the aliasing safety of the scoped per-value deepcopy in
     ``_materialize_update``: updated container values must not alias the
@@ -664,6 +785,7 @@ class TestDocumentTouch:
         assert doc.name == "original"
         assert doc.value == 42
 
+
 class TestDocumentApplyUpdate:
     def test_empty_diff_returns_self(self) -> None:
         doc = SampleDocument(name="x")
@@ -675,6 +797,7 @@ class TestDocumentApplyUpdate:
         result = doc._apply_update({"name": "new"})
         assert result.name == "new"
         assert result is not doc
+
 
 class TestDocumentUpdateValidators:
     def test_validators_run_on_update(self) -> None:
@@ -737,6 +860,7 @@ class TestDocumentUpdateValidators:
         doc = Doc(name="ok")
         with pytest.raises(CoreException, match="forbidden"):
             doc.update({"name": "forbidden"})
+
 
 class TestValidateHistoricalConsistency:
     def test_detects_conflict(self) -> None:
@@ -808,9 +932,7 @@ class TestValidateHistoricalConsistency:
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
         current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=UTC)})
 
-        assert current.validate_historical_consistency(
-            old, {"address": {"city": "NY"}}
-        )
+        assert current.validate_historical_consistency(old, {"address": {"city": "NY"}})
 
     def test_nested_scalar_conflict_still_flagged(self) -> None:
         # Hybrid merge-patch semantics are unchanged: overlapping nested
@@ -819,9 +941,7 @@ class TestValidateHistoricalConsistency:
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
         current, _ = old.update({"address": {"city": "NY"}})
 
-        assert not current.validate_historical_consistency(
-            old, {"address": {"city": "SF"}}
-        )
+        assert not current.validate_historical_consistency(old, {"address": {"city": "SF"}})
 
     def test_container_conflict_still_flagged(self) -> None:
         # Hybrid semantics: container touches on overlapping paths conflict
@@ -866,8 +986,10 @@ class TestValidateHistoricalConsistency:
         with pytest.raises(CoreException, match="frozen"):
             current.historical_update(old, {"created_at": old.created_at})
 
+
 # ----------------------- #
 # DTOs
+
 
 class TestCreateDocumentCmd:
     def test_is_empty_deprecated_alias(self) -> None:
@@ -875,6 +997,7 @@ class TestCreateDocumentCmd:
         # deprecated empty BaseDTO subclass kept for back-compat.
         cmd = CreateDocumentCmd()
         assert not type(cmd).model_fields
+
 
 class TestReadDocument:
     def test_fields(self) -> None:
@@ -885,6 +1008,7 @@ class TestReadDocument:
         rd = ReadDocument(id=uid, rev=3, created_at=now, last_update_at=now)
         assert rd.id == uid
         assert rd.rev == 3
+
 
 class TestDocumentHistory:
     def test_fields(self) -> None:

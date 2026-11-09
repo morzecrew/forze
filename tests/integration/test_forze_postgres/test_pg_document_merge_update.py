@@ -18,6 +18,7 @@ from tests.support.document_merge_update import (
     MergeUpdate,
     assert_update_matching_refuses_a_merge,
     assert_updates_merge,
+    assert_updates_replace,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -42,7 +43,8 @@ async def _table(pg_client: PostgresClient) -> str:
             meta jsonb NOT NULL,
             address jsonb NOT NULL,
             items jsonb NOT NULL,
-            extra jsonb
+            extra jsonb,
+            marks jsonb NOT NULL
         );
         """
     )
@@ -54,6 +56,7 @@ async def test_an_update_merges_into_a_stored_mapping_and_model(pg_client: Postg
     ctx = document_context(pg_client, await _table(pg_client))
 
     await assert_updates_merge(ctx.document.command(SPEC), ctx.document.query(SPEC))
+    await assert_updates_replace(ctx.document.command(SPEC), ctx.document.query(SPEC))
     await assert_update_matching_refuses_a_merge(
         ctx.document.command(SPEC), ctx.document.query(SPEC)
     )

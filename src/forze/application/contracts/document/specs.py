@@ -15,7 +15,13 @@ from forze.base.exceptions import exc
 from forze.base.primitives import advisory_lock_key
 from forze.base.serialization import stored_field_names_for
 from forze.domain.constants import ID_FIELD
-from forze.domain.models import AggregateRoot, BaseDTO, Document
+from forze.domain.models import (
+    AggregateRoot,
+    BaseDTO,
+    Document,
+    ReplaceOnUpdate,
+    replace_on_update_fields,
+)
 from forze.domain.models.document import is_invariant_check
 
 from ..base import BaseSpec
@@ -95,23 +101,29 @@ def _normalize_derived(
 # ....................... #
 
 
-def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
+def require_whole_update_matching(
+    dto: BaseModel, *, document: str, domain: type[BaseModel] | None = None
+) -> None:
     """Refuse an ``update_matching`` patch that sets a field to a mapping or a model.
 
     ``update_matching`` writes its patch as it is, with no domain update, so such a value
     would replace the stored one with the fragment it names, where ``update`` and
     ``update_matching_strict`` merge it. A list or a scalar replaces the stored value either
-    way and is allowed. ``None`` is allowed too and stores ``NULL``, though an update resets a
-    field with a non-null default to that default; use ``update_matching_strict`` for that.
+    way and is allowed, and so is a field *domain* marks
+    :class:`~forze.domain.models.ReplaceOnUpdate`, which an update replaces too. ``None`` is
+    allowed and stores ``NULL``, though an update resets a field with a non-null default to
+    that default; use ``update_matching_strict`` for that.
 
     :param document: The document's name, for the message.
+    :param domain: The document's domain model, whose marked fields are allowed.
     :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
         naming the fields.
     """
 
+    replaced = replace_on_update_fields(domain) if domain is not None else frozenset[str]()
     merged = sorted(
         name
-        for name in dto.model_fields_set
+        for name in dto.model_fields_set - replaced
         if isinstance(getattr(dto, name), (Mapping, BaseModel))
     )
 
@@ -197,7 +209,7 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
     names.update(
         name
         for name, field in domain.model_fields.items()
-        if any(not isinstance(m, _SERIALIZERS) for m in _field_metadata(field))
+        if any(not isinstance(m, (*_SERIALIZERS, ReplaceOnUpdate)) for m in _field_metadata(field))
     )
 
     return frozenset(names)
@@ -1365,6 +1377,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 # Likewise a serializer: the domain path diffs serialized dumps, and one may
                 # read a field the update changes.
                 serialized = sorted(_serialized_fields(domain))
+                replaced = replace_on_update_fields(domain)
                 merged = sorted(
                     {
                         name
@@ -1372,7 +1385,8 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                         for name, dto_field in dto.model_fields.items()
                         if (field := domain.model_fields.get(name)) is None
                         or field.frozen
-                        or _merged(field.annotation)
+                        # A field the domain replaces is written whole on either path.
+                        or (_merged(field.annotation) and name not in replaced)
                         # A nulled field takes its default, here one read off the stored row.
                         or field.default_factory_takes_validated_data
                         # The DTO validates the value; a narrower domain type (a ``Literal``
