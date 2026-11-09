@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from datetime import timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -15,6 +16,7 @@ from forze.application.integrations.document import (
     TinyLfuStore,
     tiny_lfu_l1_store,
 )
+from forze.application.integrations.document.l1 import _FrequencySketch
 from forze.base.exceptions import CoreException
 from tests.unit._gateway_codec_helpers import codec_for
 
@@ -141,6 +143,42 @@ class TestAging:
 
         survivors_b = sum(1 for key in season_b if store.get(key) is not None)
         assert survivors_b >= 6  # the new season won the cache
+
+    def test_age_matches_the_per_counter_halving_loop(self) -> None:
+        sketch = _FrequencySketch(64)  # width 256: one row can hold every byte value
+        rng = random.Random(0)
+
+        sketch._rows[0][:] = bytes(range(256))
+
+        for row in sketch._rows[1:]:
+            row[:] = rng.randbytes(len(row))
+
+        rows = list(sketch._rows)
+        expected = [bytearray(row) for row in rows]
+
+        for row in expected:  # the algorithm _age replaced
+            for i in range(len(row)):
+                row[i] >>= 1
+
+        sketch._ops = 641
+        sketch._age()
+
+        assert sketch._rows == expected
+        assert all(new is old for new, old in zip(sketch._rows, rows, strict=True))
+        assert sketch._ops == 320
+
+    def test_increment_ages_at_sample_size(self) -> None:
+        sketch = _FrequencySketch(10)  # sample_size = max(64, 10 * 10) = 100
+
+        for _ in range(99):
+            sketch.increment("hot")
+
+        assert sketch.estimate("hot") == 15  # saturated, not yet aged
+
+        sketch.increment("hot")
+
+        assert sketch.estimate("hot") == 7
+        assert sketch._ops == 50
 
 
 class TestSegments:
