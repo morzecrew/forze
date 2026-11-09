@@ -214,6 +214,8 @@ computed on instants only: two wall-clock times across a transition are off by t
 wrong answer is a plausible number. An answer that would fall outside years 1 to 9999 is refused
 (`civil_time_out_of_range`) rather than raising from inside a conversion. `AwareDatetime` is for
 your boundary models: a naive value is a validation error (`naive_datetime`) naming the field.
+A bound on it needs a time zone as well: a naive bound cannot be compared with an instant, so
+every value fails.
 Bind `fold` where the UI knows which occurrence the user meant; otherwise expect a
 `dst_ambiguous` on one autumn night a year.
 
