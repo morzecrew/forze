@@ -112,7 +112,12 @@ fastapi = [
     "uvicorn[standard]>=0.42.0",
 ]
 postgres = ["psycopg-pool>=3.3.0", "psycopg[binary]>=3.3.3"]
-redis = ["redis>=7.3.0"]
+redis = [
+    # The C RESP parser redis-py picks up on its own when it is installed. 3.3.0 is the
+    # first release with CPython 3.14 wheels.
+    "hiredis>=3.3.0",
+    "redis>=7.3.0",
+]
 temporal = ["temporalio>=1.23.0"]
 s3 = [
     "aioboto3>=15.5.0",
@@ -1213,6 +1218,7 @@ DEP002 = [
     "python-socketio-stubs",
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
+    "hiredis",               # redis-py's C reply parser, picked up when installed
     #! Added temporarily
     "uvicorn",
     "types-hvac",

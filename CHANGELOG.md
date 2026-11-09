@@ -35,9 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A mock-backed DST seed takes up to a third less time.** Freezing a deps registry and generating a derived scenario's inputs both cost less; recorded seeds replay unchanged.
 
+- **The `redis` extra installs `hiredis`**, the C reply parser redis-py uses on its own when present. Large replies such as `MGET`, `HGETALL` and pipelines parse several times faster.
+
 ### Fixed
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
+
+- **An error context holding a NaN, an infinity or a plain `Enum` member now renders.** A non-finite float becomes `null`, where the HTTP error response used to fail on it, and an `Enum` member renders as its value instead of dropping the whole context.
 
 ### Security
 
