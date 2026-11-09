@@ -23,6 +23,7 @@ from uuid import UUID
 from polyfactory.factories.base import BuildContext
 from polyfactory.factories.pydantic_factory import ModelFactory
 from polyfactory.field_meta import FieldMeta
+from polyfactory.utils.normalize_type import normalize_type
 from polyfactory.utils.predicates import is_safe_subclass
 from pydantic import (
     AwareDatetime,
@@ -90,6 +91,9 @@ def _name_awareness(meta: FieldMeta, source: Any) -> None:
 
     metadata: list[Any] = []
 
+    while (named := normalize_type(source)) != source:  # a ``type`` alias, as polyfactory reads it
+        source = named
+
     if get_origin(source) is Annotated:
         source, *metadata = get_args(source)
 
@@ -151,6 +155,8 @@ class InputFactory(ModelFactory[BaseModel]):
 
     @classmethod
     def get_model_fields(cls) -> list[FieldMeta]:
+        """polyfactory's fields, each datetime typed aware or naive where its metadata asks."""
+
         # polyfactory reads the fields once per factory; name the awareness on that pass
         first = "_fields_metadata" not in cls.__dict__
         fields = super().get_model_fields()

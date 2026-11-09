@@ -39,6 +39,10 @@ from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
 
+type _Stamp = ForzeAwareDatetime
+type _Stamps = list[_Stamp]
+type _Pair[T] = tuple[T, T]
+
 
 class _Leg(BaseModel):
     departs: datetime
@@ -231,6 +235,9 @@ class TestTimeWindows:
             capped: Annotated[ForzeAwareDatetime, Field(lt=datetime(2030, 1, 1, tzinfo=UTC))]
             marked: Annotated[datetime, AwareDatetime()]
             naive: Annotated[datetime, NaiveDatetime(), Field(gt=datetime(2020, 1, 1, tzinfo=UTC))]
+            named: _Stamp
+            names: _Stamps
+            paired: _Pair[_Stamp]
 
         factory = InputFactory.create_factory(Stamped)
 
@@ -239,6 +246,7 @@ class TestTimeWindows:
             stamped = factory.build()  # pydantic and forze's validator check each value on build
 
             leaves = (stamped.at, stamped.capped, stamped.marked, *stamped.many, *stamped.run)
+            leaves += (stamped.named, *stamped.names, *stamped.paired)
             assert all(value.tzinfo is UTC for value in (*leaves, *stamped.keyed.values()))
             assert stamped.naive.tzinfo is None
 
