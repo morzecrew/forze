@@ -204,16 +204,17 @@ class TestShardedTail:
         stop = asyncio.Event()
         read = MockStreamAdapter.read
         crash = asyncio.Event()
+        crashing = {_T1: 1, _T2: 2}  # each loop fails once, right after its tenant gets n
 
         runtime = _runtime()
         async with runtime.scope():
             ctx = runtime.get_context()
 
             async def _read(self: Any, mapping: dict[str, str], **kwargs: Any) -> Any:
-                if crash.is_set():
-                    crash.clear()
-                    await _append_for(ctx, _T1, _signal(1))
-                    await _append_for(ctx, _T2, _signal(2))
+                tenant = self.require_tenant_if_aware()
+
+                if crash.is_set() and tenant in crashing:
+                    await _append_for(ctx, tenant, _signal(crashing.pop(tenant)))
                     raise ConnectionError("pool exhausted")
 
                 return await read(self, mapping, **kwargs)
@@ -223,7 +224,7 @@ class TestShardedTail:
             task = await _run_shard(ctx, hub, [_T1, _T2], stop)
             await asyncio.wait_for(hub.ready.wait(), timeout=5)  # both tenant loops are live
 
-            crash.set()  # one loop's next read appends for both tenants, then fails
+            crash.set()
             got1, _ = await _drain(sub1)
             got2, _ = await _drain(sub2)
             assert got1.payload == {"n": 1}
