@@ -40,6 +40,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryExpr,
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QueryFilterLimits,
@@ -685,8 +686,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    def _matcher(self, filters: QueryFilterExpression | None) -> Callable[[JsonDict], bool]:
-        """Parse *filters* once into a reusable predicate over stored documents.
+    def _matcher(
+        self,
+        filters: QueryFilterExpression | QueryExpr | None,
+    ) -> Callable[[JsonDict], bool]:
+        """Parse *filters* once into a reusable predicate over stored documents; an already
+        parsed *filters* is not parsed again.
 
         The mock twin of the read gateway's encrypted-filter seam: an encrypting read
         codec exposes ``rewrite_filter``, which replaces the literal in an equality
@@ -698,7 +703,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if filters is None:
             return lambda _doc: True
 
-        expr = self.filter_parser.parse_filter(filters)
+        expr = (
+            filters if isinstance(filters, QueryExpr) else self.filter_parser.parse_filter(filters)
+        )
         # The same string-operand cast the real backends get from the shared gateway
         # seam — without it the in-memory comparison would TypeError a string bound
         # against a stored Decimal/datetime into a silent no-match.
@@ -848,19 +855,22 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _validate_filter_types(
         self,
         filters: QueryFilterExpression | None,
-    ) -> None:
+    ) -> QueryExpr | None:
         """Operator/field-type validation, mirroring the real gateways' ``compile_filters``.
 
         Keeps dev (mock) and prod (Postgres/Mongo) symmetric: a type-incompatible filter
         (e.g. ``$like`` on a number) raises the same clean ``query_operator_type_mismatch``
         precondition here instead of silently matching nothing.
+
+        :returns: The parsed filter, for :meth:`_matcher`; ``None`` without *filters*.
         """
 
         if filters is None:
-            return
+            return None
 
+        expr = self.filter_parser.parse_filter(filters)
         validate_runtime_filter_fields(
-            filters,
+            expr,
             model=self.read_model,
             materialized=self.spec.materialized,
             lenient=self._unqueryable(),
@@ -869,10 +879,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
             # both, so a query that fails in production fails in the test suite too.
             encrypted=self.spec.encryption.encrypted if self.spec.encryption else frozenset(),
-            parser=self.filter_parser,
         )
-        expr = self.filter_parser.parse_filter(filters)
         validate_query_field_types(expr, self.read_model)
+
+        return expr
 
     # ....................... #
 
@@ -1060,11 +1070,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if aggregates is not None and return_fields is not None:
             raise exc.internal("Aggregates cannot be combined with return_fields")
 
-        self._validate_filter_types(filters)
+        parsed = self._validate_filter_types(filters)
 
         docs = self._candidate_docs()
 
-        match = self._matcher(filters)
+        match = self._matcher(parsed)
         filtered = [doc for doc in docs if match(doc)]
 
         pagination = pagination or {}
@@ -1545,7 +1555,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # the real document gateways: resolve the effective sort (+ id
         # tie-breaker), seek past the token's sort values, and mint the next
         # cursor from the last returned row.
-        self._validate_filter_types(filters)
+        parsed = self._validate_filter_types(filters)
 
         read_fields = (
             read_fields_for_model(self.read_model) | self.spec.materialized
@@ -1578,13 +1588,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 # only. Using a spec name here would diverge from the backends the mock models.
                 spec_name=None,
                 tenant_id=self.require_tenant_if_aware(),
-                filter_expr=(self.filter_parser.parse_filter(filters) if filters else None),
+                filter_expr=parsed if filters else None,
             )
             if cursor_protection_active()
             else None
         )
 
-        match = self._matcher(filters)
+        match = self._matcher(parsed)
         filtered = [doc for doc in docs if match(doc)]
         page_docs, has_more, next_c, prev_c = _mock_keyset_window(
             filtered,
@@ -1613,8 +1623,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     async def count(self, filters: QueryFilterExpression | None = None) -> int:
-        self._validate_filter_types(filters)
+        parsed = self._validate_filter_types(filters)
 
         docs = self._candidate_docs()
-        match = self._matcher(filters)
+        match = self._matcher(parsed)
         return sum(bool(match(doc)) for doc in docs)

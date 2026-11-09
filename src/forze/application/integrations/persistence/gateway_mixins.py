@@ -607,19 +607,18 @@ class FilterParserMixin(Generic[M]):
         if not filters:
             return None
 
+        expr = self.filter_parser.parse_filter(filters)
+
         # Reject filter fields absent from the read model so every backend fails
         # loud rather than silently matching nothing on a non-stored field.
         # Computed fields are excluded unless materialized (persisted for query).
         codec = getattr(self, "read_codec", None)
         validate_runtime_filter_fields(
-            filters,
+            expr,
             model=self.model_type,
             materialized=codec.materialized if codec else frozenset(),
             lenient=getattr(self, "lenient_read_fields", frozenset()),
-            parser=self.filter_parser,
         )
-
-        expr = self.filter_parser.parse_filter(filters)
 
         hints: Mapping[str, type[Any]] | None = getattr(
             self,

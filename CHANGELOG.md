@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The realtime hub's live fan-out is 6–30× cheaper per delivered frame.** Its queues hold a `HubDelivery`, which still unpacks and indexes as `(signal, event_id)`. SSE and WebSocket frames are UTF-8 JSON from orjson: a `UUID` or an `Enum` goes out as its value, `NaN` or an infinity as `null` (**behaviour change**).
 - **`ForzeJwtTokenVerifier` reuses a repeat token's verified signature and claims: a repeat verify drops from ~50 to ~4 µs (HS256).** Set by `AccessTokenConfig.verify_cache_ttl` (30 s, at most 5 min, `0` disables) and `verify_cache_max_entries`. Expiry, session and revocation checks still run per request.
 
+- **Postgres renders a filter's SQL once per filter shape and binds only each query's values, so repeated queries spend less time in Python.** Every backend also parses a filter once per query, not twice. Without I/O, a 10-predicate `find_many` compiles about 40% faster and a find by id about 20%.
+
+- **A Postgres gateway copies its `nested_field_hints` when it is built** (**behaviour change**). Changing that mapping afterwards no longer affects its queries.
+
 ### Fixed
 
 - ...

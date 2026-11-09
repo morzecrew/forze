@@ -34,7 +34,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell, projection_roots
+from forze.base.primitives import JsonDict, MappingConverter, OnceCell, projection_roots
 from forze.base.serialization import ModelCodec, default_model_codec, enum_values
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
@@ -48,9 +48,8 @@ from forze_postgres.kernel.relation import (
     is_static_relation,
     resolve_postgres_qname,
 )
-from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
-from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
+from forze_postgres.kernel.sql.query.render import PsycopgFilterSqlCache, PsycopgValueCoercer
 
 # ----------------------- #
 
@@ -157,8 +156,14 @@ class PostgresGateway[M: BaseModel](
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
 
-    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(default=None)
-    """Optional per-path Python types when read-model annotations are ambiguous."""
+    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Optional per-path Python types when read-model annotations are ambiguous.
+
+    Copied read-only at construction: the filter SQL memo keys on the filter's shape
+    alone, so a hint changed later in the caller's mapping must not reach the gateway."""
 
     lenient_read_fields: frozenset[str] = attrs.field(factory=frozenset)
     """Read-model fields not stored on this relation; excluded from the read
@@ -212,6 +217,22 @@ class PostgresGateway[M: BaseModel](
     (default read fields / explicit ``return_type``), keyed by ``(return_type, alias)``.
     Schema-independent (derived from read-model field names), so it is safe for the
     gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
+
+    _filter_sql_cache: PsycopgFilterSqlCache = attrs.field(
+        default=attrs.Factory(
+            lambda self: PsycopgFilterSqlCache(
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+            ),
+            takes_self=True,
+        ),
+        init=False,
+        eq=False,
+        repr=False,
+        hash=False,
+    )
+    """Per-gateway memo of rendered filter SQL by filter shape, bounded (see
+    :class:`~forze_postgres.kernel.sql.query.render.PsycopgFilterSqlCache`)."""
 
     filter_parser: QueryFilterExpressionParser = attrs.field(
         default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
@@ -321,14 +342,11 @@ class PostgresGateway[M: BaseModel](
 
             alias = self.filter_table_alias if table_alias is None else table_alias
 
-            r = PsycopgQueryRenderer(
+            query, params = self._filter_sql_cache.render(  # type: ignore[assignment]
+                expr,
                 types=types,
-                model_type=self.model_type,
-                nested_field_hints=self.nested_field_hints,
                 table_alias=alias,
             )
-
-            query, params = r.render(expr)  # type: ignore[assignment]
 
         query, params = self._add_tenant_where(query, params)  # type: ignore[assignment]
 

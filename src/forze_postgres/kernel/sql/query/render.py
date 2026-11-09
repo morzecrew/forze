@@ -7,9 +7,10 @@ require_psycopg()
 # ....................... #
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from functools import partial
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
 from uuid import UUID
@@ -47,6 +48,7 @@ from forze.application.contracts.querying import (
     validate_query_capabilities,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import BoundedLruMap
 from forze.base.serialization import enum_values
 
 from ...catalog.introspect import PostgresColumnTypes, PostgresType
@@ -386,6 +388,16 @@ class PsycopgQueryRenderer:
         factory=PsycopgValueCoercer,
         init=False,
     )
+    param_sources: list[tuple[QueryField, Callable[[Any], Any]] | None] = attrs.field(
+        factory=list,
+        init=False,
+    )
+    """Per :meth:`_bind` call, in order: the leaf whose own operand the parameter coerces, and
+    the coercion, or ``None`` when it is no leaf's operand as it is. A parameter bound any other
+    way has no entry. :class:`PsycopgFilterSqlCache` rebinds by it."""
+
+    _leaf: QueryField | None = attrs.field(default=None, init=False)
+    """The value leaf being rendered, if any."""
 
     # ....................... #
 
@@ -395,6 +407,18 @@ class PsycopgQueryRenderer:
         params = self.binder.values()
 
         return query, params
+
+    # ....................... #
+
+    def _bind(self, value: Any, coerce: Callable[[Any], Any]) -> sql.Placeholder:
+        """Bind ``coerce(value)``, noting the leaf when *value* is that leaf's operand as it is."""
+
+        leaf = self._leaf
+        self.param_sources.append(
+            (leaf, coerce) if leaf is not None and value is leaf.value else None
+        )
+
+        return self.binder.add(coerce(value))
 
     # ....................... #
 
@@ -793,6 +817,7 @@ class PsycopgQueryRenderer:
                 return self._render_compare(left, op, right)
 
             case QueryField(name, op, value):
+                self._leaf = expr
                 segments = name.split(".")
 
                 if len(segments) > 1:
@@ -868,6 +893,8 @@ class PsycopgQueryRenderer:
                 return sql.SQL("NOT ({})").format(inner)
 
             case QueryElem(path, quantifier, inner):
+                # An element predicate's operands are never rebound (no shape key).
+                self._leaf = None
                 return self._render_elem(path, quantifier, inner)
 
             case _:
@@ -938,7 +965,7 @@ class PsycopgQueryRenderer:
         t: PostgresType | None,
     ) -> sql.Composable:
         self._ensure_text_column(t, op)
-        pattern = str(self.coercer.scalar(value, t=t))
+        scalar = self.coercer.scalar
 
         match op:
             case "$like":
@@ -953,7 +980,9 @@ class PsycopgQueryRenderer:
             case _:
                 raise exc.internal(f"Unknown text operator: {op!r}")
 
-        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(pattern))
+        pattern = self._bind(value, lambda v: str(scalar(v, t=t)))
+
+        return sql.SQL("{} {} {}").format(col, op_sql, pattern)
 
     # ....................... #
 
@@ -975,8 +1004,6 @@ class PsycopgQueryRenderer:
         single path string here.
         """
 
-        path = str(value)
-
         if t is not None and t.is_array:
             raise exc.precondition(
                 f"Hierarchy operator {op!r} is not supported on an array column for the "
@@ -985,7 +1012,7 @@ class PsycopgQueryRenderer:
             )
 
         if t is not None and t.base == _LTREE_BASE:
-            bound = sql.SQL("{}::ltree").format(self.binder.add(path))
+            bound = sql.SQL("{}::ltree").format(self._bind(value, str))
 
             # ``a <@ b`` ⇔ a is a descendant of b; ``a @> b`` ⇔ a is an ancestor of b
             # (both inclusive). Column on the left, the given node on the right.
@@ -1006,7 +1033,7 @@ class PsycopgQueryRenderer:
         # is referenced once — appending ``'.'`` to *both* sides makes ``col == node``
         # the inclusive case.
         col_path = sql.SQL("(({})::text || '.')").format(col)
-        node_path = sql.SQL("({} || '.')").format(self.binder.add(path))
+        node_path = sql.SQL("({} || '.')").format(self._bind(value, str))
 
         if op == "$descendant_of":
             # col is at or below the node: col's path starts with the node's path.
@@ -1095,9 +1122,9 @@ class PsycopgQueryRenderer:
         }
 
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
-        value = self.coercer.scalar(value, t=t)
+        bound = self._bind(value, partial(self.coercer.scalar, t=t))
 
-        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(value))
+        return sql.SQL("{} {} {}").format(col, op_sql, bound)
 
     # ....................... #
 
@@ -1131,13 +1158,13 @@ class PsycopgQueryRenderer:
                     code=UNSUPPORTED_QUERY_FEATURE_CODE,
                 )
 
-            bound = self.binder.add(self.coercer.array(value, t=t))
+            bound = self._bind(value, partial(self.coercer.array, t=t))
 
             return sql.SQL("{} {} {}").format(col, op_sql, bound)
 
-        value = self.coercer.scalar(value, t=t)
+        bound = self._bind(value, partial(self.coercer.scalar, t=t))
 
-        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(value))
+        return sql.SQL("{} {} {}").format(col, op_sql, bound)
 
     # ....................... #
 
@@ -1149,16 +1176,16 @@ class PsycopgQueryRenderer:
         *,
         t: PostgresType | None,
     ) -> sql.Composable:
-        coerced = self.coercer.array(value, t=t)
+        bound = self._bind(value, partial(self.coercer.array, t=t))
 
         if t is not None and t.is_array:
             inner = sql.SQL(
                 "EXISTS (SELECT 1 FROM unnest({}) AS _fz_u WHERE _fz_u = ANY({}))",
-            ).format(col, self.binder.add(coerced))
+            ).format(col, bound)
 
             return inner if op == "$in" else sql.SQL("NOT ({})").format(inner)
 
-        expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(coerced))
+        expr = sql.SQL("{} = ANY({})").format(col, bound)
 
         if op == "$in":
             return expr
@@ -1184,8 +1211,7 @@ class PsycopgQueryRenderer:
             "$subset": "<@",
             "$overlaps": "&&",
         }
-        value = self.coercer.array(value, t=t, raise_on_scalar_t=True)
-        ph = self.binder.add(value)
+        ph = self._bind(value, partial(self.coercer.array, t=t, raise_on_scalar_t=True))
 
         if op == "$disjoint":
             # A NULL / absent array is disjoint from everything (empty ∩ x = ∅), matching the
@@ -2012,3 +2038,175 @@ class PsycopgQueryRenderer:
             return PostgresType(base=pg.base, is_array=False, not_null=False)
 
         return None
+
+
+# ....................... #
+
+_UNARY_OPS: frozenset[str] = frozenset({"$null", "$empty"})
+"""Operators whose ``bool`` operand picks the SQL (``IS NULL`` or ``IS NOT NULL``, empty or not)
+and binds nothing."""
+
+
+def _filter_shape(expr: QueryExpr, leaves: list[QueryField]) -> Hashable | None:
+    """The key of the SQL text :meth:`PsycopgQueryRenderer.render` gives *expr*, or ``None``
+    when it has none; each value leaf is appended to *leaves*, in the order of the key.
+
+    The key holds everything the text reads from the tree: node kinds and nesting, field paths,
+    operators, a unary operand, and every other operand's exact type (an array column refuses a
+    ``$eq`` that is not a list). Any other operand content reaches only the parameters. An
+    element quantifier has no key: its text reads its operands (a ``None`` member, each member's
+    type, a placeholder per member).
+    """
+
+    match expr:
+        case QueryField(name, op, value):
+            leaves.append(expr)
+
+            if op in _UNARY_OPS:
+                return (QueryField, name, op, value) if type(value) is bool else None
+
+            return (QueryField, name, op, type(value))
+
+        case QueryCompare(left, op, right):
+            return (QueryCompare, left, op, right)
+
+        case QueryAnd(items) | QueryOr(items):
+            parts = [_filter_shape(item, leaves) for item in items]
+
+            return None if None in parts else (type(expr), *parts)
+
+        case QueryNot(item):
+            inner = _filter_shape(item, leaves)
+
+            return None if inner is None else (QueryNot, inner)
+
+        case _:
+            return None
+
+
+# ....................... #
+
+
+def _rebind_plan(
+    sources: list[tuple[QueryField, Callable[[Any], Any]] | None],
+    leaves: list[QueryField],
+    count: int,
+) -> tuple[tuple[int, Callable[[Any], Any]], ...] | None:
+    """Each of the *count* parameters as ``(leaf index, coercion)``; ``None`` unless every one
+    is a leaf operand coerced as it is and every leaf is a distinct node."""
+
+    index = {id(leaf): i for i, leaf in enumerate(leaves)}
+
+    if len(sources) != count or len(index) != len(leaves):
+        return None
+
+    plan: list[tuple[int, Callable[[Any], Any]]] = []
+
+    for source in sources:
+        if source is None or (i := index.get(id(source[0]))) is None:
+            return None
+
+        plan.append((i, source[1]))
+
+    return tuple(plan)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class _FilterSql:
+    """A filter's rendered SQL and how each of its parameters derives from a leaf operand."""
+
+    types: PostgresColumnTypes
+    """The column types it was rendered against, held so that no other object can take the
+    ``id`` in its key while it is cached."""
+
+    query: sql.Composable
+    """The rendered text."""
+
+    plan: tuple[tuple[int, Callable[[Any], Any]], ...]
+    """Per parameter, in order: the index of its leaf in :func:`_filter_shape` order, and the
+    coercion its operand takes."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True)
+class PsycopgFilterSqlCache:
+    """Filter SQL rendered once per filter shape, with each call's values rebound.
+
+    An entry is keyed by ``(id(types), table_alias, shape)`` and holds *types*, so it serves
+    only those very column types; the shape (:func:`_filter_shape`) keys everything else the text
+    reads, and :attr:`model_type` and :attr:`nested_field_hints` are fixed per cache. The text
+    is the renderer's own composable rendered once with ``as_string``, so psycopg still does all
+    the quoting. A filter that has no shape, or a parameter that is not a leaf operand coerced as
+    it is, renders every time. Single-event-loop use (no lock), like the gateway that owns it.
+    """
+
+    model_type: type[BaseModel] | None = None
+    """Read model the renderer validates paths with."""
+
+    nested_field_hints: Mapping[str, type[Any]] | None = None
+    """Per-path Python type hints the renderer reads."""
+
+    max_entries: int = 128
+    """Shapes kept, least recently used dropped first."""
+
+    _entries: BoundedLruMap[Hashable, _FilterSql] = attrs.field(
+        default=attrs.Factory(
+            lambda self: BoundedLruMap[Hashable, _FilterSql](self.max_entries),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+    )
+
+    # ....................... #
+
+    def clear(self) -> None:
+        """Drop every entry."""
+
+        self._entries.clear()
+
+    # ....................... #
+
+    def render(
+        self,
+        expr: QueryExpr,
+        *,
+        types: PostgresColumnTypes,
+        table_alias: str | None,
+    ) -> tuple[sql.Composable, list[Any]]:
+        """:meth:`PsycopgQueryRenderer.render` of *expr*, from the cache when its shape is there.
+
+        :param expr: Parsed filter.
+        :param types: Column types of the relation.
+        :param table_alias: Alias qualifying top-level columns.
+        :returns: The SQL and its parameters.
+        """
+
+        leaves: list[QueryField] = []
+        shape = _filter_shape(expr, leaves)
+        key = (id(types), table_alias, shape)
+
+        if shape is not None and (hit := self._entries.get(key)) is not None:
+            return hit.query, [coerce(leaves[i].value) for i, coerce in hit.plan]
+
+        renderer = PsycopgQueryRenderer(
+            types=types,
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+            table_alias=table_alias,
+        )
+        query, params = renderer.render(expr)
+        plan = None if shape is None else _rebind_plan(renderer.param_sources, leaves, len(params))
+
+        if plan is None:
+            return query, params
+
+        text = sql.SQL(query.as_string(None))
+        self._entries[key] = _FilterSql(types=types, query=text, plan=plan)
+
+        return text, params
