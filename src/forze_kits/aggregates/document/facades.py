@@ -113,10 +113,11 @@ def document_facade(
 ) -> OperationFacadeFactory[DocumentFacade[R, C, U]]:
     """Build a per-call :class:`DocumentFacade` factory bound to *runtime*'s context.
 
-    Returns a zero-argument callable that yields a fresh, fully-typed facade on each call,
-    reading the runtime's *current* scope context — so it is safe to build once at startup
-    and call per request; it never caches a context across scopes. The namespace defaults to
-    the spec's, matching :func:`build_document_registry`.
+    Returns a zero-argument callable that yields a fully-typed facade on each call, for the
+    runtime's *current* scope context — so it is safe to build once at startup and call per
+    request; it never carries a context across scopes (the frozen facade is reused only while
+    its context stays current). The namespace defaults to the spec's, matching
+    :func:`build_document_registry`.
 
     Replaces the hand-written factory — ``def users(): return DocumentFacade(
     ctx=runtime.get_context(), registry=registry, namespace=...)`` — with one call::

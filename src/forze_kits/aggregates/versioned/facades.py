@@ -75,8 +75,8 @@ def versioned_facade(
     """Build a per-call :class:`VersionedFacade` factory bound to *runtime*'s context.
 
     The versioned counterpart of :func:`~forze_kits.aggregates.document.facades.document_facade`,
-    with the same per-call contract: a fresh facade each call, reading the runtime's current
-    scope, safe to build once at startup.
+    with the same per-call contract: a facade for the runtime's current scope each call,
+    safe to build once at startup.
     """
 
     return OperationFacadeFactory(

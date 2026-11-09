@@ -3,11 +3,12 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final, cast, final
 
 import attrs
 from pydantic import BaseModel
-from structlog.contextvars import bind_contextvars, reset_contextvars
+from structlog.contextvars import bind_contextvars
 
 from forze.application._logger import logger
 from forze.application.contracts.durable.function import DurableFunctionSpec
@@ -32,8 +33,29 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-_UNKNOWN_SURFACE: Final = {SURFACE_KEY: InvocationSurface.UNKNOWN.value}
+
+def _structlog_var(key: str) -> ContextVar[Any]:
+    """structlog's own ContextVar behind the log field *key*.
+
+    structlog keeps one ContextVar per key for the process lifetime; binding once (and
+    resetting straight away) hands it over through the token, so the hot path can set and
+    reset it directly — exactly what ``bind_contextvars``/``reset_contextvars`` do, without
+    their per-call kwargs dicts and name formatting.
+    """
+
+    token = bind_contextvars(**{key: None})[key]
+    token.var.reset(token)
+
+    return token.var
+
+
+# ....................... #
+
+_SURFACE_LOG_VAR: Final = _structlog_var(SURFACE_KEY)
 """The log field a top-level operation binds when no boundary bound metadata."""
+
+_UNKNOWN_SURFACE: Final = InvocationSurface.UNKNOWN.value
+"""The value it binds then."""
 
 # ....................... #
 
@@ -194,7 +216,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         owner_task = active_operation_var.get()
         nested = current_task is not None and owner_task is current_task
         gate = None if nested else self.drain_gate
-        log_tokens = None
+        log_token = None
 
         if gate is not None:
             gate.admit(self.op)
@@ -208,7 +230,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
             # Bound metadata logs its own surface; without any, the call still says so.
             if self.inv_ctx.get_metadata() is None:
-                log_tokens = bind_contextvars(**_UNKNOWN_SURFACE)
+                log_token = _SURFACE_LOG_VAR.set(_UNKNOWN_SURFACE)
 
         marker_token = active_operation_var.set(current_task if current_task is not None else True)
         cancelled = False
@@ -236,8 +258,8 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         finally:
             active_operation_var.reset(marker_token)
 
-            if log_tokens is not None:
-                reset_contextvars(**log_tokens)
+            if log_token is not None:
+                _SURFACE_LOG_VAR.reset(log_token)
 
             if gate is not None:
                 gate.release()
