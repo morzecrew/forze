@@ -11,7 +11,7 @@ import random
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import faker.providers.date_time as faker_date_time
 import polyfactory.value_generators.constrained_dates as constrained_dates
@@ -29,6 +29,7 @@ from pydantic import (
     PastDatetime,
 )
 
+from forze.base.primitives import AwareDatetime as ForzeAwareDatetime
 from forze_dst._input_factory import InputFactory
 from forze_dst.derive import _arg_builder
 from forze_dst.engines.cases import OperationCase
@@ -216,6 +217,29 @@ class TestTimeWindows:
 
             assert window.mixed.tzinfo is plus5 and window.aware.tzinfo is UTC
             assert window.naive.tzinfo is None
+
+    def test_a_datetime_whose_metadata_asks_for_awareness_gets_it(self) -> None:
+        # polyfactory drops the validator forze's AwareDatetime adds, and pydantic's marker
+        # instances, so plain polyfactory draws a naive value each of these refuses.
+        class Stamped(BaseModel):
+            at: ForzeAwareDatetime
+            maybe: ForzeAwareDatetime | None
+            many: list[ForzeAwareDatetime]
+            keyed: dict[str, ForzeAwareDatetime]
+            pair: tuple[ForzeAwareDatetime, int] | None
+            capped: Annotated[ForzeAwareDatetime, Field(lt=datetime(2030, 1, 1, tzinfo=UTC))]
+            marked: Annotated[datetime, AwareDatetime()]
+            naive: Annotated[datetime, NaiveDatetime(), Field(gt=datetime(2020, 1, 1, tzinfo=UTC))]
+
+        factory = InputFactory.create_factory(Stamped)
+
+        for seed in range(100):
+            factory.seed_random(seed)
+            stamped = factory.build()  # pydantic and forze's validator check each value on build
+
+            leaves = (stamped.at, stamped.capped, stamped.marked, *stamped.many)
+            assert all(value.tzinfo is UTC for value in (*leaves, *stamped.keyed.values()))
+            assert stamped.naive.tzinfo is None
 
     def test_plain_factories_keep_polyfactory_providers(
         self, wall_clock: Callable[[timedelta], None]

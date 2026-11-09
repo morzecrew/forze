@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A DST seed now derives the same date and time inputs on every run.** Inputs that `derive_scenario` and op cases generate took dates, times and `UUID1` values from the wall clock; they now come from the seed, before the simulated epoch (future-typed ones from 2100). A stored seed with such fields draws new values.
 
+- **DST builds inputs whose `datetime` fields must be aware.** A field typed `AwareDatetime` from `forze.base.primitives`, or marked `AwareDatetime()` or `NaiveDatetime()`, at any depth, got a naive value it refused, so `derive_scenario` and op cases could not build its model.
+
 - **An error context holding a NaN, an infinity or a plain `Enum` member now renders.** A non-finite float becomes `null`, where the HTTP error response used to fail on it, and an `Enum` member renders as its value instead of dropping the whole context.
 
 ### Security
