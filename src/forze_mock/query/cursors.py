@@ -75,7 +75,7 @@ def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportU
         try:
             payload = _b64url_json_loads_dict(str(c["after"]))
 
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             raise exc.validation("Invalid cursor token") from e
 
         start = int(payload["s"])
@@ -84,7 +84,7 @@ def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportU
         try:
             payload = _b64url_json_loads_dict(str(c["before"]))
 
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             raise exc.validation("Invalid cursor token") from e
 
         page_start = int(payload["s"])
