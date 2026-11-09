@@ -391,10 +391,10 @@ def realtime_sse_tail_lifecycle_step(
     Register it alongside :func:`~forze_fastapi.realtime.attach_realtime_sse_route`
     (sharing the same hub instance) on every node serving SSE connections. The plain
     stream read is broadcast — no consumer group, so no group lifecycle to manage —
-    and at-most-once by design: the mailbox carries the durable guarantee. A crash
-    restarts the loop after *restart_backoff*, from the last signal it read: the signals
-    appended meanwhile arrive late instead of being skipped, unless the stream trims
-    them first.
+    and at-most-once by design: the mailbox carries the durable guarantee. Once live, a
+    crash restarts the loop after *restart_backoff* from the last signal it read: the
+    signals appended meanwhile arrive late instead of being skipped, unless the stream
+    trims them first. A crash before it went live skips the backlog again.
     """
 
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)

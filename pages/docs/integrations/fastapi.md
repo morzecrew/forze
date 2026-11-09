@@ -602,10 +602,11 @@ The live leg reads the realtime stream with a plain (non-group) tail — broadca
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
 and is at-most-once by contract: the mailbox carries the durable guarantee, and
 something else must write it (see [offline delivery without
-Socket.IO](#offline-delivery-without-socketio)). A crash restarts the tail after
-`restart_backoff` (5 s by default) from the last signal it read, so the signals
-appended meanwhile reach open streams late, not never, unless the stream trims them
-first; only a new startup skips the backlog. Without a hub the endpoint is
+Socket.IO](#offline-delivery-without-socketio)). Once the tail is live, a crash
+restarts it after `restart_backoff` (5 s by default) from the last signal it read, so
+the signals appended meanwhile reach open streams late, not never, unless the stream
+trims them first. A startup, or a crash before the tail went live, skips the backlog.
+Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms)
 and are **fail-closed**: they require an `authorize_topics` resolver — `(ctx,
