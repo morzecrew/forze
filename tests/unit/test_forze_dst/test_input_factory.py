@@ -227,6 +227,7 @@ class TestTimeWindows:
             many: list[ForzeAwareDatetime]
             keyed: dict[str, ForzeAwareDatetime]
             pair: tuple[ForzeAwareDatetime, int] | None
+            run: tuple[ForzeAwareDatetime, ...]
             capped: Annotated[ForzeAwareDatetime, Field(lt=datetime(2030, 1, 1, tzinfo=UTC))]
             marked: Annotated[datetime, AwareDatetime()]
             naive: Annotated[datetime, NaiveDatetime(), Field(gt=datetime(2020, 1, 1, tzinfo=UTC))]
@@ -237,7 +238,7 @@ class TestTimeWindows:
             factory.seed_random(seed)
             stamped = factory.build()  # pydantic and forze's validator check each value on build
 
-            leaves = (stamped.at, stamped.capped, stamped.marked, *stamped.many)
+            leaves = (stamped.at, stamped.capped, stamped.marked, *stamped.many, *stamped.run)
             assert all(value.tzinfo is UTC for value in (*leaves, *stamped.keyed.values()))
             assert stamped.naive.tzinfo is None
 
