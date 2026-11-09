@@ -308,4 +308,9 @@ def _aware(value: datetime) -> datetime:
 
 AwareDatetime = Annotated[datetime, AfterValidator(_aware)]
 """A datetime field for an application's boundary models that refuses a naive value, with the
-error code ``naive_datetime`` and the field's name in the location."""
+error code ``naive_datetime`` and the field's name in the location.
+
+Give a bound on it a time zone too, as in ``Field(gt=datetime(2020, 1, 1, tzinfo=UTC))``. A
+naive one in ``Annotated[AwareDatetime, Field(...)]`` comes after this validator, where pydantic
+compares it in Python and every value raises ``TypeError``; as the field's ``= Field(...)``
+default it comes first and is read by wall clock, offset ignored."""

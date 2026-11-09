@@ -24,18 +24,22 @@ from polyfactory.factories.base import BuildContext
 from polyfactory.factories.pydantic_factory import ModelFactory
 from polyfactory.field_meta import FieldMeta
 from polyfactory.utils.normalize_type import normalize_type
-from polyfactory.utils.predicates import is_safe_subclass
+from polyfactory.utils.predicates import is_safe_subclass, is_union
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     FutureDate,
     FutureDatetime,
     NaiveDatetime,
     PastDate,
     PastDatetime,
+    PlainValidator,
+    TypeAdapter,
+    WrapValidator,
 )
 
-from forze.base.primitives import AwareDatetime as ForzeAwareDatetime
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -68,10 +72,6 @@ def _same(value: date) -> date:
     return value
 
 
-_FORZE_AWARE = get_args(ForzeAwareDatetime)[1]
-"""The validator forze's :data:`~forze.base.primitives.AwareDatetime` puts on a ``datetime``."""
-
-
 class _AwarePastDatetime(datetime):
     """A past instant that must be aware: pydantic has no type for one."""
 
@@ -88,17 +88,68 @@ _AWARE_AS: dict[type, Any] = {
 """The type a datetime leaf builds as when its metadata asks for an aware value."""
 
 
-def _asks_aware(metadata: Iterable[Any]) -> bool | None:
-    """Whether a datetime's metadata asks for an aware (true) or a naive (false) value."""
+_VALIDATORS = (AfterValidator, BeforeValidator, PlainValidator, WrapValidator)
+"""Metadata that can refuse a value; with markers (:data:`_HOOK`), what the awareness probe keeps."""
 
-    for m in metadata:
-        if m is _FORZE_AWARE or m is AwareDatetime or isinstance(m, AwareDatetime):
-            return True
+_HOOK = "__get_pydantic_core_schema__"
+"""What a marker such as ``AwareDatetime()`` defines to shape the schema."""
 
-        if m is NaiveDatetime or isinstance(m, NaiveDatetime):
-            return False
 
-    return None
+_AS_METADATA: dict[str, Any] = {
+    "after": AfterValidator,
+    "before": BeforeValidator,
+    "plain": PlainValidator,
+    "wrap": WrapValidator,
+}
+"""The annotation form of each ``@field_validator`` mode."""
+
+
+def _asks_aware(source: type, metadata: Iterable[Any]) -> bool | None:
+    """Whether a datetime's metadata asks for an aware (true) or a naive (false) value.
+
+    The field answers for itself: each of its validators and markers, bounds left out, is
+    asked on its own (:func:`_answer`), so one that refuses every sample cannot hide another
+    that names the awareness. Two that name opposite ones leave the field as it is.
+    """
+
+    checks = (m for m in metadata if isinstance(m, _VALIDATORS) or hasattr(m, _HOOK))
+    answers = {_answer(source, check) for check in checks} - {None}
+
+    return answers.pop() if len(answers) == 1 else None
+
+
+def _answer(source: type, check: Any) -> bool | None:
+    """Whether *check* on *source* accepts only an aware (true) or only a naive (false) instant.
+
+    Validates one instant naive and aware, so a validator or marker that refuses exactly one
+    of the two names the awareness: forze's ``AwareDatetime`` and a user's own alike. Each runs
+    on both samples once, when the factory first reads its fields.
+    """
+
+    annotation: Any = Annotated[source, check]
+
+    try:
+        adapter: TypeAdapter[Any] = TypeAdapter(annotation)
+
+    except Exception:  # a marker that only builds within its model: it names nothing here
+        return None
+
+    sample = _FUTURE + _WINDOW if source is FutureDatetime else DEFAULT_EPOCH
+    naive, aware = _accepts(adapter, sample.replace(tzinfo=None)), _accepts(adapter, sample)
+
+    return aware if naive != aware else None
+
+
+def _accepts(adapter: TypeAdapter[Any], value: datetime) -> bool:
+    """Whether *adapter* validates *value*."""
+
+    try:
+        adapter.validate_python(value)
+
+    except Exception:  # a user's validator can refuse a value with any exception
+        return False
+
+    return True
 
 
 def _name_awareness(meta: FieldMeta, source: Any) -> None:
@@ -114,9 +165,12 @@ def _name_awareness(meta: FieldMeta, source: Any) -> None:
         source, *metadata = get_args(source)
 
     if not meta.children:
-        aware = _asks_aware(metadata)
+        if not (isinstance(source, type) and source in _AWARE_AS):
+            return
 
-        if aware and isinstance(source, type) and source in _AWARE_AS:
+        aware = _asks_aware(source, metadata)
+
+        if aware:
             meta.annotation = _AWARE_AS[source]
 
         elif aware is False and source is datetime:
@@ -124,8 +178,12 @@ def _name_awareness(meta: FieldMeta, source: Any) -> None:
 
         return
 
-    # A union's children skip ``None``; a generic's follow its arguments, when they line up.
+    # A union's children skip ``None`` and get the union's validators, which check the arm a
+    # value takes; a generic's follow its arguments, when they line up.
     args = [arg for arg in get_args(source) if arg is not NoneType]
+
+    if metadata and is_union(source):
+        args = [Annotated[arg, *metadata] for arg in args]
 
     if len(args) == len(meta.children):
         for child, arg in zip(meta.children, args, strict=True):
@@ -184,10 +242,18 @@ class InputFactory(ModelFactory[BaseModel]):
         fields = super().get_model_fields()
 
         if first:
-            for meta, info in zip(fields, cls.__model__.model_fields.values(), strict=True):
-                source = (
-                    Annotated[info.annotation, *info.metadata] if info.metadata else info.annotation
-                )
+            model = cls.__model__
+            decorators = model.__pydantic_decorators__.field_validators.values()
+
+            for meta, (name, info) in zip(fields, model.model_fields.items(), strict=True):
+                # a ``@field_validator`` checks the whole field, as its annotation's validators do
+                own = [
+                    _AS_METADATA[d.info.mode](d.func)
+                    for d in decorators
+                    if name in d.info.fields or "*" in d.info.fields
+                ]
+                metadata = [*info.metadata, *own]
+                source = Annotated[info.annotation, *metadata] if metadata else info.annotation
                 _name_awareness(meta, source)
 
         return fields
