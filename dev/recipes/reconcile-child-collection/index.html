@@ -6909,7 +6909,7 @@ what it could not serve correctly, each with its own <code>configuration</code> 
 <td><code>child_key_unhashable</code></td>
 </tr>
 <tr>
-<td>A compare field that is a mapping, a nested model or <code>Any</code>: an update merges into it key by key, so a key the incoming value drops would stay stored.</td>
+<td>A compare field that is a mapping, a nested model or <code>Any</code>, unless the domain model marks it <a href="../../core-concepts/domain-layer/#rules-live-with-the-data"><code>ReplaceOnUpdate</code></a>: an update merges into it key by key, so a key the incoming value drops would stay stored.</td>
 <td><code>child_compare_field_merged</code></td>
 </tr>
 <tr>

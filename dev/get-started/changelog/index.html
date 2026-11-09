@@ -11102,7 +11102,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.23.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>An update replaces a field marked <code>ReplaceOnUpdate</code> whole, so a key it leaves out is removed.</strong> Use <code>Annotated[dict[str, Any], ReplaceOnUpdate()]</code> from <code>forze.domain.models</code>, at any depth. Unmarked mappings still merge key by key. <code>ChildCollectionSync</code> accepts a marked mapping as a compare field.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -11128,7 +11128,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Scrubbed logging costs about a quarter less per event.</strong> A JSON <code>logger.info</code> with eight extras drops from ~50 to ~37 µs and log-context <code>sanitize</code> on the same fields from ~20 to ~7 µs; what gets masked is unchanged.</p>
 </li>
 <li>
+<p><strong>The in-memory filter matcher no longer compares each row with every <code>$in</code> value.</strong> <code>forze_mock</code> adapters and <code>compile_filter</code> work out <code>$in</code>, <code>$nin</code>, set-relation and <code>$like</code> / <code>$ilike</code> operands once per filter, with the same results: a mock <code>find_many</code> with a 200-value <code>$in</code> over 1,000 rows takes 2 ms, not 179.</p>
+</li>
+<li>
+<p><strong>Reading encrypted fields is about twice as fast.</strong> The wire format does not change. New: <code>bind_aead</code> and <code>KeyedAead</code> in <code>forze.base.crypto</code> (one AEAD cipher per data key) and <code>Keyring.decrypt_envelope_sync</code> (opens an already-parsed envelope).</p>
+</li>
+<li>
 <p><strong>Calling an operation through a facade costs about 3 µs less.</strong> A facade factory such as <code>document_facade(...)</code> now returns the same frozen facade while the runtime's context stays current (<code>users() is users()</code> within one scope), instead of a new one per call; it never carries one into another scope.</p>
+</li>
+<li>
+<p><strong>A mock-backed <abbr title="Deterministic Simulation Testing">DST</abbr> seed takes up to a third less time.</strong> Freezing a deps registry and generating a derived scenario's inputs both cost less; recorded seeds replay unchanged.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>

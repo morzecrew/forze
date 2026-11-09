@@ -6876,7 +6876,21 @@ a model (the document, a nested model, or one held in a union or a mapping) it m
 by field, and a field set to <code>None</code> takes its default, or is refused when it has none. Into
 a mapping or <code>Any</code> value it merges key by key: the keys the patch leaves out are kept, and a
 <code>None</code> is stored as null where the value's type admits one (a <code>dict[str, int]</code> refuses it).
-A list is replaced. An update cannot remove a key from a mapping.</p>
+A list is replaced.</p>
+<p>To remove keys, mark the field <code>ReplaceOnUpdate</code>: an update then stores the value it sends,
+whole, so a key it leaves out is removed. A marked nested model must be sent whole, and <code>None</code>
+still resets the field to its default. The marker works on a field at any depth, on one arm
+of a union, and behind a <code>type</code> alias.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.domain.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">Document</span><span class="p">,</span> <span class="n">ReplaceOnUpdate</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Inbox</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>
+    <span class="n">pending</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">ReplaceOnUpdate</span><span class="p">()]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="n">inbox</span> <span class="o">=</span> <span class="n">Inbox</span><span class="p">(</span><span class="n">pending</span><span class="o">=</span><span class="p">{</span><span class="s2">"a"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">:</span> <span class="mi">2</span><span class="p">})</span>
+<span class="n">handled</span><span class="p">,</span> <span class="n">diff</span> <span class="o">=</span> <span class="n">inbox</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">"pending"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"b"</span><span class="p">:</span> <span class="mi">2</span><span class="p">}})</span>  <span class="c1"># handled.pending == {"b": 2}</span>
+</code></pre></div>
 <p>These validate a <em>single</em> write. A state <strong>transition</strong> — its guard plus the change
 it makes — belongs on the aggregate too, as a <em>decider</em> method that returns the patch
 to persist; see <a href="../../writing-operation/aggregate-decisions/">Aggregate decisions</a>.</p>
