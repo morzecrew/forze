@@ -279,6 +279,19 @@ def test_compiled_expression_matches_per_row_path(
     assert _outcome(compiled, row) == _outcome(_match_expr, row, expr)
 
 
+class _Int(int):
+    """An ``int`` subclass: a row holding one is compared with each candidate, not looked up."""
+
+
+def test_a_compiled_operand_is_a_copy_of_the_callers_list() -> None:
+    candidates: list[Any] = [1]
+    compiled = compile_expr(_leaf("$in", candidates))
+    candidates.append(2)
+
+    # The lookup a builtin row value takes and the scan a subclass takes read one operand.
+    assert _outcome(compiled, {"f": 2}) == _outcome(compiled, {"f": _Int(2)}) == ("ok", False)
+
+
 def test_prepare_replaces_only_membership_leaves() -> None:
     eq = QueryField("a", "$eq", 1)
     compare = QueryCompare("a", "$eq", "b")

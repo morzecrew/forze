@@ -280,10 +280,19 @@ def _prepare(expr: QueryExpr) -> QueryExpr:
 
     match expr:
         case QueryField() if type(expr) is QueryField and expr.op in _PREPARED_OPS:
-            values = cast(Sequence[Any], expr.value)
+            values: Any = expr.value
+
+            # A copy the keys and the per-row fallback both read, so the two agree however
+            # the caller's list or set changes after compiling.
+            if isinstance(values, list):
+                values = tuple(values)
+
+            elif isinstance(values, set):
+                values = frozenset(values)
+
             keys = _memb_keys(values) if expr.op in _KEYED_OPS else _try_coerce_set(values)
 
-            return _PreparedField(expr.name, expr.op, expr.value, keys)
+            return _PreparedField(expr.name, expr.op, values, keys)
 
         case QueryAnd() | QueryOr():
             return attrs.evolve(expr, items=tuple(_prepare(item) for item in expr.items))
