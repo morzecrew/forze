@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres gateway copies its `nested_field_hints` when it is built** (**behaviour change**). Changing that mapping afterwards no longer affects its queries.
 
+- **Search highlighting runs about 5× faster on long text, with the same fragments.** Highlighting 1 KB of ASCII takes about 12 µs instead of 60, and 1 KB of Cyrillic about 18 µs instead of 88. Federated RRF merges also run about 18% faster.
+
 - **Scrubbed logging costs about a quarter less per event.** A JSON `logger.info` with eight extras drops from ~50 to ~37 µs and log-context `sanitize` on the same fields from ~20 to ~7 µs; what gets masked is unchanged.
 
 ### Fixed
