@@ -228,15 +228,14 @@ async def _sharded_tail_to_hub(
         await stop.wait()
         return
 
-    # Readiness counts down across the shard: the hub is live once every tenant's
-    # fast-forward has completed (a per-tenant supervised restart later re-fires the
-    # callback past zero — harmless, readiness only ever latches on).
-    pending = {"n": len(tenants)}
+    # The hub is live once every tenant's fast-forward has completed. Count tenants,
+    # not callbacks: a tenant loop that restarts calls back again, at once on a resume.
+    live: set[UUID] = set()
 
-    def _one_live() -> None:
-        pending["n"] -= 1
+    def _went_live(tenant: UUID) -> None:
+        live.add(tenant)
 
-        if pending["n"] <= 0:
+        if live.issuperset(tenants):
             hub.ready.set()
 
     def _tenant_runner(tenant: UUID) -> Callable[[], Awaitable[None]]:
@@ -257,7 +256,7 @@ async def _sharded_tail_to_hub(
                     stop=stop,
                     cursor=cursors.setdefault(tenant, {}),
                     tenant_for=_shard_tenant,
-                    on_live=_one_live,
+                    on_live=lambda: _went_live(tenant),
                 )
 
         return _run

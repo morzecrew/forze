@@ -232,6 +232,51 @@ class TestShardedTail:
             stop.set()
             await asyncio.wait_for(task, timeout=5)
 
+    async def test_a_resumed_tenant_does_not_open_the_gate_for_its_siblings(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The hub is ready once every tenant is live: a tenant that restarts and resumes
+        # calls back a second time, which must not stand in for a sibling still skipping.
+        hub = RealtimeSseHub()
+        stop = asyncio.Event()
+        read = MockStreamAdapter.read
+        skipping, crash, resumed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def _read(self: Any, mapping: dict[str, str], **kwargs: Any) -> Any:
+            tenant = self.require_tenant_if_aware()
+
+            if tenant == _T2 and kwargs.get("limit") != 16:
+                await skipping.wait()  # T2's fast-forward holds until released
+
+            if tenant == _T1 and kwargs.get("limit") == 16:
+                if crash.is_set():
+                    crash.clear()
+                    raise ConnectionError("pool exhausted")
+
+                resumed.set()
+
+            return await read(self, mapping, **kwargs)
+
+        monkeypatch.setattr(MockStreamAdapter, "read", _read)
+        hub.ready.clear()
+
+        runtime = _runtime()
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            task = await _run_shard(ctx, hub, [_T1, _T2], stop)
+            await asyncio.wait_for(resumed.wait(), timeout=5)  # T1 is live
+
+            resumed.clear()
+            crash.set()
+            await asyncio.wait_for(resumed.wait(), timeout=5)  # T1 restarted and resumed
+            assert not hub.ready.is_set()
+
+            skipping.set()
+            await asyncio.wait_for(hub.ready.wait(), timeout=5)
+
+            stop.set()
+            await asyncio.wait_for(task, timeout=5)
+
     async def test_empty_shard_idles_until_stopped(self) -> None:
         stop = asyncio.Event()
 
