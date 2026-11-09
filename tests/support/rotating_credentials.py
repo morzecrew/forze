@@ -93,6 +93,10 @@ class FakeCounterparty(CredentialExchangerPort):
     delay: float = 0.0
     """Seconds the exchange takes. Widens the race window for the single-flight check."""
 
+    hold: asyncio.Event | None = None
+    """When set, the exchange waits on it after presenting: a write staged *during* the
+    exchange lands there whatever the machine's speed, where a delay only makes it likely."""
+
     fail_permanently: bool = False
     """Answer as ``invalid_grant`` — the counterparty has rejected the grant for good."""
 
@@ -123,6 +127,9 @@ class FakeCounterparty(CredentialExchangerPort):
 
         if self.delay > 0:
             await asyncio.sleep(self.delay)
+
+        if self.hold is not None:
+            await self.hold.wait()
 
         if self.family_revoked:
             raise exc.precondition("Grant family was revoked.", code=INVALID_GRANT_CODE)

@@ -515,7 +515,7 @@ async def test_an_explicit_burn_is_not_overwritten_by_a_rotation_that_raced_it(
 
     await contended_harness.seed()
     before = await contended_harness.store.get(REF)
-    contended_harness.counterparty.delay = 0.2
+    landed = contended_harness.counterparty.hold = asyncio.Event()
 
     async def _rotate() -> None:
         with pytest.raises(CoreException) as lost:
@@ -527,7 +527,12 @@ async def test_an_explicit_burn_is_not_overwritten_by_a_rotation_that_raced_it(
 
     async def _burn() -> None:
         await _await_presentation(contended_harness.counterparty)
-        await burner.burn(REF, reason="revoked in the provider console")
+
+        try:
+            await burner.burn(REF, reason="revoked in the provider console")
+
+        finally:
+            landed.set()
 
     await asyncio.gather(_rotate(), _burn())
 
@@ -1196,7 +1201,7 @@ async def test_a_rejected_exchange_never_burns_a_re_authorization_that_raced_it(
     await contended_harness.seed()
     before = await contended_harness.store.get(REF)
     contended_harness.counterparty.fail_permanently = True
-    contended_harness.counterparty.delay = 0.2
+    landed = contended_harness.counterparty.hold = asyncio.Event()
 
     async def _rotate_into_refusal() -> None:
         with pytest.raises(CoreException) as burnt:
@@ -1207,10 +1212,15 @@ async def test_a_rejected_exchange_never_burns_a_re_authorization_that_raced_it(
     async def _reauthorize() -> None:
         # A human completes the authorization flow again while the doomed exchange is out.
         await _await_presentation(contended_harness.counterparty)
-        await reauthorizer.put(
-            REF,
-            ExchangedCredential(access_token="access-reauth", refresh_token="refresh-reauth"),
-        )
+
+        try:
+            await reauthorizer.put(
+                REF,
+                ExchangedCredential(access_token="access-reauth", refresh_token="refresh-reauth"),
+            )
+
+        finally:
+            landed.set()
 
     await asyncio.gather(_rotate_into_refusal(), _reauthorize())
 
