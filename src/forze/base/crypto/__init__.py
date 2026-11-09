@@ -7,7 +7,7 @@ management (the async, DI-injected service) and the orchestrating cipher live in
 live in integration packages.
 """
 
-from .aead import Aead
+from .aead import Aead, KeyedAead, bind_aead
 from .chunked import (
     DEFAULT_CHUNK_SIZE,
     MAX_CHUNK_SIZE,
@@ -45,6 +45,8 @@ __all__ = [
     "ChunkedHeader",
     "ChunkedStreamReader",
     "EncryptedEnvelope",
+    "KeyedAead",
+    "bind_aead",
     "chunk_frame_stride",
     "ensure_algorithm",
     "is_chunked_envelope",

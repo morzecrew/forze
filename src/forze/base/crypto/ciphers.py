@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
 from ..exceptions import exc
 from ..primitives.entropy_source import secure_random_bytes
+from .aead import KeyedAead
 
 # ----------------------- #
 
@@ -55,6 +56,45 @@ def _key_invalid() -> Exception:
 
 @final
 @attrs.define(slots=True, frozen=True)
+class _KeyedCipher:
+    """One data key's ``cryptography`` cipher, built once and reused for every seal/open.
+
+    Returned by :meth:`AesGcmAead.bind` / :meth:`ChaCha20Poly1305Aead.bind` (a
+    :class:`~forze.base.crypto.KeyedAead`). Seal and open behave exactly like the owning
+    AEAD's ``seal`` / ``open`` — a fresh random nonce, the same error codes. Safe to share
+    across threads: the underlying object keeps no per-call state.
+    """
+
+    _cipher: AESGCM | ChaCha20Poly1305 = attrs.field(repr=False, alias="cipher")
+    """The keyed ``cryptography`` primitive (holds the key schedule — ``repr`` suppressed)."""
+
+    # ....................... #
+
+    def seal(self, *, plaintext: bytes, aad: bytes = b"") -> tuple[bytes, bytes]:
+        nonce = secure_random_bytes(_NONCE_SIZE)
+
+        return nonce, self._cipher.encrypt(nonce, plaintext, aad)
+
+    # ....................... #
+
+    def open(self, *, nonce: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
+        try:
+            return self._cipher.decrypt(nonce, ciphertext, aad)
+
+        except InvalidTag as error:
+            raise _auth_failed() from error
+
+        # ValueError: a nonce of the wrong size (the key was checked when bound) — a
+        # corrupted envelope; mapped like the unbound ``open`` does.
+        except ValueError as error:
+            raise _key_invalid() from error
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
 class AesGcmAead:
     """AES-256-GCM via ``cryptography`` — the default local cipher.
 
@@ -65,6 +105,22 @@ class AesGcmAead:
     @property
     def algorithm(self) -> str:
         return "AES-256-GCM"
+
+    # ....................... #
+
+    @staticmethod
+    def bind(key: bytes) -> KeyedAead | None:
+        """Build the cipher for *key* once, for reuse across many seals and opens.
+
+        Returns ``None`` when *key* is unusable (wrong size), so the caller falls back
+        to :meth:`seal` / :meth:`open`, which raise for it exactly as before.
+        """
+
+        try:
+            return _KeyedCipher(AESGCM(key))
+
+        except (TypeError, ValueError):
+            return None
 
     # ....................... #
 
@@ -118,6 +174,22 @@ class ChaCha20Poly1305Aead:
     @property
     def algorithm(self) -> str:
         return "ChaCha20-Poly1305"
+
+    # ....................... #
+
+    @staticmethod
+    def bind(key: bytes) -> KeyedAead | None:
+        """Build the cipher for *key* once, for reuse across many seals and opens.
+
+        Returns ``None`` when *key* is unusable (wrong size), so the caller falls back
+        to :meth:`seal` / :meth:`open`, which raise for it exactly as before.
+        """
+
+        try:
+            return _KeyedCipher(ChaCha20Poly1305(key))
+
+        except (TypeError, ValueError):
+            return None
 
     # ....................... #
 

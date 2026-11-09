@@ -43,6 +43,10 @@ _HEADER = struct.Struct(">4sB")
 _U8 = struct.Struct(">B")
 _U16 = struct.Struct(">H")
 
+_FIELD_LENGTH_WIDTHS = (_U8.size, _U16.size, _U8.size, _U8.size, _U16.size)
+"""Length-prefix widths of the variable fields in wire order — ``alg``, ``key_id``,
+``key_version``, ``nonce``, ``wrapped_dek`` — mirroring :func:`pack_envelope`."""
+
 # ....................... #
 
 
@@ -79,37 +83,32 @@ class EncryptedEnvelope:
 # ....................... #
 
 
-def _put_var(parts: list[bytes], length_struct: struct.Struct, payload: bytes) -> None:
-    max_len = (1 << (length_struct.size * 8)) - 1
-
-    if len(payload) > max_len:
-        raise exc.validation(
-            f"Envelope field exceeds maximum length {max_len}",
-            code="core.crypto.envelope_field_too_large",
-            details={"length": len(payload), "max": max_len},
-        )
-
-    parts.append(length_struct.pack(len(payload)))
-    parts.append(payload)
-
-
-# ....................... #
-
-
 def pack_envelope(envelope: EncryptedEnvelope) -> bytes:
     """Serialize an :class:`EncryptedEnvelope` to its self-describing wire form."""
 
+    key_version = envelope.key_version
+    fields = (
+        envelope.alg.encode("utf-8"),
+        envelope.key_id.encode("utf-8"),
+        b"" if key_version is None else key_version.encode("utf-8"),
+        envelope.nonce,
+        envelope.wrapped_dek,
+    )
     parts: list[bytes] = [_HEADER.pack(_MAGIC, _SCHEME_VERSION)]
 
-    _put_var(parts, _U8, envelope.alg.encode("utf-8"))
-    _put_var(parts, _U16, envelope.key_id.encode("utf-8"))
-    _put_var(
-        parts,
-        _U8,
-        b"" if envelope.key_version is None else envelope.key_version.encode("utf-8"),
-    )
-    _put_var(parts, _U8, envelope.nonce)
-    _put_var(parts, _U16, envelope.wrapped_dek)
+    for width, payload in zip(_FIELD_LENGTH_WIDTHS, fields, strict=True):
+        length = len(payload)
+        max_len = (1 << (width * 8)) - 1
+
+        if length > max_len:
+            raise exc.validation(
+                f"Envelope field exceeds maximum length {max_len}",
+                code="core.crypto.envelope_field_too_large",
+                details={"length": length, "max": max_len},
+            )
+
+        parts.append(length.to_bytes(width))  # big-endian
+        parts.append(payload)
 
     # Ciphertext is the unbounded tail — no length prefix needed.
     parts.append(envelope.ciphertext)
@@ -127,42 +126,29 @@ def is_envelope(blob: bytes) -> bool:
     legacy-plaintext values during a migration.
     """
 
-    return len(blob) >= len(_MAGIC) and blob[: len(_MAGIC)] == _MAGIC
+    return blob[: len(_MAGIC)] == _MAGIC
 
 
 # ....................... #
 
 
-def _take(blob: bytes, offset: int, length: int) -> tuple[bytes, int]:
-    end = offset + length
-
-    if end > len(blob):
-        raise exc.validation(
-            "Truncated envelope: declared field runs past end of buffer",
-            code="core.crypto.envelope_truncated",
-            details={"offset": offset, "need": length, "size": len(blob)},
-        )
-
-    return blob[offset:end], end
+def _missing_length_header(offset: int, size: int) -> Exception:
+    return exc.validation(
+        "Truncated envelope: missing length header",
+        code="core.crypto.envelope_truncated",
+        details={"offset": offset, "size": size},
+    )
 
 
 # ....................... #
 
 
-def _take_var(
-    blob: bytes,
-    offset: int,
-    length_struct: struct.Struct,
-) -> tuple[bytes, int]:
-    if offset + length_struct.size > len(blob):
-        raise exc.validation(
-            "Truncated envelope: missing length header",
-            code="core.crypto.envelope_truncated",
-            details={"offset": offset, "size": len(blob)},
-        )
-
-    (length,) = length_struct.unpack_from(blob, offset)
-    return _take(blob, offset + length_struct.size, length)
+def _field_past_end(offset: int, length: int, size: int) -> Exception:
+    return exc.validation(
+        "Truncated envelope: declared field runs past end of buffer",
+        code="core.crypto.envelope_truncated",
+        details={"offset": offset, "need": length, "size": size},
+    )
 
 
 # ....................... #
@@ -202,14 +188,16 @@ def unpack_envelope(blob: bytes) -> EncryptedEnvelope:
             code="core.crypto.envelope_bad_magic",
         )
 
-    if len(blob) < _HEADER.size:
+    size = len(blob)
+
+    if size < _HEADER.size:
         raise exc.validation(
             "Truncated envelope: missing header",
             code="core.crypto.envelope_truncated",
-            details={"size": len(blob)},
+            details={"size": size},
         )
 
-    _, scheme = _HEADER.unpack_from(blob, 0)
+    scheme = blob[_HEADER.size - 1]
 
     if scheme != _SCHEME_VERSION:
         raise exc.validation(
@@ -218,12 +206,27 @@ def unpack_envelope(blob: bytes) -> EncryptedEnvelope:
             details={"scheme": scheme, "supported": _SCHEME_VERSION},
         )
 
+    # One straight pass over the length-prefixed fields: lengths are read by indexing
+    # (big-endian) rather than one helper call and ``struct`` unpack per field — this
+    # runs once per encrypted value on every read.
     offset = _HEADER.size
-    alg_raw, offset = _take_var(blob, offset, _U8)
-    key_id_raw, offset = _take_var(blob, offset, _U16)
-    key_version_raw, offset = _take_var(blob, offset, _U8)
-    nonce, offset = _take_var(blob, offset, _U8)
-    wrapped_dek, offset = _take_var(blob, offset, _U16)
+    fields: list[bytes] = []
+
+    for width in _FIELD_LENGTH_WIDTHS:
+        start = offset + width
+
+        if start > size:
+            raise _missing_length_header(offset, size)
+
+        length = blob[offset] if width == 1 else (blob[offset] << 8) | blob[offset + 1]
+        offset = start + length
+
+        if offset > size:
+            raise _field_past_end(start, length, size)
+
+        fields.append(blob[start:offset])
+
+    alg_raw, key_id_raw, key_version_raw, nonce, wrapped_dek = fields
     ciphertext = blob[offset:]
 
     try:
