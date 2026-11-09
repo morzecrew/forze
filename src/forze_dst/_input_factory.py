@@ -72,6 +72,22 @@ _FORZE_AWARE = get_args(ForzeAwareDatetime)[1]
 """The validator forze's :data:`~forze.base.primitives.AwareDatetime` puts on a ``datetime``."""
 
 
+class _AwarePastDatetime(datetime):
+    """A past instant that must be aware: pydantic has no type for one."""
+
+
+class _AwareFutureDatetime(datetime):
+    """A future instant that must be aware: pydantic has no type for one."""
+
+
+_AWARE_AS: dict[type, Any] = {
+    datetime: AwareDatetime,
+    PastDatetime: _AwarePastDatetime,
+    FutureDatetime: _AwareFutureDatetime,
+}
+"""The type a datetime leaf builds as when its metadata asks for an aware value."""
+
+
 def _asks_aware(metadata: Iterable[Any]) -> bool | None:
     """Whether a datetime's metadata asks for an aware (true) or a naive (false) value."""
 
@@ -98,8 +114,13 @@ def _name_awareness(meta: FieldMeta, source: Any) -> None:
         source, *metadata = get_args(source)
 
     if not meta.children:
-        if source is datetime and (aware := _asks_aware(metadata)) is not None:
-            meta.annotation = AwareDatetime if aware else NaiveDatetime
+        aware = _asks_aware(metadata)
+
+        if aware and isinstance(source, type) and source in _AWARE_AS:
+            meta.annotation = _AWARE_AS[source]
+
+        elif aware is False and source is datetime:
+            meta.annotation = NaiveDatetime
 
         return
 
@@ -196,8 +217,10 @@ class InputFactory(ModelFactory[BaseModel]):
             timedelta: lambda: _WINDOW * cls.__faker__.random.random(),
             PastDatetime: past,
             PastDate: lambda: past().date(),
+            _AwarePastDatetime: lambda: past().replace(tzinfo=UTC),
             FutureDatetime: future,
             FutureDate: lambda: future().date(),
+            _AwareFutureDatetime: lambda: future().replace(tzinfo=UTC),
         }
 
     # ....................... #
