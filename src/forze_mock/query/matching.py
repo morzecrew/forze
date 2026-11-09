@@ -15,7 +15,7 @@ import statistics
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import MAX_PREC, Decimal, localcontext
-from functools import cmp_to_key, partial
+from functools import cmp_to_key
 from typing import (
     Any,
     cast,
@@ -46,6 +46,7 @@ from forze.application.contracts.querying.internal.matching import (
     _memb_contains,  # pyright: ignore[reportPrivateUsage]
     _normalize_array_value,  # pyright: ignore[reportPrivateUsage]
     _value_is_empty,  # pyright: ignore[reportPrivateUsage]
+    compile_expr,
     instant_key,
 )
 from forze.application.contracts.querying.internal.time_bucket import (
@@ -260,9 +261,7 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
     # Each computed field's filter, parsed (and cast against the read model) once rather than
     # per group or document; ``None`` means the aggregate sees every group member.
     computed_matchers = [
-        partial(_match_expr, expr=_typed(computed.parsed_filter))
-        if computed.parsed_filter is not None
-        else None
+        compile_expr(_typed(computed.parsed_filter)) if computed.parsed_filter is not None else None
         for computed in parsed.computed_fields
     ]
 
@@ -385,16 +384,15 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
         # ``$having``: keep only aggregated rows matching the post-group filter. A bucket is
         # reported as ISO text and compared as the instant it names, as its operands are.
         buckets = [group.alias for group in parsed.groups if isinstance(group.expr, GroupTrunc)]
-        having = parsed.having
+        having = compile_expr(parsed.having)
         rows = [
             row
             for row in rows
-            if _match_expr(
+            if having(
                 {
                     **row,
                     **{a: datetime.fromisoformat(row[a]) for a in buckets if row[a] is not None},
-                },
-                having,
+                }
             )
         ]
 
