@@ -209,7 +209,7 @@ def input_for(
         return None
 
     try:
-        from polyfactory.factories.pydantic_factory import ModelFactory
+        from forze_dst._input_factory import InputFactory
 
     except ImportError as error:  # pragma: no cover - optional extra
         raise RuntimeError(
@@ -217,7 +217,7 @@ def input_for(
             "forze[dst] or pass an explicit OperationCase.inputs factory"
         ) from error
 
-    factory = ModelFactory.create_factory(input_type)
+    factory = InputFactory.create_factory(input_type)
     factory.seed_random(rng.getrandbits(32))
     return factory.build()
 
