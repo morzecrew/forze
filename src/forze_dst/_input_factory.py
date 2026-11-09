@@ -6,8 +6,9 @@ different input on every run and a recorded failing seed did not replay. :class:
 draws them from fixed windows instead, anchored at the simulated clock's default start
 (:data:`~forze_dst.time_source.DEFAULT_EPOCH`).
 
-Each replacement takes one ``random()`` from the seeded Faker stream, as the Faker call it
-replaces did, so every other field of a seed keeps the value it had before.
+Each date, time or ``timedelta`` replacement takes one ``random()`` from the seeded Faker
+stream, as the Faker call it replaces did, so every other field of a seed keeps the value it
+had before. A ``UUID1`` takes a draw ``uuid1()`` did not, so the fields built after one change.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ _BOUND_SPAN = timedelta(days=100)
 
 _SECOND = timedelta(seconds=1)
 _DAY = timedelta(days=1)
+_MICROSECOND = timedelta(microseconds=1)
 
 # shortcut: future values hold until 2100; move the anchor before then.
 _FUTURE = datetime(2100, 1, 1, tzinfo=UTC)
@@ -57,6 +59,10 @@ _FUTURE = datetime(2100, 1, 1, tzinfo=UTC)
 
 def _day(value: date) -> date:
     return value.date() if isinstance(value, datetime) else value
+
+
+def _same(value: date) -> date:
+    return value
 
 
 # ....................... #
@@ -121,7 +127,7 @@ class InputFactory(ModelFactory[BaseModel]):
             return UUID(int=cls.__faker__.random.getrandbits(128), version=1)
 
         if is_safe_subclass(annotation, date) and "json" not in constraints:
-            return cls._bounded_day(constraints)
+            return cls._bounded(constraints, instant=is_safe_subclass(annotation, datetime))
 
         return super().get_constrained_field_value(
             annotation,
@@ -133,17 +139,30 @@ class InputFactory(ModelFactory[BaseModel]):
     # ....................... #
 
     @classmethod
-    def _bounded_day(cls, constraints: Any) -> date:
-        """A day within ``ge``/``gt``/``le``/``lt``, as polyfactory picks one, with "now" at the epoch.
+    def _bounded(cls, constraints: Any, *, instant: bool) -> date:
+        """A day, or an *instant*, within ``ge``/``gt``/``le``/``lt``, with "now" at the epoch.
 
-        A missing bound sits :data:`_BOUND_SPAN` past the given one or the epoch, whichever is
-        farther out, so a one-sided bound never leaves an empty window.
+        The tighter bound of each side holds, and an instant keeps its bounds' time of day and
+        zone. A missing bound sits :data:`_BOUND_SPAN` past the given one or the epoch,
+        whichever is farther out, so a one-sided bound never leaves an empty window.
         """
 
         ge, gt, le, lt = (constraints.get(key) for key in ("ge", "gt", "le", "lt"))
-        low = _day(ge) if ge is not None else (_day(gt) + _DAY if gt is not None else None)
-        high = _day(le) if le is not None else (_day(lt) - _DAY if lt is not None else None)
-        epoch = DEFAULT_EPOCH.date()
+        # An exclusive bound moves in by the smallest step the value can take.
+        step, edge = (_MICROSECOND, _same) if instant else (_DAY, _day)
+        lows = (edge(ge) if ge is not None else None, edge(gt) + step if gt is not None else None)
+        highs = (edge(le) if le is not None else None, edge(lt) - step if lt is not None else None)
+        low = max((b for b in lows if b is not None), default=None)
+        high = min((b for b in highs if b is not None), default=None)
+
+        if not instant:
+            epoch: date = DEFAULT_EPOCH.date()
+
+        elif getattr(low or high, "tzinfo", None) is not None:
+            epoch = DEFAULT_EPOCH
+
+        else:
+            epoch = DEFAULT_EPOCH.replace(tzinfo=None)
 
         if low is None:
             low = min(epoch, high or epoch) - _BOUND_SPAN

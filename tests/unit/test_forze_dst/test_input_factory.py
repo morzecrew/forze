@@ -182,6 +182,24 @@ class TestTimeWindows:
             assert date(2024, 3, 1) <= window.within <= date(2024, 3, 3)
             assert window.since.date() <= DEFAULT_EPOCH.date() + span
 
+    def test_the_tighter_bound_holds_and_a_bounded_instant_keeps_its_time(self) -> None:
+        noon = datetime(2026, 1, 1, 12)
+
+        class Window(BaseModel):
+            after: date = Field(ge=date(2026, 1, 1), gt=date(2026, 3, 1))
+            before: date = Field(le=date(2026, 6, 1), lt=date(2026, 3, 1))
+            afternoon: datetime = Field(gt=noon, lt=noon + timedelta(hours=1))
+            aware: datetime = Field(ge=noon.replace(tzinfo=UTC))
+
+        factory = InputFactory.create_factory(Window)
+
+        for seed in range(100):
+            factory.seed_random(seed)
+            window = factory.build()  # pydantic checks every bound on build
+
+            assert window.after > date(2026, 3, 1) and window.before < date(2026, 3, 1)
+            assert window.afternoon.tzinfo is None and window.aware.tzinfo is UTC
+
     def test_plain_factories_keep_polyfactory_providers(
         self, wall_clock: Callable[[timedelta], None]
     ) -> None:
