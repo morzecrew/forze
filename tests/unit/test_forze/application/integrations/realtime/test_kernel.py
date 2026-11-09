@@ -9,8 +9,11 @@ the SSE route both consume these helpers, so their delivery semantics cannot dri
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import aclosing
+from enum import Enum
+from typing import Any
+from uuid import UUID
 
 import pytest
 import structlog
@@ -33,6 +36,10 @@ from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp
 
 # ----------------------- #
+
+
+class _StrMapping(str, Mapping[str, Any]):  # pyright: ignore[reportIncompatibleMethodOverride]
+    """A string that also claims to be a mapping: the stdlib encodes it as the string."""
 
 
 def _hlc(ms: int) -> HlcTimestamp:
@@ -301,9 +308,7 @@ class TestIterBacklog:
 
         assert got == ids
         assert outcome.complete is True
-        assert [one["log_level"] for one in logs if "on_replay" in str(one["event"])] == [
-            "warning"
-        ]
+        assert [one["log_level"] for one in logs if "on_replay" in str(one["event"])] == ["warning"]
 
     async def test_a_raising_hook_never_replaces_the_drains_own_error(self) -> None:
         mailbox = _FailingMailbox()
@@ -448,8 +453,8 @@ class TestFrameEncoding:
         # the leaves that idiomatically leak into payloads — plus a hostile object
         "poison",
         [
-            __import__("uuid").uuid4(),
             __import__("datetime").datetime(2026, 1, 1),
+            __import__("datetime").date(2026, 1, 1),
             __import__("decimal").Decimal("1.5"),
             object(),
             {"nested": {object()}},
@@ -470,6 +475,90 @@ class TestFrameEncoding:
         assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
         assert frame["error"]["kind"] == "internal"
         assert "data" not in frame  # the poisoned value never reaches the wire
+
+    @pytest.mark.parametrize(
+        ("payload", "wire"),
+        [
+            # orjson's form: UTF-8 text, an escaped line break (an SSE data line stays one
+            # line), a UUID or an Enum as its JSON value, a non-finite float as null
+            ({"s": "héllo ✓"}, '{"s":"héllo ✓"}'),
+            ({"s": "a\nb\r\nc"}, '{"s":"a\\nb\\r\\nc"}'),
+            ({"u": UUID(int=1)}, '{"u":"00000000-0000-0000-0000-000000000001"}'),
+            ({"k": Enum("K", {"A": "a"}).A}, '{"k":"a"}'),
+            ({"x": float("nan"), "y": float("inf")}, '{"x":null,"y":null}'),
+            # what orjson refuses and the stdlib encoded keeps the stdlib's form
+            ({1: "é"}, '{"1":"\\u00e9"}'),
+            ({"n": 2**64}, '{"n":18446744073709551616}'),
+            ({"s": "\ud800"}, '{"s":"\\ud800"}'),
+            # ... with a non-finite float still written as null
+            (
+                {"n": 2**64, "x": float("nan"), "l": [float("-inf")]},
+                '{"n":18446744073709551616,"x":null,"l":[null]}',
+            ),
+            ({"n": 2**64, "s": _StrMapping("x")}, '{"n":18446744073709551616,"s":"x"}'),
+            # ... and the same tokens inside a string are left alone
+            (
+                {"n": 2**64, "s": 'NaN -Infinity \\"NaN\\" "Infinity"'},
+                '{"n":18446744073709551616,"s":"NaN -Infinity \\\\\\"NaN\\\\\\" \\"Infinity\\""}',
+            ),
+        ],
+    )
+    def test_wire_form(self, payload: dict[Any, Any], wire: str) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        assert encode_frame(payload) == wire
+
+    def test_jsonable_frame_reads_back_either_encoding(self) -> None:
+        from forze.application.integrations.realtime import jsonable_frame
+
+        assert jsonable_frame({"x": float("nan"), "s": "é"}) == {"x": None, "s": "é"}
+        assert jsonable_frame({"n": 2**64, "s": "\ud800"}) == {"n": 2**64, "s": "\ud800"}
+
+    def test_nesting_past_orjson_but_within_the_stdlib_still_encodes(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        deep: Any = [2**64]
+        for _ in range(3000):
+            deep = [deep]
+
+        frame = encode_frame({"data": deep})
+
+        assert frame == '{"data":' + "[" * 3001 + "18446744073709551616" + "]" * 3001 + "}"
+
+    def test_fallback_frame_writes_a_non_finite_correlation_value_as_null(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        frame = encode_frame({"type": "ack", "cid": float("nan"), "data": object()})
+
+        assert frame.startswith('{"type":"ack","cid":null,"error":')
+
+    def test_fallback_frame_keeps_a_string_cid_that_is_also_a_mapping(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        frame = encode_frame({"type": "ack", "cid": _StrMapping("c1"), "data": object()})
+
+        assert frame.startswith('{"type":"ack","cid":"c1","error":')
+
+    # RecursionError stands in for nesting past the stdlib's limit, which since 3.14
+    # follows the C stack's size and so is no fixed depth a test can build.
+    @pytest.mark.parametrize("error", [RuntimeError("boom"), RecursionError()])
+    def test_a_value_raising_while_the_stdlib_encodes_it_falls_back(self, error: Exception) -> None:
+        import json
+
+        from forze.application.integrations.realtime import (
+            FRAME_UNSERIALIZABLE_CODE,
+            encode_frame,
+        )
+
+        class Hostile(dict[str, Any]):
+            def items(self) -> Any:
+                raise error
+
+        # the big int sends it past orjson, which never calls ``items``
+        frame = json.loads(encode_frame({"cid": "c1", "n": 2**64, "data": Hostile(k=1)}))
+
+        assert frame["cid"] == "c1"
+        assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
 
     def test_fallback_code_is_overridable(self) -> None:
         import json

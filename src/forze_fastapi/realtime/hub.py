@@ -18,8 +18,8 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-from collections.abc import Callable, Sequence
-from typing import final
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, final
 from uuid import UUID
 
 import anyio
@@ -34,6 +34,7 @@ from forze.base.primitives import uuid7
 # ----------------------- #
 
 __all__ = [
+    "HubDelivery",
     "RealtimeSseHub",
     "SseSubscription",
     "presence_rooms",
@@ -96,9 +97,64 @@ async def leave_presence_rooms(
 
 
 @final
+@attrs.define(slots=True, eq=False)
+class HubDelivery:
+    """One published signal, the same object in every matching subscription's queue.
+
+    A transport's frame for it is a function of the signal and its event id alone, so
+    :meth:`frame` encodes it once for all the streams it reaches rather than once per
+    stream. Unpacks and indexes as the ``(signal, event_id)`` tuple it replaces.
+    """
+
+    signal: RealtimeSignal
+    """The signal as published."""
+
+    event_id: str | None
+    """Its durable event id (``None`` for ephemeral)."""
+
+    _frames: dict[Callable[[RealtimeSignal, str | None], str], str] = attrs.field(
+        factory=dict, init=False, repr=False
+    )
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter((self.signal, self.event_id))
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> Any:
+        # Indexes like the ``(signal, event_id)`` tuple the queues used to hold.
+        return (self.signal, self.event_id)[index]
+
+    # ....................... #
+
+    def frame(self, encode: Callable[[RealtimeSignal, str | None], str]) -> str:
+        """The frame *encode* makes of this delivery, encoded on the first call only.
+
+        Keyed by *encode* alone, since this delivery fixes its other inputs: a hub that
+        SSE and WebSocket share keeps one frame of each. Pass a module-level function —
+        a fresh callable per call never hits.
+        """
+
+        frame = self._frames.get(encode)
+
+        if frame is None:
+            frame = self._frames[encode] = encode(self.signal, self.event_id)
+
+        return frame
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True, eq=False)  # identity semantics: one per response
 class SseSubscription:
-    """One open SSE response's view of the hub: a bounded queue plus its match scope."""
+    """One open SSE response's view of the hub: a bounded queue plus its match scope.
+
+    The hub indexes a subscription by its principal, tenant and topics as it subscribes,
+    so none of them may change afterwards.
+    """
 
     principal: str
     """The authenticated principal the stream belongs to."""
@@ -109,7 +165,7 @@ class SseSubscription:
     topics: frozenset[str] = frozenset()
     """Topic audiences this stream additionally receives (live-only, at-most-once)."""
 
-    queue: asyncio.Queue[tuple[RealtimeSignal, str | None]] = attrs.field(init=False)
+    queue: asyncio.Queue[HubDelivery] = attrs.field(init=False)
     """Matched signals with their durable event id (``None`` for ephemeral)."""
 
     key: str = attrs.field(init=False)
@@ -160,6 +216,16 @@ class SseSubscription:
         return signal.audience_name in self.topics
 
 
+def _audiences(subscription: SseSubscription) -> Iterator[tuple[AudienceKind, UUID | None, str]]:
+    """The ``(kind, tenant, name)`` a signal must carry to match *subscription*, one per
+    audience it receives — the hub's index keys, by the rules of :meth:`~SseSubscription.matches`."""
+
+    yield AudienceKind.PRINCIPAL, subscription.tenant, subscription.principal
+
+    for topic in subscription.topics:
+        yield AudienceKind.TOPIC, subscription.tenant, topic
+
+
 # ....................... #
 
 
@@ -186,6 +252,11 @@ class RealtimeSseHub:
     """
 
     _subscriptions: set[SseSubscription] = attrs.field(factory=set, init=False)
+
+    _index: dict[tuple[AudienceKind, UUID | None, str], set[SseSubscription]] = attrs.field(
+        factory=dict, init=False, repr=False
+    )
+    """Subscriptions by audience (see :func:`_audiences`): a publish reads one bucket."""
 
     _draining: Callable[[], bool] | None = attrs.field(default=None, init=False, repr=False)
 
@@ -247,6 +318,9 @@ class RealtimeSseHub:
         )
         self._subscriptions.add(subscription)
 
+        for audience in _audiences(subscription):
+            self._index.setdefault(audience, set()).add(subscription)
+
         return subscription
 
     # ....................... #
@@ -254,19 +328,37 @@ class RealtimeSseHub:
     def unsubscribe(self, subscription: SseSubscription) -> None:
         """Remove a subscription; idempotent (the response's ``finally`` may race a stop)."""
 
-        self._subscriptions.discard(subscription)
+        if subscription not in self._subscriptions:
+            return
+
+        self._subscriptions.remove(subscription)
+
+        for audience in _audiences(subscription):
+            bucket = self._index[audience]
+            bucket.discard(subscription)
+
+            if not bucket:
+                del self._index[audience]  # the index holds live audiences only
 
     # ....................... #
 
     def publish(self, signal: RealtimeSignal, tenant: UUID | None, *, event_id: str | None) -> None:
-        """Fan a signal out to every matching subscription (non-blocking, drop on full)."""
+        """Fan a signal out to every matching subscription (non-blocking, drop on full).
 
-        for subscription in self._subscriptions:
-            if not subscription.matches(signal, tenant):
-                continue
+        Every subscription shares *signal*, and its frames are encoded once for all of
+        them: do not mutate its payload after publishing it.
+        """
 
+        matching = self._index.get((signal.audience_kind, tenant, signal.audience_name))
+
+        if not matching:
+            return
+
+        delivery = HubDelivery(signal, event_id)
+
+        for subscription in matching:
             try:
-                subscription.queue.put_nowait((signal, event_id))
+                subscription.queue.put_nowait(delivery)
 
             except asyncio.QueueFull:
                 # At-most-once: a slow reader misses the live signal; durables reach it

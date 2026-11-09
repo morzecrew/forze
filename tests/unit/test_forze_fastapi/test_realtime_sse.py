@@ -2,7 +2,8 @@
 
 # covers: forze_fastapi.realtime.sse (attach_realtime_sse_route, replay/ack endpoints,
 #         Last-Event-ID precedence, protocol refusal, frame shape, live-only streams),
-#         forze_fastapi.realtime.hub (matching, drop-on-full, subscribe/unsubscribe)
+#         forze_fastapi.realtime.hub (matching, its index, drop-on-full,
+#         subscribe/unsubscribe, HubDelivery's once-per-signal frame)
 
 Replay and ack run end-to-end through the app (identity bound by a middleware, like
 production); the live leg is an infinite stream a buffered test transport cannot
@@ -25,7 +26,7 @@ from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.contracts.authn import AuthnIdentity
-from forze.application.contracts.realtime import Audience, RealtimeSignal
+from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.integrations.realtime import (
@@ -36,6 +37,7 @@ from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.realtime import RealtimeSseHub, attach_realtime_sse_route
+from forze_fastapi.realtime.hub import HubDelivery
 from forze_fastapi.realtime.sse import _live_frames  # pyright: ignore[reportPrivateUsage]
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_deps
@@ -579,6 +581,79 @@ class TestHub:
         hub.unsubscribe(sub)
         assert hub.subscribers == 0
 
+    def test_publish_reaches_exactly_the_subscriptions_that_match(self) -> None:
+        # publish reads an index instead of asking every subscription's matches(): the
+        # two must agree for every audience kind, name and tenant
+        hub = RealtimeSseHub()
+        tenants = [None, uuid4()]
+        subs = [
+            hub.subscribe(principal=principal, tenant=tenant, topics=topics)
+            for principal in ("p1", "p2")
+            for tenant in tenants
+            for topics in (frozenset(), frozenset({"t1"}), frozenset({"t1", "p1"}))
+        ]
+        left = subs.pop()
+        hub.unsubscribe(left)
+
+        for kind in AudienceKind:
+            for name in ("p1", "p2", "t1", "nobody"):
+                for tenant in tenants:
+                    signal = RealtimeSignal(
+                        audience_kind=kind, audience_name=name, event="e", payload={}
+                    )
+                    hub.publish(signal, tenant, event_id=None)
+
+                    received = {sub: sub.queue.get_nowait() for sub in subs if sub.queue.qsize()}
+                    assert set(received) == {sub for sub in subs if sub.matches(signal, tenant)}
+                    assert len({id(delivery) for delivery in received.values()}) <= 1
+
+        assert left.queue.empty()
+
+    def test_the_index_forgets_an_audience_with_its_last_subscriber(self) -> None:
+        hub = RealtimeSseHub()
+        topical = hub.subscribe(principal="p1", tenant=None, topics=frozenset({"t1"}))
+        plain = hub.subscribe(principal="p1", tenant=None)
+
+        hub.unsubscribe(topical)
+        assert hub._index == {(AudienceKind.PRINCIPAL, None, "p1"): {plain}}  # pyright: ignore[reportPrivateUsage]
+
+        hub.unsubscribe(plain)
+        assert hub._index == {}  # pyright: ignore[reportPrivateUsage]
+
+
+class TestHubDelivery:
+    def test_frame_is_encoded_once_per_encoder(self) -> None:
+        calls: list[str] = []
+
+        def sse(_signal: RealtimeSignal, event_id: str | None) -> str:
+            calls.append("sse")
+            return f"sse:{event_id}"
+
+        def ws(_signal: RealtimeSignal, event_id: str | None) -> str:
+            calls.append("ws")
+            return f"ws:{event_id}"
+
+        delivery = HubDelivery(_signal(1), "e1")
+
+        assert [delivery.frame(sse), delivery.frame(ws), delivery.frame(sse)] == [
+            "sse:e1",
+            "ws:e1",
+            "sse:e1",
+        ]
+        assert calls == ["sse", "ws"]
+
+        assert HubDelivery(_signal(1), "e2").frame(sse) == "sse:e2"  # another delivery misses
+        assert calls == ["sse", "ws", "sse"]
+
+    def test_reads_like_the_tuple_it_replaces(self) -> None:
+        signal = _signal(1)
+        delivery = HubDelivery(signal, "e1")
+        signal_out, event_id = delivery
+
+        assert (signal_out, event_id) == (signal, "e1")
+        assert len(delivery) == 2
+        assert (delivery[0], delivery[1], delivery[-1]) == (signal, "e1", "e1")
+
     def test_non_positive_queue_size_refused(self) -> None:
         with pytest.raises(CoreException):
             RealtimeSseHub(queue_size=0)
@@ -648,7 +723,7 @@ class TestLiveFrames:
 
         assert first == ": keepalive\n\n"
 
-        # a signal published after keepalives still arrives on the same pending get
+        # a signal published after keepalives still arrives: a timed-out get loses nothing
         hub.publish(_signal(1, audience=Audience.principal("p1")), None, event_id=None)
         following = await asyncio.wait_for(anext(frames), timeout=5)
         while following.startswith(":"):
@@ -656,6 +731,48 @@ class TestLiveFrames:
         await frames.aclose()
 
         assert _frames(following)[0]["data"] == {"id": None, "data": {"n": 1}}
+
+    async def test_streams_share_one_encoding_per_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_fastapi.realtime.sse as sse_module
+
+        encoded: list[str | None] = []
+        encode = sse_module._sse_frame  # pyright: ignore[reportPrivateUsage]
+
+        def counting(**kwargs: Any) -> str:
+            encoded.append(kwargs["event_id"])
+            return encode(**kwargs)
+
+        monkeypatch.setattr(sse_module, "_sse_frame", counting)
+
+        hub = RealtimeSseHub()
+        subs = [hub.subscribe(principal="p1", tenant=None) for _ in range(3)]
+        hub.publish(_signal(1, audience=Audience.principal("p1")), None, event_id="e1")
+        hub.publish(_signal(2, audience=Audience.principal("p1")), None, event_id="e2")
+
+        received: list[list[str]] = []
+
+        for sub in subs:
+            frames = _live_frames(sub, keepalive_interval=timedelta(seconds=5))
+            received.append([await anext(frames), await anext(frames)])
+            await frames.aclose()
+
+        assert received[0] == received[1] == received[2]
+        assert [_frames(frame)[0]["id"] for frame in received[0]] == ["e1", "e2"]
+        assert encoded == ["e1", "e2"]  # once per signal, not once per stream
+
+    async def test_an_end_cuts_the_wait_short(self) -> None:
+        hub = RealtimeSseHub()
+        sub = hub.subscribe(principal="p1", tenant=None)
+        frames = _live_frames(sub, keepalive_interval=timedelta(hours=1))
+
+        waiting = asyncio.ensure_future(anext(frames))
+        await asyncio.sleep(0.01)  # parked in the wait for a signal
+        sub.end()
+
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(waiting, timeout=1)  # not after the hour's keepalive
 
     async def test_ephemeral_frame_has_no_id_field(self) -> None:
         hub = RealtimeSseHub()
