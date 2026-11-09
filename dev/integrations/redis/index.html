@@ -6874,7 +6874,9 @@ pub-sub) — all behind Forze contracts.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[redis]'</span>
 </code></pre></div>
-<p>Needs a reachable Redis or Valkey server.</p>
+<p>Needs a reachable Redis or Valkey server. The extra also installs <code>hiredis</code>, the C
+reply parser that redis-py uses on its own whenever it is installed; it reads large
+replies (<code>MGET</code>, <code>HGETALL</code>, pipelines) several times faster than the pure-Python one.</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.lifecycle.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">routed_client_lifecycle_step</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisClient</span>

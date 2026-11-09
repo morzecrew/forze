@@ -11139,10 +11139,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A mock-backed <abbr title="Deterministic Simulation Testing">DST</abbr> seed takes up to a third less time.</strong> Freezing a deps registry and generating a derived scenario's inputs both cost less; recorded seeds replay unchanged.</p>
 </li>
+<li>
+<p><strong>The <code>redis</code> extra installs <code>hiredis</code></strong>, the C reply parser redis-py uses on its own when present. Large replies such as <code>MGET</code>, <code>HGETALL</code> and pipelines parse several times faster.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>TinyLfuStore</code> no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.</strong> One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.</li>
+<li>
+<p><strong><code>TinyLfuStore</code> no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.</strong> One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.</p>
+</li>
+<li>
+<p><strong>An error context holding a NaN, an infinity or a plain <code>Enum</code> member now renders.</strong> A non-finite float becomes <code>null</code>, where the HTTP error response used to fail on it, and an <code>Enum</code> member renders as its value instead of dropping the whole context.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
