@@ -154,6 +154,7 @@ class _FrequencySketch:
     """
 
     _DEPTH = 4
+    _HALVE = bytes(b >> 1 for b in range(256))  # translate table: byte b -> b >> 1
 
     # ....................... #
 
@@ -194,7 +195,7 @@ class _FrequencySketch:
 
     # ....................... #
 
-    def _indexes(self, key: str) -> tuple[int, ...]:
+    def _indexes(self, key: str) -> list[int]:
         mask = self._width - 1
         # Deterministic, salt-free hashing: the builtin ``hash`` is salted per process
         # (``PYTHONHASHSEED``), which makes the count-min bucket placement — and so the
@@ -206,7 +207,8 @@ class _FrequencySketch:
         base = zlib.crc32(key.encode("utf-8"))
         step = (base >> 15) | 1
 
-        return tuple((base + i * step) & mask for i in range(self._DEPTH))
+        # A list comprehension, not ``tuple(<genexpr>)``: this runs on every L1 get/set.
+        return [(base + i * step) & mask for i in range(self._DEPTH)]
 
     # ....................... #
 
@@ -223,14 +225,15 @@ class _FrequencySketch:
     # ....................... #
 
     def estimate(self, key: str) -> int:
-        return min(row[idx] for row, idx in zip(self._rows, self._indexes(key), strict=True))
+        return min([row[idx] for row, idx in zip(self._rows, self._indexes(key), strict=True)])
 
     # ....................... #
 
     def _age(self) -> None:
+        # One C-level ``translate`` per row: a per-counter Python loop here stalled the
+        # event loop for ~9 ms at capacity 10k and ~75 ms at 100k.
         for row in self._rows:
-            for i in range(self._width):
-                row[i] >>= 1
+            row[:] = row.translate(self._HALVE)
 
         self._ops //= 2
 

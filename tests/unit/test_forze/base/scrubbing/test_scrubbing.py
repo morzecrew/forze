@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from typing import Literal
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import (
     BaseModel,
@@ -869,12 +869,12 @@ class TestRegisterSensitivePatterns:
         from forze.base.scrubbing import policy
 
         # Built-in patterns all contribute literals: prefilter starts active.
-        assert policy._log_string_literals is not None
+        assert policy._log_string_prefilter is not None
 
         # A raw digit-run pattern has no required literal substring.
         register_sensitive_patterns(log_strings=[r"\d{16}"])
 
-        assert policy._log_string_literals is None  # prefilter disabled for safety
+        assert policy._log_string_prefilter is None  # prefilter disabled for safety
         result = scrub_log_string("card 1234567812345678 charged")
         assert "1234567812345678" not in result
         assert SECRET_PLACEHOLDER in result
@@ -886,10 +886,26 @@ class TestRegisterSensitivePatterns:
 
         register_sensitive_patterns(log_strings=[r"ACME-TOKEN-\S+"])
 
-        literals = policy._log_string_literals
-        assert literals is not None
-        assert any(lit in "acme-token-" for lit in literals)
+        prefilter = policy._log_string_prefilter
+        assert prefilter is not None
+        assert any(lit in "acme-token-" for lit in prefilter[0])
         assert SECRET_PLACEHOLDER in scrub_log_string("issued ACME-TOKEN-abc123")
+
+    def test_log_pipeline_applies_patterns_registered_after_first_use(self) -> None:
+        from forze.base.logging.processors import EventDictSanitizer
+
+        sanitizer = EventDictSanitizer()
+        event = {"event": "issued ACME-TOKEN-abc123", "acme_widget_handle": "v"}
+
+        # Prime the processor (its scrubbing imports, the dispatch caches) first.
+        assert sanitizer(None, "info", dict(event)) == event
+
+        register_sensitive_patterns(keys=[r"widget[._ -]?handle"], log_strings=[r"ACME-TOKEN-\S+"])
+
+        assert sanitizer(None, "info", dict(event)) == {
+            "event": f"issued {SECRET_PLACEHOLDER}",
+            "acme_widget_handle": SECRET_PLACEHOLDER,
+        }
 
 
 # ----------------------- #
@@ -959,7 +975,7 @@ class TestPrefilterSupersetness:
     def test_prefilter_is_active_by_default(self) -> None:
         from forze.base.scrubbing import policy
 
-        assert policy._log_string_literals is not None
+        assert policy._log_string_prefilter is not None
 
     @pytest.mark.parametrize(
         ("fragment", "sample"),
@@ -975,10 +991,10 @@ class TestPrefilterSupersetness:
         assert re.compile(fragment, policy._SCRUB_FLAGS).search(sample), fragment
 
         # ...the prefilter does not reject it (a literal is present)...
-        literals = policy._log_string_literals
-        assert literals is not None
+        prefilter = policy._log_string_prefilter
+        assert prefilter is not None
         lowered = sample.lower()
-        assert any(lit in lowered for lit in literals), (fragment, sample)
+        assert any(lit in lowered for lit in prefilter[0]), (fragment, sample)
 
         # ...and end-to-end scrubbing through the prefilter masks it.
         result = scrub_log_string(sample)
@@ -1051,6 +1067,261 @@ class TestPrefilterFoldsIgnorecaseTwins:
     def test_twin_spelled_secret_is_masked(self, text: str) -> None:
         assert "fixture-7chr" not in scrub_log_string(text)
         assert scrub_log_string(text) == _scrub_policy._log_string_re.sub(SECRET_PLACEHOLDER, text)
+
+
+# ----------------------- #
+# Per-alternative dispatch: differential against the combined regex
+# ----------------------- #
+
+
+def _reference_scrub(text: str) -> str:
+    """The combined regex on every string: what any prefilter must reproduce."""
+
+    return _scrub_policy._log_string_re.sub(SECRET_PLACEHOLDER, text)
+
+
+def _secret_pieces() -> list[str]:
+    """Secret-bearing shapes for every value-form term, plus the extras' shapes."""
+
+    pieces = [*_FRAGMENT_SAMPLES.values(), *TestScrubPrefilterBehaviorIdentical._CORPUS]
+
+    for term in sorted(_vocabulary_seeds()):
+        for shape in sorted(_key_shapes(term)):
+            pieces += (f"{shape}=fixture-7chr", f'"{shape}": "fixture-7chr"', f"{shape}: x y")
+
+    return pieces
+
+
+_SECRET_PIECES = _secret_pieces()
+
+# Words that contain a prefilter literal without carrying a secret, and separators.
+_NOISE = (
+    "during",
+    "security",
+    "Missouri",
+    "/v1/authn/login",
+    "sessions",
+    "tokenizer=",
+    "secretary:",
+    "api",
+    "@",
+    "://",
+    " ",
+    "\n",
+    "=",
+    ":",
+    '"',
+    ",",
+    "}",
+    "_",
+    "Order updated",
+)
+
+
+@st.composite
+def _log_texts(draw: st.DrawFn) -> str:
+    parts = draw(
+        st.lists(
+            st.one_of(
+                st.sampled_from(_SECRET_PIECES),
+                st.sampled_from(_NOISE),
+                st.text(max_size=12),
+            ),
+            max_size=8,
+        )
+    )
+    text = "".join(parts)
+
+    # Spell some letters with their non-ASCII IGNORECASE twins.
+    for letter, twins in _ASCII_TWINS.items():
+        if draw(st.booleans()):
+            text = text.replace(letter, draw(st.sampled_from(twins)))
+
+    return text
+
+
+class TestScrubDispatchMatchesCombinedRegex:
+    """Running only the alternatives whose literals a string contains is the combined regex."""
+
+    @pytest.fixture
+    def _restore_policy(self) -> Iterator[None]:
+        keys = list(_scrub_policy._EXTRA_SENSITIVE_KEY_PATTERNS)
+        logs = list(_scrub_policy._EXTRA_LOG_STRING_PATTERNS)
+
+        try:
+            yield
+
+        finally:
+            _scrub_policy._EXTRA_SENSITIVE_KEY_PATTERNS[:] = keys
+            _scrub_policy._EXTRA_LOG_STRING_PATTERNS[:] = logs
+            _scrub_policy._rebuild_matchers()
+
+    def test_alternatives_join_into_the_combined_regex(self) -> None:
+        # The split vocabulary fragments rejoin into the fragments the regex is built from.
+        alternatives = _scrub_policy._log_string_alternatives()
+        terms = len(_scrub_policy._LOG_ASSIGNMENT_TERM_FRAGMENTS)
+        quoted = len(_scrub_policy._LOG_QUOTED_KEY_TERM_FRAGMENTS)
+
+        assert alternatives[terms + quoted :] == _scrub_policy._LOG_STRING_EXTRAS
+        assert all(a.endswith(_scrub_policy._ASSIGNMENT_TAIL) for a in alternatives[:terms])
+        assert all(
+            a.endswith(_scrub_policy._QUOTED_KEY_TAIL) for a in alternatives[terms : terms + quoted]
+        )
+
+    def test_every_secret_piece_alone(self) -> None:
+        for piece in _SECRET_PIECES:
+            assert scrub_log_string(piece) == _reference_scrub(piece), piece
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Order updated for ada@example.com",  # one alternative
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",  # overlapping matches
+            "headers: {'authorization': 'Bearer eyJ.x.y', 'cookie': 'sid=abc'}",
+            (  # combined regex: more candidates than the split takes
+                "cfg password=a passwd=b secret=c token=d api_key=e private_key=f auth=g "
+                "credential=h session=i cookie=j csrf=k jwt=l redis://x amqp://y bob@x.io"
+            ),
+            "x" * 300 + " token=abc " + "y" * 300,
+        ],
+        ids=lambda t: t[:24],
+    )
+    def test_dense_and_overlapping_strings(self, text: str) -> None:
+        assert scrub_log_string(text) == _reference_scrub(text)
+
+    @settings(max_examples=400, deadline=None)
+    @given(text=_log_texts())
+    def test_random_log_text(self, text: str) -> None:
+        assert scrub_log_string(text) == _reference_scrub(text)
+
+    @pytest.mark.usefixtures("_restore_policy")
+    def test_random_log_text_with_registered_patterns(self) -> None:
+        # Overlapping the built-ins on purpose: ``pass\w*`` ties with the password
+        # assignment at the same start, ``ord`` and ``example\.com`` sit inside them.
+        register_sensitive_patterns(
+            log_strings=[
+                r"ACME-TOKEN-\S+",
+                r"(?:sk|pk)_live_\w+",
+                r"pass\w*",
+                "ord",
+                r"example\.com",
+            ]
+        )
+        assert _scrub_policy._log_string_prefilter is not None
+
+        @settings(max_examples=300, deadline=None)
+        @given(text=_log_texts())
+        def check(text: str) -> None:
+            for extra in (text, f"{text} ACME-TOKEN-x1 sk_live_abc example.com {text}"):
+                assert scrub_log_string(extra) == _reference_scrub(extra)
+
+        check()
+
+    @pytest.mark.usefixtures("_restore_policy")
+    def test_backreference_keeps_the_combined_numbering(self) -> None:
+        register_sensitive_patterns(log_strings=[r"(tok\w+)=\1"])
+
+        prefilter = _scrub_policy._log_string_prefilter
+        assert prefilter is not None
+        # One alternative, the combined regex, so ``\1`` still means the combined group 1.
+        assert {e for entries in prefilter[1].values() for e in entries} == {
+            (0, _scrub_policy._log_string_re.pattern)
+        }
+
+        for text in ("tokab=tokab and ada@example.com", "tokab=other", "password=x"):
+            assert scrub_log_string(text) == _reference_scrub(text)
+
+    def test_compiled_alternatives_are_keyed_by_source(self) -> None:
+        source = _scrub_policy._LOG_STRING_EXTRAS[1]
+        pattern = _scrub_policy._compile_alternative(source)
+
+        assert _scrub_policy._compile_alternative(source) is pattern
+        assert pattern.pattern == source
+        assert pattern.flags & _scrub_policy._SCRUB_FLAGS == _scrub_policy._SCRUB_FLAGS
+        assert (
+            _scrub_policy._compile_alternative(_scrub_policy._LOG_STRING_EXTRAS[2]) is not pattern
+        )
+
+
+# ....................... #
+
+
+class _Str(str):
+    """A str the walk cannot take the exact-type fast path for."""
+
+
+class _Int(int):
+    pass
+
+
+class _Float(float):
+    pass
+
+
+def _without_fast_path(value: object) -> object:
+    """*value* with every str/int/float leaf swapped for a subclass twin."""
+
+    if isinstance(value, dict):
+        return {k: _without_fast_path(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(value, list):
+        return [_without_fast_path(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(value, bool) or value is None:
+        return value
+
+    if isinstance(value, str):
+        return _Str(value)
+
+    if isinstance(value, int):
+        return _Int(value)
+
+    if isinstance(value, float):
+        return _Float(value)
+
+    return value
+
+
+_trees = st.recursive(
+    st.one_of(
+        st.none(),
+        st.booleans(),
+        st.integers(),
+        st.floats(allow_nan=False),
+        st.sampled_from(_SECRET_PIECES),
+        st.text(max_size=16),
+    ),
+    lambda children: st.one_of(
+        st.lists(children, max_size=4),
+        st.dictionaries(
+            st.one_of(
+                st.sampled_from(("password", "note", "token", "id", "dbPwd", "x")),
+                st.text(max_size=8),
+            ),
+            children,
+            max_size=4,
+        ),
+    ),
+    max_leaves=12,
+)
+
+
+class TestWalkFastPathMatchesGenericPath:
+    """Exact builtin leaves skip the isinstance chain with the result it gives."""
+
+    @settings(max_examples=300, deadline=None)
+    @given(
+        tree=_trees,
+        context=st.sampled_from(("log", "egress")),
+        max_depth=st.integers(min_value=0, max_value=4),
+    )
+    def test_sanitize_equals_subclass_twin(
+        self, tree: object, context: Literal["log", "egress"], max_depth: int
+    ) -> None:
+        fast = sanitize(tree, context=context, max_depth=max_depth)
+        generic = sanitize(_without_fast_path(tree), context=context, max_depth=max_depth)
+
+        assert fast == generic
 
 
 # ....................... #

@@ -25,9 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Search highlighting runs about 5× faster on long text, with the same fragments.** Highlighting 1 KB of ASCII takes about 12 µs instead of 60, and 1 KB of Cyrillic about 18 µs instead of 88. Federated RRF merges also run about 18% faster.
 
+- **Scrubbed logging costs about a quarter less per event.** A JSON `logger.info` with eight extras drops from ~50 to ~37 µs and log-context `sanitize` on the same fields from ~20 to ~7 µs; what gets masked is unchanged.
+
 ### Fixed
 
-- ...
+- **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
 
 ### Security
 
