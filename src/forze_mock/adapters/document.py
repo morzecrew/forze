@@ -60,6 +60,7 @@ from forze.application.contracts.querying import (
     with_group_tiebreakers,
     with_id_tiebreaker,
 )
+from forze.application.contracts.querying.internal.matching import compile_expr
 from forze.application.integrations.document import DocumentNotFoundTagging
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
@@ -100,7 +101,6 @@ from forze_mock.query.cursors import (
 )
 from forze_mock.query.matching import (
     _aggregate_docs,  # pyright: ignore[reportPrivateUsage]
-    _match_expr,  # pyright: ignore[reportPrivateUsage]
     _project,  # pyright: ignore[reportPrivateUsage]
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
@@ -715,7 +715,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if rewrite is not None:
             expr = rewrite(expr)
 
-        return lambda doc: _match_expr(doc, expr)
+        return compile_expr(expr)
 
     # ....................... #
 

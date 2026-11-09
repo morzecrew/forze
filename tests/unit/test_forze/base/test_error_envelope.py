@@ -1,7 +1,12 @@
 """Unit tests for :mod:`forze.base.exceptions.envelope`."""
 
 import asyncio
+import json
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from enum import Enum
 
 import pytest
 import structlog
@@ -294,3 +299,97 @@ def test_arbitrary_object_leaves_drop_the_context_instead_of_stringifying() -> N
     envelope = error_envelope(exc.validation("bad", details={"conn": _Conn()}))
 
     assert envelope.context == {"context_unrenderable": True}
+
+
+@dataclass
+class _Row:
+    id: int
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        # scalar keys: stdlib json stringifies them, orjson refuses them
+        {"counts": {1: 2, 2.5: 3, False: 4, None: 5}},
+        # past 64 bits: stdlib json keeps them exactly, orjson refuses them
+        {"big": 2**70, "negative": -(2**63) - 1, "edge": 2**64 - 1},
+        {"text": "café 😀 Плата", "escapes": 'a"b\\c\n\t\x00\x1f\x7f', "surrogate": "\ud800"},
+        # orjson's own datetime encoder refuses a time with a tzinfo
+        {"at": time(1, 2, tzinfo=UTC), "on": date(2026, 1, 2), "when": datetime(2026, 1, 1, 12)},
+        {"precise": datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=UTC), "total": Decimal("1E+3")},
+        {"nested": [{"a": [1, 2.5, -0.0, 1e300, None, True]}, (3, "x")], "empty": {}},
+        {"row": _Row(id=1)},  # a dataclass: stdlib json cannot render it
+        {"tags": {"a", "b"}},
+        {"raw": b"bytes"},
+    ],
+)
+def test_context_renders_as_the_stdlib_encoder_would(details: dict[str, object]) -> None:
+    # The orjson fast path must not change what a client sees: the reference is the
+    # stdlib round trip, the envelope's only encoder before it.
+    from forze.base.exceptions.envelope import _render_leaf  # pyright: ignore[reportPrivateUsage]
+    from forze.base.scrubbing import sanitize
+
+    try:
+        expected = json.loads(
+            json.dumps(sanitize(details, context="egress"), default=_render_leaf),
+            parse_constant=lambda _: None,
+        )
+
+    except (TypeError, ValueError):
+        expected = {"context_unrenderable": True}
+
+    assert error_envelope(exc.validation("bad", details=details)).context == expected
+
+
+def test_non_finite_floats_render_as_null() -> None:
+    # A bare NaN is not JSON: Starlette's JSONResponse refused it, failing the error
+    # response itself. orjson writes it as null.
+    envelope = error_envelope(
+        exc.validation("bad", details={"ratio": float("nan"), "caps": [float("inf")]})
+    )
+
+    assert envelope.context == {"ratio": None, "caps": [None]}
+    json.dumps(envelope.context, allow_nan=False)
+
+
+def test_non_finite_floats_render_as_null_on_the_stdlib_path_too() -> None:
+    # the big int sends the context past orjson
+    envelope = error_envelope(
+        exc.validation("bad", details={"big": 2**64, "ratio": float("nan"), "low": float("-inf")})
+    )
+
+    assert envelope.context == {"big": 2**64, "ratio": None, "low": None}
+    json.dumps(envelope.context, allow_nan=False)
+
+
+def test_an_enum_member_renders_as_its_value_when_the_value_renders() -> None:
+    class _State(Enum):
+        PAID = "paid"
+        TOTAL = Decimal("19.90")
+        OPAQUE = object()
+
+    def context(state: _State) -> object:
+        return error_envelope(exc.validation("bad", details={"state": state})).context
+
+    assert context(_State.PAID) == {"state": "paid"}
+    assert context(_State.TOTAL) == {"state": "19.90"}
+    assert context(_State.OPAQUE) == {"context_unrenderable": True}
+
+
+def test_an_enum_member_holding_a_container_renders_it_masked() -> None:
+    class _Shape(Enum):
+        MAPPING = {"password": "hunter2", "size": 1}
+        LIST = ({"token": "t"},)
+
+    class _Outer(Enum):
+        NESTED = _Shape.MAPPING
+
+    envelope = error_envelope(
+        exc.validation("bad", details={"m": _Shape.MAPPING, "l": _Shape.LIST, "n": _Outer.NESTED})
+    )
+
+    assert envelope.context == {
+        "m": {"password": "**********", "size": 1},
+        "l": [{"token": "**********"}],
+        "n": {"password": "**********", "size": 1},
+    }

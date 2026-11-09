@@ -2117,7 +2117,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         self._require_update_cmd()
         self._reject_matching_update_with_materialized()
-        require_whole_update_matching(dto, document=self.model_type.__name__)
+        require_whole_update_matching(
+            dto, document=self.model_type.__name__, domain=self.model_type
+        )
 
         if batch_size < 1:
             raise exc.internal("batch_size must be >= 1")

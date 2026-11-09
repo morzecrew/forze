@@ -63,7 +63,7 @@ what it could not serve correctly, each with its own `configuration` code:
 |---|---|
 | A key or compare field the spec does not store (`lenient_read_fields`, `write_omit_fields`): it reads back as its default. | `child_field_not_stored` |
 | A key field whose type may not hash, such as a list, a mutable model or `Any`. | `child_key_unhashable` |
-| A compare field that is a mapping, a nested model or `Any`: an update merges into it key by key, so a key the incoming value drops would stay stored. | `child_compare_field_merged` |
+| A compare field that is a mapping, a nested model or `Any`, unless the domain model marks it [`ReplaceOnUpdate`](../core-concepts/domain-layer.md#rules-live-with-the-data): an update merges into it key by key, so a key the incoming value drops would stay stored. | `child_compare_field_merged` |
 | An update command requiring a field no patch carries: a patch holds only compare fields and the soft-delete flag. | `child_update_requires_fields` |
 | A spec declaring `query_params`: the children are read without parameters. | `child_spec_parametrized` |
 

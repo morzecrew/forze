@@ -4,18 +4,25 @@
 kept) and revalidates. In a mapping or ``Any`` value a key set to ``None`` is stored as null,
 never removed; a list is replaced. What a store holds afterwards must be the merged value, not
 the patch: reading the document back gives the siblings the patch did not name, and every null.
+A field the domain marks ``ReplaceOnUpdate`` stores what an update sends, whole.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
 from forze.application.contracts.document import KeyedUpdate
 from forze.base.exceptions import CoreException
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import (
+    BaseDTO,
+    CreateDocumentCmd,
+    Document,
+    ReadDocument,
+    ReplaceOnUpdate,
+)
 
 # ----------------------- #
 
@@ -36,6 +43,8 @@ class _MergeFields(BaseModel):
     address: MergeAddress
     items: list[dict[str, Any]] = Field(default_factory=list)
     extra: Any = None
+    marks: Annotated[dict[str, Any], ReplaceOnUpdate()] = Field(default_factory=dict)
+    spot: Annotated[MergeAddress, ReplaceOnUpdate()] | None = None
 
 
 class MergeCreate(CreateDocumentCmd, _MergeFields):
@@ -56,6 +65,8 @@ class MergeUpdate(BaseDTO):
     address: MergeAddressPatch | None = None
     items: list[dict[str, Any]] | None = None
     extra: Any = None
+    marks: dict[str, Any] | None = None
+    spot: MergeAddressPatch | None = None
 
 
 SEED = MergeCreate(
@@ -64,6 +75,7 @@ SEED = MergeCreate(
     address=MergeAddress(city="A", street="S"),
     items=[{"a": 0, "b": None}],
     extra={"x": 0, "y": [1, None]},
+    marks={"a": 1, "b": {"x": 1}},
 )
 
 UPDATES: tuple[tuple[MergeUpdate, dict[str, Any], dict[str, str], dict[str, Any]], ...] = (
@@ -153,9 +165,34 @@ async def assert_updates_merge(command: Any, query: Any) -> None:
         assert read.extra == {"x": 0, "y": [None, {"z": None}]}, read.extra
 
 
+async def assert_updates_replace(command: Any, query: Any) -> None:
+    """Create :data:`SEED` and update its ``ReplaceOnUpdate`` field with ``update``, then with
+    ``update_many``: each stores the value sent, the keys it leaves out removed, and reports
+    the removals as nulls."""
+
+    created = await command.create(SEED)
+    written, diff = await command.update(
+        created.id, created.rev, MergeUpdate(marks={"b": {"y": 2}}), return_diff=True
+    )
+    assert diff["marks"] == {"a": None, "b": {"x": None, "y": 2}}, diff
+    to_json(diff)
+
+    for read in (written, await query.get(created.id, skip_cache=True)):
+        assert read.marks == {"b": {"y": 2}}, read.marks
+
+    (bulk,) = await command.update_many(
+        [KeyedUpdate(id=created.id, rev=written.rev, dto=MergeUpdate(marks={"c": None}))]
+    )
+    stored = await query.get(created.id, skip_cache=True)
+    assert bulk.marks == stored.marks == {"c": None}, (bulk.marks, stored.marks)
+    # Untouched, the merged fields keep what they held.
+    assert (stored.meta, stored.extra) == (SEED.meta, SEED.extra)
+
+
 async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> None:
     """``update_matching`` writes its patch as it is, so it refuses one setting a field to a
-    mapping or model (whatever the field's type), and still writes a scalar or a list."""
+    mapping or model (whatever the field's type), and still writes a scalar, a list, or a
+    whole value for a field the domain replaces whole."""
 
     created = await command.create(SEED)
     by_id = {"$values": {"id": {"$eq": created.id}}}
@@ -182,3 +219,23 @@ async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> No
     await command.update_matching(by_id, MergeUpdate(name="renamed", items=[{"b": 1}]))
     stored = await query.get(created.id, skip_cache=True)
     assert (stored.name, stored.items) == ("renamed", [{"b": 1}])
+
+    await command.update_matching(by_id, MergeUpdate(marks={"z": 1}))
+    stored = await query.get(created.id, skip_cache=True)
+    assert stored.marks == {"z": 1}, stored.marks
+
+    # Never read back through the domain, a partial model would leave a row it cannot load.
+    try:
+        await command.update_matching(by_id, MergeUpdate(spot=MergeAddressPatch(city="Z")))
+
+    except CoreException as refused:
+        assert refused.code == "update_matching_replacement_invalid", refused.code
+
+    else:
+        raise AssertionError("update_matching stored a partial model")
+
+    assert (await query.get(created.id, skip_cache=True)).spot is None
+
+    await command.update_matching(by_id, MergeUpdate(spot=MergeAddressPatch(city="Z", street="Q")))
+    stored = await query.get(created.id, skip_cache=True)
+    assert stored.spot == MergeAddress(city="Z", street="Q"), stored.spot

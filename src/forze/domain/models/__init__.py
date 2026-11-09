@@ -3,7 +3,14 @@
 from ..validation import invariant
 from .aggregate import AggregateRoot
 from .base import BaseDTO, CoreModel
-from .document import CreateDocumentCmd, Document, DocumentHistory, ReadDocument
+from .document import (
+    CreateDocumentCmd,
+    Document,
+    DocumentHistory,
+    ReadDocument,
+    ReplaceOnUpdate,
+    replace_on_update_fields,
+)
 from .emitters import event_emitter
 from .events import DomainEvent
 
@@ -18,6 +25,8 @@ __all__ = [
     "CreateDocumentCmd",
     "ReadDocument",
     "DocumentHistory",
+    "ReplaceOnUpdate",
+    "replace_on_update_fields",
     "DomainEvent",
     "event_emitter",
     "invariant",

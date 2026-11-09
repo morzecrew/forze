@@ -24,7 +24,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from forze.application.contracts.document import DocumentSpec, KeyedUpdate
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import BaseDTO
+from forze.domain.models import BaseDTO, replace_on_update_fields
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 
 if TYPE_CHECKING:
@@ -168,8 +168,9 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
 
     compare_fields: frozenset[str] = frozenset()
     """The fields whose change makes a kept child an update. A child differing on none of them
-    is not written; any other field is ignored. A mapping or nested-model field cannot be one:
-    an update merges into it key by key, so a key the incoming value drops would stay stored."""
+    is not written; any other field is ignored. A mapping or nested-model field can be one only
+    when the domain model marks it :class:`~forze.domain.models.ReplaceOnUpdate`: otherwise an
+    update merges into it key by key, so a key the incoming value drops would stay stored."""
 
     # ....................... #
 
@@ -229,10 +230,12 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                 "child_key_unhashable",
             ),
             (
-                {f for f in self.compare_fields if _merged_by_update(read[f].annotation)},
+                {f for f in self.compare_fields if _merged_by_update(read[f].annotation)}
+                - replace_on_update_fields(spec.write["domain"]),
                 (
                     "an update merges into them key by key, so a key the incoming value drops "
-                    "would stay stored and every later save would find the same difference"
+                    "would stay stored and every later save would find the same difference; "
+                    "mark them ReplaceOnUpdate on the domain model"
                 ),
                 "child_compare_field_merged",
             ),

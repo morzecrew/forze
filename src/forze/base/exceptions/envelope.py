@@ -20,6 +20,7 @@ from typing import Any, Final, cast
 from uuid import UUID
 
 import attrs
+import orjson
 
 from forze.base.scrubbing import sanitize
 
@@ -106,7 +107,12 @@ _RENDERABLE_LEAVES = (UUID, datetime, date, time, Decimal)
 idiomatically put in ``details``. Closed on purpose: a blanket ``default=str`` would
 stringify **arbitrary** objects *after* sanitization, minting fresh text the scrubber
 never saw (a client object's repr can carry a DSN); anything outside this set drops
-the whole context instead."""
+the whole context instead. orjson renders an ``Enum`` member as its value, which must
+itself be renderable."""
+
+_ORJSON_OPTIONS: Final[int] = orjson.OPT_PASSTHROUGH_DATETIME | orjson.OPT_PASSTHROUGH_DATACLASS
+"""Hand datetimes and dataclasses to :func:`_render_leaf` rather than orjson's own encoders,
+so they render exactly as on the stdlib path."""
 
 
 def _render_leaf(value: object) -> str:
@@ -129,11 +135,24 @@ def _jsonable(context: JsonDict) -> JsonDict:
     matches neither ``except*`` clause and unwinds the connection's whole task group.
     Coercing here keeps the envelope's contract true for every renderer at once:
     whatever it exposes IS renderable — and only the :data:`_RENDERABLE_LEAVES` types
-    render at all (see there for why this is not ``default=str``).
+    render at all (see there for why this is not ``default=str``). A NaN or infinite float
+    renders as ``null`` on either path (Starlette's ``JSONResponse`` refuses a bare ``NaN``).
     """
 
     try:
-        return cast(JsonDict, json.loads(json.dumps(context, default=_render_leaf)))
+        dumped = orjson.dumps(context, default=_render_leaf, option=_ORJSON_OPTIONS)
+        return cast(JsonDict, orjson.loads(dumped))
+
+    except TypeError:
+        # orjson refuses what stdlib json still encodes (an int, float, bool or None key, an
+        # integer past 64 bits, a lone surrogate): retry there, which refuses the unrenderable
+        pass
+
+    try:
+        rendered = json.dumps(context, default=_render_leaf)
+
+        # the stdlib writes NaN and infinities bare; read them back as orjson writes them
+        return cast(JsonDict, json.loads(rendered, parse_constant=lambda _: None))
 
     except (TypeError, ValueError):
         # an unknown object leaf, a non-str key, a circular shape: keep the error,

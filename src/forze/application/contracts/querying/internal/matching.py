@@ -16,10 +16,16 @@ from __future__ import annotations
 
 import operator
 import re
-from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from collections.abc import Callable, Mapping, Sequence, Set
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from enum import Enum
+from functools import lru_cache
+from types import NoneType
 from typing import TYPE_CHECKING, Any, Final, cast
 from uuid import UUID
+
+import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -157,15 +163,171 @@ def _eq(left: Any, right: Any) -> bool:
     return False
 
 
-def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
+_UNKEYED: Final = object()
+
+# Types whose ``==`` is the one :func:`_eq` applies and agrees with their hash, across all of
+# them (``1``, ``1.0``, ``True`` and ``Decimal(1)`` are one key, as they are one value to ``_eq``).
+_KEYED_TYPES: Final = frozenset({str, int, bool, float, Decimal, NoneType, date})
+
+
+def _memb_key(value: Any) -> Any:
+    """*value* as a hash key that equals another's exactly when :func:`_eq` matches the two
+    values, or :data:`_UNKEYED` when ``_eq`` has rules a hash cannot express.
+
+    Only exact builtin types are keyed: a subclass or an app type may define its own ``==``.
+    A ``UUID`` is keyed by its text, which ``_eq`` also matches it by, and an aware datetime by
+    its instant. A NaN is not keyed: it equals nothing, yet a set finds it by identity.
+    """
+
+    while isinstance(value, Enum):
+        value = value.value
+
+    kind = type(value)
+
+    if kind is UUID:
+        return str(value)
+
+    if kind is datetime:
+        if value.tzinfo is None:
+            return value
+
+        return (_INSTANT, value - _EPOCH) if _is_aware(value) else _UNKEYED
+
+    if kind not in _KEYED_TYPES:
+        return _UNKEYED
+
+    if kind is float and value != value:
+        return _UNKEYED
+
+    if kind is Decimal and value.is_nan():
+        return _UNKEYED
+
+    return value
+
+
+def _memb_keys(values: Sequence[Any]) -> frozenset[Any] | None:
+    """The :func:`_memb_key` of every candidate, or ``None`` if any has none.
+
+    One unkeyed candidate turns the lookup off for the whole operand: its own ``==`` could
+    match any row value, so only the linear :func:`_eq` scan answers for it.
+    """
+
+    if not isinstance(values, (list, tuple)):
+        return None
+
+    keys = {_memb_key(candidate) for candidate in values}
+
+    return None if _UNKEYED in keys else frozenset(keys)
+
+
+def _memb_one(value: Any, values: Sequence[Any], keys: frozenset[Any] | None) -> bool:
+    if keys is not None:
+        key = _memb_key(value)
+
+        if key is not _UNKEYED:
+            return key in keys
+
+    return any(_eq(value, candidate) for candidate in values)
+
+
+def _memb_contains(
+    field_value: Any,
+    values: Sequence[Any],
+    keys: frozenset[Any] | None = None,
+) -> bool:
+    """Whether *field_value*, or an item of it when it is a list, ``_eq``-matches a candidate.
+
+    *keys* are the candidates' :func:`_memb_keys`: a keyed value is then looked up rather than
+    compared with each candidate, with the same answer.
+    """
+
     if isinstance(field_value, Sequence) and not isinstance(field_value, (str, bytes, bytearray)):
         return any(
-            _eq(item, candidate)
+            _memb_one(item, values, keys)
             for item in field_value  # pyright: ignore[reportUnknownVariableType]
-            for candidate in values
         )
 
-    return any(_eq(field_value, candidate) for candidate in values)
+    return _memb_one(field_value, values, keys)
+
+
+def _try_coerce_set(values: Sequence[Any]) -> frozenset[Any] | None:
+    # A candidate that cannot be a set member raises on every row instead, as it always has.
+    try:
+        return frozenset(_coerce_set(values))
+
+    except Exception:
+        return None
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class _PreparedField(QueryField):
+    """A membership leaf with its operand worked out once, by :func:`compile_expr`."""
+
+    keys: frozenset[Any] | None
+    """``$in`` / ``$nin``: the candidates' :func:`_memb_keys`. A set relation: the operand as
+    :func:`_coerce_set` builds it. ``None``: worked out per row, as without preparing."""
+
+
+_KEYED_OPS: Final = frozenset({"$in", "$nin"})
+_PREPARED_OPS: Final = _KEYED_OPS | {"$superset", "$subset", "$disjoint", "$overlaps"}
+
+
+def _prepare(expr: QueryExpr) -> QueryExpr:
+    """*expr* with each membership leaf replaced by a :class:`_PreparedField`."""
+
+    match expr:
+        case QueryField() if type(expr) is QueryField and expr.op in _PREPARED_OPS:
+            values: Any = expr.value
+
+            # A copy the keys and the per-row fallback both read, so the two agree however
+            # the caller's list or set changes after compiling.
+            if isinstance(values, list):
+                values = tuple(values)
+
+            elif isinstance(values, set):
+                values = frozenset(values)
+
+            keys = _memb_keys(values) if expr.op in _KEYED_OPS else _try_coerce_set(values)
+
+            return _PreparedField(expr.name, expr.op, values, keys)
+
+        case QueryAnd() | QueryOr():
+            return attrs.evolve(expr, items=tuple(_prepare(item) for item in expr.items))
+
+        case QueryNot():
+            return attrs.evolve(expr, item=_prepare(expr.item))
+
+        case QueryElem():
+            return attrs.evolve(expr, inner=_prepare(expr.inner))
+
+        case _:
+            return expr
+
+
+def _prepared_keys(field: QueryField) -> frozenset[Any] | None:
+    return field.keys if isinstance(field, _PreparedField) else None
+
+
+def _operand_set(field: QueryField) -> Set[Any]:
+    keys = _prepared_keys(field)
+
+    return keys if keys is not None else _coerce_set(field.value)
+
+
+# ....................... #
+
+
+@lru_cache(maxsize=256)
+def _like_regex(pattern: str, case_insensitive: bool) -> re.Pattern[str]:
+    """The compiled regex for a ``$like`` (or, *case_insensitive*, ``$ilike``) *pattern*.
+
+    Keyed by both arguments, the only inputs of :func:`like_pattern_to_regex`.
+    """
+
+    return re.compile(like_pattern_to_regex(pattern, case_insensitive=case_insensitive))
 
 
 def _match_text(value: Any, op: str, pattern: str) -> bool:
@@ -177,15 +339,9 @@ def _match_text(value: Any, op: str, pattern: str) -> bool:
     text = str(value)
     match op:
         case "$like":
-            return re.search(like_pattern_to_regex(pattern), text) is not None
+            return _like_regex(pattern, False).search(text) is not None
         case "$ilike":
-            return (
-                re.search(
-                    like_pattern_to_regex(pattern, case_insensitive=True),
-                    text,
-                )
-                is not None
-            )
+            return _like_regex(pattern, True).search(text) is not None
         case "$regex":
             return re.search(pattern, text) is not None
         case _:
@@ -275,37 +431,33 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             values = cast(Sequence[Any], field.value)
-            return _memb_contains(value, values)
+            return _memb_contains(value, values, _prepared_keys(field))
 
         case "$nin":
             if value is _MISSING:
                 return True
             values = cast(Sequence[Any], field.value)
-            return not _memb_contains(value, values)
+            return not _memb_contains(value, values, _prepared_keys(field))
 
         case "$superset":
             if value is _MISSING:
                 return False
-            values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).issuperset(_coerce_set(values))
+            return _coerce_set(value).issuperset(_operand_set(field))
 
         case "$subset":
             if value is _MISSING:
                 return False
-            values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).issubset(_coerce_set(values))
+            return _coerce_set(value).issubset(_operand_set(field))
 
         case "$disjoint":
             if value is _MISSING:
                 return True
-            values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).isdisjoint(_coerce_set(values))
+            return _coerce_set(value).isdisjoint(_operand_set(field))
 
         case "$overlaps":
             if value is _MISSING:
                 return False
-            values = cast(Sequence[Any], field.value)
-            return not _coerce_set(value).isdisjoint(_coerce_set(values))
+            return not _coerce_set(value).isdisjoint(_operand_set(field))
 
         case "$like" | "$ilike" | "$regex":
             return _match_text(value, field.op, str(field.value))
@@ -506,7 +658,20 @@ def compile_filter(
         if parser is not None
         else QueryFilterExpressionParser.parse(filters)
     )
-    return lambda row: _match_expr(row, expr)
+    return compile_expr(expr)
+
+
+def compile_expr(expr: QueryExpr) -> Callable[[JsonDict], bool]:
+    """A reusable ``row -> bool`` predicate for the parsed *expr*, with the same semantics.
+
+    Work that depends on the filter alone is done here, once: a membership operand
+    (``$in``, ``$nin``, a set relation) is turned into a hash lookup, so a row costs one probe
+    rather than a comparison with each candidate.
+    """
+
+    prepared = _prepare(expr)
+
+    return lambda row: _match_expr(row, prepared)
 
 
 def value_at_path(row: Mapping[str, Any], path: str) -> Any:

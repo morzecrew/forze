@@ -109,7 +109,24 @@ a model (the document, a nested model, or one held in a union or a mapping) it m
 by field, and a field set to `None` takes its default, or is refused when it has none. Into
 a mapping or `Any` value it merges key by key: the keys the patch leaves out are kept, and a
 `None` is stored as null where the value's type admits one (a `dict[str, int]` refuses it).
-A list is replaced. An update cannot remove a key from a mapping.
+A list is replaced.
+
+To remove keys, mark the field `ReplaceOnUpdate`: an update then stores the value it sends,
+whole, so a key it leaves out is removed. A marked nested model must be sent whole, and `None`
+still resets the field to its default. The marker works on a field at any depth, on one arm
+of a union, and behind a `type` alias.
+
+```python
+from typing import Annotated, Any
+
+from forze.domain.models import Document, ReplaceOnUpdate
+
+class Inbox(Document):
+    pending: Annotated[dict[str, Any], ReplaceOnUpdate()] = {}
+
+inbox = Inbox(pending={"a": 1, "b": 2})
+handled, diff = inbox.update({"pending": {"b": 2}})  # handled.pending == {"b": 2}
+```
 
 These validate a *single* write. A state **transition** — its guard plus the change
 it makes — belongs on the aggregate too, as a *decider* method that returns the patch

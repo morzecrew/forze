@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **An update replaces a field marked `ReplaceOnUpdate` whole, so a key it leaves out is removed.** Use `Annotated[dict[str, Any], ReplaceOnUpdate()]` from `forze.domain.models`, at any depth. Unmarked mappings still merge key by key. `ChildCollectionSync` accepts a marked mapping as a compare field.
 
 ### Changed
 
@@ -27,17 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Scrubbed logging costs about a quarter less per event.** A JSON `logger.info` with eight extras drops from ~50 to ~37 µs and log-context `sanitize` on the same fields from ~20 to ~7 µs; what gets masked is unchanged.
 
+- **The in-memory filter matcher no longer compares each row with every `$in` value.** `forze_mock` adapters and `compile_filter` work out `$in`, `$nin`, set-relation and `$like` / `$ilike` operands once per filter, with the same results: a mock `find_many` with a 200-value `$in` over 1,000 rows takes 2 ms, not 179.
+
 - **Reading encrypted fields is about twice as fast.** The wire format does not change. New: `bind_aead` and `KeyedAead` in `forze.base.crypto` (one AEAD cipher per data key) and `Keyring.decrypt_envelope_sync` (opens an already-parsed envelope).
 
 - **Calling an operation through a facade costs about 3 µs less.** A facade factory such as `document_facade(...)` now returns the same frozen facade while the runtime's context stays current (`users() is users()` within one scope), instead of a new one per call; it never carries one into another scope.
 
 - **A mock-backed DST seed takes up to a third less time.** Freezing a deps registry and generating a derived scenario's inputs both cost less; recorded seeds replay unchanged.
 
+- **The `redis` extra installs `hiredis`**, the C reply parser redis-py uses on its own when present. Large replies such as `MGET`, `HGETALL` and pipelines parse several times faster.
+
 ### Fixed
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
 
 - **A DST seed now derives the same date and time inputs on every run.** Inputs that `derive_scenario` and op cases generate took dates, times and `UUID1` values from the wall clock; they now come from the seed, before the simulated epoch (future-typed ones from 2100). A stored seed with such fields draws new values.
+
+- **An error context holding a NaN, an infinity or a plain `Enum` member now renders.** A non-finite float becomes `null`, where the HTTP error response used to fail on it, and an `Enum` member renders as its value instead of dropping the whole context.
 
 ### Security
 

@@ -12,13 +12,14 @@ Two families live here:
 from __future__ import annotations
 
 import base64
-import json
 from collections.abc import Sequence
 from functools import cmp_to_key
 from typing import (
     Any,
     cast,
 )
+
+import orjson
 
 from forze.application.contracts.querying import (
     CursorBinding,
@@ -35,19 +36,25 @@ from forze.base.primitives import JsonDict
 
 
 def _b64url_json_dumps(payload: dict[str, int]) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    raw = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 def _b64url_json_loads_dict(token: str) -> dict[str, int]:
     pad = "=" * (-len(token) % 4)
     raw = base64.urlsafe_b64decode(token + pad)
-    data_any: Any = json.loads(raw.decode())
+    data_any: Any = orjson.loads(raw)
 
     if not isinstance(data_any, dict) or "s" not in data_any:
         raise ValueError
 
-    return {"s": int(cast(Any, data_any["s"]))}
+    start = int(cast(Any, data_any["s"]))
+
+    # Not an offset the mock mints: past 63 bits the next page's token could not be encoded.
+    if not 0 <= start < 2**63:
+        raise ValueError
+
+    return {"s": start}
 
 
 def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportUnusedFunction]
@@ -68,7 +75,7 @@ def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportU
         try:
             payload = _b64url_json_loads_dict(str(c["after"]))
 
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             raise exc.validation("Invalid cursor token") from e
 
         start = int(payload["s"])
@@ -77,7 +84,7 @@ def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportU
         try:
             payload = _b64url_json_loads_dict(str(c["before"]))
 
-        except (ValueError, KeyError, json.JSONDecodeError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             raise exc.validation("Invalid cursor token") from e
 
         page_start = int(payload["s"])
