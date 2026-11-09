@@ -10,7 +10,9 @@ each new signal into the node's :class:`~forze_fastapi.realtime.RealtimeSseHub`.
 
 Supervision matches the gateway: restart on crash with jittered backoff, terminal
 on configuration errors, graceful stop at a read boundary, registered in
-``ctx.drainables`` so the runtime drains it before lifecycle teardown.
+``ctx.drainables`` so the runtime drains it before lifecycle teardown. A restart
+resumes from the last signal the loop read, so a crash delays the signals appended
+meanwhile instead of skipping them; only a new startup fast-forwards again.
 """
 
 from forze_fastapi._compat import require_fastapi
@@ -68,6 +70,11 @@ _IDLE_FLOOR = 0.05
 _FAST_FORWARD_PAGE = 1000
 """Entries consumed per read while skipping the pre-startup backlog."""
 
+type _Cursors = dict[UUID | None, dict[str, str]]
+"""Each tail loop's stream cursor by its tenant (``None`` for the tenant-global loop).
+
+One per startup, kept across the loops' supervised restarts."""
+
 
 def _tenant_from_headers(headers: object) -> UUID | None:
     """The (untrusted-at-this-layer) tenant a signal was published under, if any."""
@@ -120,15 +127,18 @@ async def _tail_to_hub(
     batch: int,
     poll_interval: timedelta,
     stop: asyncio.Event,
+    cursor: dict[str, str] | None = None,
     tenant_for: Callable[[Any], UUID | None] | None = None,
     on_live: Callable[[], None] | None = None,
 ) -> None:
     """Fast-forward to the stream's tail, then publish every new signal into the hub.
 
-    *tenant_for* resolves the tenant a signal is published under: ``None`` (the
-    tenant-global stream) reads the untrusted ``forze_tenant_id`` header; the sharded
-    loop passes the **bound** shard tenant instead — the stream's identity, trusted.
-    *on_live* fires once the fast-forward completes and live publishing begins — the
+    *cursor* is where the loop resumes, kept by the caller across restarts: empty, the
+    loop fast-forwards first; once live it holds the last signal read, so the next run
+    starts right after it. *tenant_for* resolves the tenant a signal is published under:
+    ``None`` (the tenant-global stream) reads the untrusted ``forze_tenant_id`` header;
+    the sharded loop passes the **bound** shard tenant instead — the stream's identity,
+    trusted. *on_live* fires once live publishing begins (at once on a resume) — the
     runners flip ``hub.ready`` through it (the sharded runner only after every tenant).
     """
 
@@ -138,22 +148,27 @@ async def _tail_to_hub(
         ctx, StreamQueryDepKey, stream_spec, route=stream_spec.name
     )
     stream = str(stream_spec.name)
-    cursor = {stream: "0"}
+    cursor = {} if cursor is None else cursor
     tenant_of = tenant_for if tenant_for is not None else _header_tenant
 
-    # Start at *now*: page through the retained backlog without publishing. Backend-
-    # neutral (no reliance on a "$" cursor) and bounded by the stream's retention cap.
-    # A short read means we are within one page of the tail — stop there instead of
-    # reading until empty, which on an active stream would keep chasing concurrent
-    # appends and silently classify them (and their live delivery) as backlog.
-    while not stop.is_set():
-        backlog = await port.read(dict(cursor), limit=_FAST_FORWARD_PAGE, timeout=None)
+    if stream not in cursor:
+        position = {stream: "0"}
 
-        if backlog:
-            cursor[stream] = backlog[-1].id
+        # Start at *now*: page through the retained backlog without publishing. Backend-
+        # neutral (no reliance on a "$" cursor) and bounded by the stream's retention cap.
+        # A short read means we are within one page of the tail — stop there instead of
+        # reading until empty, which on an active stream would keep chasing concurrent
+        # appends and silently classify them (and their live delivery) as backlog.
+        while not stop.is_set():
+            backlog = await port.read(dict(position), limit=_FAST_FORWARD_PAGE, timeout=None)
 
-        if len(backlog) < _FAST_FORWARD_PAGE:
-            break
+            if backlog:
+                position[stream] = backlog[-1].id
+
+            if len(backlog) < _FAST_FORWARD_PAGE:
+                break
+
+        cursor.update(position)  # set only here: a crash mid-skip fast-forwards again
 
     if on_live is not None:
         on_live()
@@ -162,7 +177,7 @@ async def _tail_to_hub(
         messages = await port.read(dict(cursor), limit=batch, timeout=poll_interval)
 
         for message in messages:
-            cursor[stream] = message.id
+            cursor[stream] = message.id  # first: a signal that cannot publish is not retried
             hub.publish(
                 message.payload,
                 tenant_of(message),
@@ -188,6 +203,7 @@ async def _sharded_tail_to_hub(
     restart_backoff: timedelta,
     max_consecutive_crashes: int | None,
     stop: asyncio.Event,
+    cursors: _Cursors | None = None,
 ) -> None:
     """One tail loop per assigned tenant, each bound to it — the tenant-aware twin.
 
@@ -196,12 +212,14 @@ async def _sharded_tail_to_hub(
     tenant's key/partition, and publishes under the **stream's** identity — no header
     trust. Each tenant loop is individually supervised (``run_supervised`` absorbs a
     terminal error by logging it), so one tenant's fault degrades that tenant's live
-    fan-out only — the siblings keep tailing.
+    fan-out only — the siblings keep tailing. Each resumes from its own entry in
+    *cursors* after a restart.
     """
 
     _refuse_encrypted_stream(shard.stream_spec)
 
     tenants = list(shard.tenants)
+    cursors = {} if cursors is None else cursors
 
     if not tenants:
         # Nothing assigned: idle until stopped. Returning early would look like a
@@ -237,6 +255,7 @@ async def _sharded_tail_to_hub(
                     batch=batch,
                     poll_interval=poll_interval,
                     stop=stop,
+                    cursor=cursors.setdefault(tenant, {}),
                     tenant_for=_shard_tenant,
                     on_live=_one_live,
                 )
@@ -265,7 +284,7 @@ async def _sharded_tail_to_hub(
 class _SseTailStartup(LifecycleHook):
     """Spawn a supervised per-node loop (plain or sharded tail) as a background task."""
 
-    runner: Callable[[ExecutionContext, asyncio.Event], Awaitable[None]]
+    runner: Callable[[ExecutionContext, asyncio.Event, _Cursors], Awaitable[None]]
     name: str
     restart_backoff: timedelta
     max_consecutive_crashes: int | None
@@ -322,9 +341,10 @@ class _SseTailStartup(LifecycleHook):
             self.preflight(ctx)
 
         stop = self.control.arm()
+        cursors: _Cursors = {}  # a restart resumes; a new startup starts at the tail again
 
         async def _run_once() -> None:
-            await self.runner(ctx, stop)
+            await self.runner(ctx, stop, cursors)
 
         self.control.task = asyncio.create_task(
             run_supervised(
@@ -372,12 +392,15 @@ def realtime_sse_tail_lifecycle_step(
     Register it alongside :func:`~forze_fastapi.realtime.attach_realtime_sse_route`
     (sharing the same hub instance) on every node serving SSE connections. The plain
     stream read is broadcast — no consumer group, so no group lifecycle to manage —
-    and at-most-once by design: the mailbox carries the durable guarantee.
+    and at-most-once by design: the mailbox carries the durable guarantee. A crash
+    restarts the loop after *restart_backoff*, from the last signal it read: the signals
+    appended meanwhile arrive late instead of being skipped, unless the stream trims
+    them first.
     """
 
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)
 
-    async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
+    async def _run(ctx: ExecutionContext, stop: asyncio.Event, cursors: _Cursors) -> None:
         # Gate connections while the fast-forward runs (see RealtimeSseHub.ready);
         # always restore readiness on exit so a dead tail degrades to catch-up mode
         # instead of holding every connect at the gate.
@@ -391,6 +414,7 @@ def realtime_sse_tail_lifecycle_step(
                 batch=batch,
                 poll_interval=poll_interval,
                 stop=stop,
+                cursor=cursors.setdefault(None, {}),
                 on_live=hub.ready.set,
             )
 
@@ -463,7 +487,7 @@ def realtime_sse_sharded_tail_lifecycle_step(
 
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)
 
-    async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
+    async def _run(ctx: ExecutionContext, stop: asyncio.Event, cursors: _Cursors) -> None:
         # Gate connections until every tenant's fast-forward completes; always
         # restore readiness on exit (a dead shard degrades to catch-up, never a
         # permanently gated connect).
@@ -479,6 +503,7 @@ def realtime_sse_sharded_tail_lifecycle_step(
                 restart_backoff=restart_backoff,
                 max_consecutive_crashes=max_consecutive_crashes,
                 stop=stop,
+                cursors=cursors,
             )
 
         finally:

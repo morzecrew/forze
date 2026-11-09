@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **The SSE live tail resumes where it stopped after a crash.** A restart after a failed stream read skipped to the end of the stream, so every SSE and WebSocket stream on the node missed the signals appended meanwhile; they now arrive once the tail restarts.
 
 ## [0.24.0] - 2026-11-09
 

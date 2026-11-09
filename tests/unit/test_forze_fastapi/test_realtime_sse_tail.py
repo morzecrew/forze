@@ -1,12 +1,14 @@
 """The per-node SSE live-tail loop — fast-forward, hub publish, supervision, refusals.
 
 # covers: forze_fastapi.realtime.lifecycle (_tail_to_hub fast-forward + tenant headers,
-#         realtime_sse_tail_lifecycle_step wiring validation, startup/shutdown, dupes)
+#         realtime_sse_tail_lifecycle_step wiring validation, startup/shutdown, dupes,
+#         resume after a crash)
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -24,6 +26,7 @@ from forze_fastapi.realtime import RealtimeSseHub, realtime_sse_tail_lifecycle_s
 from forze_fastapi.realtime.lifecycle import _tail_to_hub  # pyright: ignore[reportPrivateUsage]
 from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
 from forze_mock import MockDepsModule, MockRouteConfig
+from forze_mock.adapters.stream import MockStreamAdapter
 
 # ----------------------- #
 
@@ -215,8 +218,12 @@ class _ScriptedPort:
     ) -> list[Any]:
         del timeout
         self.reads.append((dict(mapping), limit))
+        page = self.pages.pop(0) if self.pages else []
 
-        return self.pages.pop(0) if self.pages else []
+        if isinstance(page, Exception):
+            raise page
+
+        return page
 
 
 def _port_ctx(port: _ScriptedPort) -> Any:
@@ -326,3 +333,124 @@ class TestFastForwardBoundAndReadiness:
 
             assert hub.ready.is_set()
             await step.shutdown(ctx)
+
+
+# ----------------------- #
+
+
+class TestRestart:
+    @staticmethod
+    def _flaky_reads(
+        monkeypatch: pytest.MonkeyPatch, on_crash: Callable[[], Awaitable[None]]
+    ) -> tuple[asyncio.Event, asyncio.Event]:
+        """Patch the mock stream's reads: set *live* on a live read, fail one on *crash*."""
+
+        read = MockStreamAdapter.read
+        live, crash = asyncio.Event(), asyncio.Event()
+
+        async def _read(self: Any, mapping: dict[str, str], **kwargs: Any) -> Any:
+            if kwargs.get("limit") == 16:
+                live.set()
+
+            if crash.is_set():
+                crash.clear()
+                await on_crash()
+                raise ConnectionError("pool exhausted")
+
+            return await read(self, mapping, **kwargs)
+
+        monkeypatch.setattr(MockStreamAdapter, "read", _read)
+
+        return live, crash
+
+    async def test_a_crash_resumes_after_the_last_signal_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The restart used to fast-forward again, past every signal appended meanwhile.
+        spec = realtime_stream_spec()
+        hub = RealtimeSseHub()
+        sub = hub.subscribe(principal="nobody", tenant=None, topics=frozenset({"t"}))
+        step = realtime_sse_tail_lifecycle_step(
+            hub,
+            stream_spec=spec,
+            batch=16,
+            poll_interval=timedelta(milliseconds=10),
+            restart_backoff=timedelta(milliseconds=10),
+        )
+
+        runtime = _runtime()
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            pub = build_realtime_publisher(ctx, stream_spec=spec)
+
+            async def _meanwhile() -> None:
+                await pub.publish(Audience.topic("t"), _EVENT, _View(n=2))
+
+            live, crash = self._flaky_reads(monkeypatch, _meanwhile)
+            await step.startup(ctx)
+            await asyncio.wait_for(live.wait(), timeout=5)
+
+            await pub.publish(Audience.topic("t"), _EVENT, _View(n=1))
+            assert (await _drain(sub)).payload == {"n": 1}
+
+            crash.set()  # the next read appends n=2, then fails
+            assert (await _drain(sub)).payload == {"n": 2}
+            assert sub.queue.empty()  # n=1 is not delivered again
+
+            await step.shutdown(ctx)
+
+    async def test_a_new_startup_starts_at_the_tail_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = realtime_stream_spec()
+        hub = RealtimeSseHub()
+        sub = hub.subscribe(principal="nobody", tenant=None, topics=frozenset({"t"}))
+        step = realtime_sse_tail_lifecycle_step(
+            hub, stream_spec=spec, batch=16, poll_interval=timedelta(milliseconds=10)
+        )
+
+        runtime = _runtime()
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            pub = build_realtime_publisher(ctx, stream_spec=spec)
+
+            async def _nothing() -> None:
+                pass
+
+            live, _crash = self._flaky_reads(monkeypatch, _nothing)
+            await step.startup(ctx)
+            await asyncio.wait_for(live.wait(), timeout=5)
+            await step.shutdown(ctx)
+
+            await pub.publish(Audience.topic("t"), _EVENT, _View(n=1))  # before the startup
+            live.clear()
+            await step.startup(ctx)
+            await asyncio.wait_for(live.wait(), timeout=5)
+
+            await pub.publish(Audience.topic("t"), _EVENT, _View(n=2))
+            assert (await _drain(sub)).payload == {"n": 2}  # n=1 was backlog to this startup
+
+            await step.shutdown(ctx)
+
+    async def test_a_crash_in_the_fast_forward_leaves_no_place_to_resume(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_fastapi.realtime.lifecycle as lifecycle_module
+
+        monkeypatch.setattr(lifecycle_module, "_FAST_FORWARD_PAGE", 2)
+
+        port = _ScriptedPort([[_msg("1-0", 1), _msg("2-0", 2)], ConnectionError("gone")])  # type: ignore[list-item]
+        cursor: dict[str, str] = {}
+
+        with pytest.raises(ConnectionError):
+            await _tail_to_hub(
+                _port_ctx(port),
+                hub=RealtimeSseHub(),
+                stream_spec=realtime_stream_spec(),
+                batch=16,
+                poll_interval=timedelta(milliseconds=10),
+                stop=asyncio.Event(),
+                cursor=cursor,
+            )
+
+        assert cursor == {}  # the restart skips the whole backlog again, not just its rest
