@@ -12,6 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
+from zoneinfo import ZoneInfo
 
 import faker.providers.date_time as faker_date_time
 import polyfactory.value_generators.constrained_dates as constrained_dates
@@ -207,11 +208,14 @@ class TestTimeWindows:
 
     def test_a_bounded_instant_is_as_aware_as_its_bounds_and_type_say(self) -> None:
         plus5 = timezone(timedelta(hours=5))
+        # New York's 01:00-02:00 on 2026-11-01 happens twice; fold=1 is the second, later pass
+        repeated = datetime(2026, 11, 1, 1, tzinfo=ZoneInfo("America/New_York"), fold=1)
 
         class Window(BaseModel):
             mixed: datetime = Field(gt=datetime(2026, 1, 1, tzinfo=plus5), lt=datetime(2026, 1, 2))
             aware: AwareDatetime = Field(lt=datetime(2030, 1, 1))
             naive: NaiveDatetime = Field(gt=datetime(2020, 1, 1, tzinfo=UTC))
+            again: datetime = Field(gt=repeated, lt=repeated.replace(minute=50))
 
         factory = InputFactory.create_factory(Window)
 
@@ -220,7 +224,7 @@ class TestTimeWindows:
             window = factory.build()  # pydantic checks every bound and the awareness on build
 
             assert window.mixed.tzinfo is plus5 and window.aware.tzinfo is UTC
-            assert window.naive.tzinfo is None
+            assert window.naive.tzinfo is None and window.again.fold == 1
 
     def test_a_datetime_whose_metadata_asks_for_awareness_gets_it(self) -> None:
         # polyfactory drops the validator forze's AwareDatetime adds, and pydantic's marker

@@ -153,7 +153,8 @@ def _framed(bound: Any, zone: tzinfo | None) -> Any:
     if zone is None:
         return bound.replace(tzinfo=None)
 
-    return bound if bound.tzinfo is not None else bound.replace(tzinfo=zone)
+    # in UTC, arithmetic runs on instants: within one zone it is wall-clock and drops ``fold``
+    return (bound if bound.tzinfo is not None else bound.replace(tzinfo=zone)).astimezone(UTC)
 
 
 # ....................... #
@@ -284,7 +285,7 @@ class InputFactory(ModelFactory[BaseModel]):
             epoch: date = DEFAULT_EPOCH.date()
 
         elif zone is not None:
-            epoch = DEFAULT_EPOCH.astimezone(zone)
+            epoch = DEFAULT_EPOCH
 
         else:
             epoch = DEFAULT_EPOCH.replace(tzinfo=None)
