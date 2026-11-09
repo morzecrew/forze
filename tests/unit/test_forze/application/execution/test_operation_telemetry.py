@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import uuid4
 
 import attrs
 import pytest
+from opentelemetry import trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
@@ -49,6 +51,14 @@ class _Boom(Handler[None, None]):
 @attrs.define(slots=True)
 class _Raise(Handler[None, None]):
     error: CoreException
+
+    async def __call__(self, _args: None) -> None:
+        raise self.error
+
+
+@attrs.define(slots=True)
+class _Throw(Handler[None, None]):
+    error: BaseException
 
     async def __call__(self, _args: None) -> None:
         raise self.error
@@ -179,6 +189,116 @@ class TestInstrumentOperations:
         assert span.attributes["forze.operation.kind"] == "query"
         # No boundary bound metadata, and the span still says so.
         assert span.attributes["forze.invocation_surface"] == "unknown"
+
+    async def test_span_attributes_are_exactly_the_bound_ids(self) -> None:
+        tracer, meter, exporter, _ = _otel()
+        reg = _instrumented({"do": lambda _c: _Echo()}, tracer, meter)
+        ctx = context_from_modules(MockDepsModule())
+
+        metadata = InvocationMetadata(
+            execution_id=uuid4(),
+            correlation_id=uuid4(),
+            causation_id=uuid4(),
+            surface="mcp",
+        )
+        tenant_id, principal_id = uuid4(), uuid4()
+        with ctx.inv_ctx.bind(
+            metadata=metadata,
+            authn=AuthnIdentity(principal_id=principal_id),
+            tenant=TenantIdentity(tenant_id=tenant_id),
+        ):
+            await run_operation(reg, "do", "x", ctx)
+
+        await run_operation(reg, "do", "x", ctx)  # nothing bound
+
+        bound, bare = exporter.get_finished_spans()
+        assert dict(bound.attributes) == {
+            "forze.operation": "do",
+            "forze.operation.kind": "command",
+            "forze.invocation_surface": "mcp",
+            "forze.execution_id": str(metadata.execution_id),
+            "forze.correlation_id": str(metadata.correlation_id),
+            "forze.causation_id": str(metadata.causation_id),
+            "forze.tenant_id": str(tenant_id),
+            "forze.principal_id": str(principal_id),
+        }
+        assert dict(bare.attributes) == {
+            "forze.operation": "do",
+            "forze.operation.kind": "command",
+            "forze.invocation_surface": "unknown",
+        }
+
+    @pytest.mark.parametrize(
+        ("error", "outcome"),
+        [
+            (None, "success"),
+            (exc.not_found("No such note"), "failed"),
+            (RuntimeError("boom"), "error"),
+            (asyncio.CancelledError(), "error"),
+        ],
+        ids=["success", "failed", "error", "cancelled"],
+    )
+    @pytest.mark.parametrize("kind", ["command", "query"])
+    async def test_metric_labels_per_kind_and_outcome(
+        self,
+        error: BaseException | None,
+        outcome: str,
+        kind: str,
+    ) -> None:
+        tracer, meter, exporter, reader = _otel()
+        handler = (lambda _c: _Echo()) if error is None else (lambda _c: _Throw(error))
+        query = ("op",) if kind == "query" else ()
+        reg = _instrumented({"op": handler}, tracer, meter, query=query)
+        ctx = context_from_modules(MockDepsModule())
+
+        if error is None:
+            await run_operation(reg, "op", "x", ctx)
+
+        else:
+            with pytest.raises(type(error)):
+                await run_operation(reg, "op", None, ctx)
+
+        expected = {
+            "forze.operation": "op",
+            "forze.operation.kind": kind,
+            "forze.outcome": outcome,
+        }
+        ((labels, point),) = _points(reader, OPERATIONS_COUNTER)
+        assert labels == expected
+        assert point.value == 1
+        ((hist_labels, hist),) = _points(reader, DURATION_HISTOGRAM)
+        assert hist_labels == expected
+        assert hist.count == 1
+
+        (span,) = exporter.get_finished_spans()
+        assert span.attributes["forze.operation.kind"] == kind
+        error_status = outcome == "error"
+        assert (span.status.status_code is StatusCode.ERROR) is error_status
+
+    async def test_span_is_current_inside_the_operation_only(self) -> None:
+        tracer, meter, exporter, reader = _otel()
+        seen: list[Any] = []
+
+        @attrs.define(slots=True)
+        class _Peek(Handler[None, None]):
+            async def __call__(self, _args: None) -> None:
+                seen.append(trace.get_current_span())
+
+        reg = _instrumented({"op": lambda _c: _Peek()}, tracer, meter)
+        ctx = context_from_modules(MockDepsModule())
+
+        with tracer.start_as_current_span("outer") as outer:
+            await run_operation(reg, "op", None, ctx)
+            assert trace.get_current_span() is outer  # detached on the way out
+
+        op_span, outer_span = exporter.get_finished_spans()
+        assert seen[0].get_span_context() == op_span.context
+        assert op_span.parent is not None
+        assert op_span.parent.span_id == outer_span.context.span_id
+
+        # Recorded while the operation's span is current: the exemplar points at it.
+        ((_, point),) = _points(reader, OPERATIONS_COUNTER)
+        assert [e.span_id for e in point.exemplars] == [op_span.context.span_id]
 
     async def test_instruments_every_operation(self) -> None:
         tracer, meter, exporter, _ = _otel()
