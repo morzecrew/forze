@@ -83,7 +83,7 @@ def walk_value(
             for item in value  # pyright: ignore[reportUnknownVariableType]
         ]
 
-    if isinstance(value, Enum) and isinstance(value.value, (Mapping, list, tuple)):
+    if isinstance(value, Enum) and isinstance(value.value, (Mapping, list, tuple, Enum)):
         # An encoder writes a member as its value, so scrub the container it would write.
         return walk_value(value.value, text_scrub=text_scrub, depth=depth, max_depth=max_depth)
 

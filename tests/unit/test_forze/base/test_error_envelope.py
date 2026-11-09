@@ -381,11 +381,15 @@ def test_an_enum_member_holding_a_container_renders_it_masked() -> None:
         MAPPING = {"password": "hunter2", "size": 1}
         LIST = ({"token": "t"},)
 
+    class _Outer(Enum):
+        NESTED = _Shape.MAPPING
+
     envelope = error_envelope(
-        exc.validation("bad", details={"m": _Shape.MAPPING, "l": _Shape.LIST})
+        exc.validation("bad", details={"m": _Shape.MAPPING, "l": _Shape.LIST, "n": _Outer.NESTED})
     )
 
     assert envelope.context == {
         "m": {"password": "**********", "size": 1},
         "l": [{"token": "**********"}],
+        "n": {"password": "**********", "size": 1},
     }
