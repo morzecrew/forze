@@ -48,7 +48,13 @@ def _b64url_json_loads_dict(token: str) -> dict[str, int]:
     if not isinstance(data_any, dict) or "s" not in data_any:
         raise ValueError
 
-    return {"s": int(cast(Any, data_any["s"]))}
+    start = int(cast(Any, data_any["s"]))
+
+    # Not an offset the mock mints: past 63 bits the next page's token could not be encoded.
+    if not 0 <= start < 2**63:
+        raise ValueError
+
+    return {"s": start}
 
 
 def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportUnusedFunction]

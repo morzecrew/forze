@@ -50,6 +50,15 @@ def test_cursor_token_that_is_not_a_finite_json_number_is_invalid(raw: bytes) ->
         _mock_cursor_start_and_limit({"after": token})
 
 
+@pytest.mark.parametrize("start", ["18446744073709551616", 2**63, -1])
+def test_cursor_token_with_an_offset_the_mock_never_mints_is_invalid(start: object) -> None:
+    # The next page's token is encoded from the offset, which past 63 bits cannot be.
+    token = base64.urlsafe_b64encode(json.dumps({"s": start}).encode()).decode().rstrip("=")
+
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        _mock_cursor_start_and_limit({"after": token})
+
+
 def test_cursor_start_and_limit_after() -> None:
     after = _b64url_json_dumps({"s": 5})
     start, lim = _mock_cursor_start_and_limit({"after": after, "limit": 3})
@@ -135,7 +144,9 @@ _DOCS = [
 ]
 
 
-def _window(cursor: dict[str, object] | None) -> tuple[list[dict[str, object]], bool, str | None, str | None]:
+def _window(
+    cursor: dict[str, object] | None,
+) -> tuple[list[dict[str, object]], bool, str | None, str | None]:
     return _mock_keyset_window(
         list(_DOCS),
         cursor=cursor,
