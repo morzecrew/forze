@@ -22,7 +22,7 @@ only orjson refuses (an int past 64 bits, a lone surrogate) keeps the stdlib enc
 """
 
 import json
-import math
+import re
 from collections.abc import Mapping
 from typing import Any, Final
 
@@ -41,6 +41,9 @@ _CORRELATION_KEYS: Final[tuple[str, ...]] = ("type", "cid", "id", "event")
 _ORJSON_OPTIONS: Final[int] = orjson.OPT_PASSTHROUGH_DATETIME | orjson.OPT_PASSTHROUGH_DATACLASS
 """Refuse what the stdlib refused: orjson would otherwise encode these itself."""
 
+_NON_FINITE: Final[re.Pattern[str]] = re.compile(r'"(?:[^"\\]|\\.)*"|-?Infinity|NaN')
+"""A string literal, or a bare non-finite token the stdlib writes outside one."""
+
 
 # ....................... #
 
@@ -55,8 +58,7 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
     fallback: dict[str, Any] = {
         # JSON scalars only: a client cid may be any JSON scalar (int included), and
         # every one of these is provably serializable — unlike whatever broke the frame.
-        # A non-finite float goes out as null, like everywhere else on the wire.
-        key: _finite(payload[key])
+        key: payload[key]
         for key in _CORRELATION_KEYS
         if key in payload and isinstance(payload[key], (str, int, float, bool, type(None)))
     }
@@ -72,26 +74,16 @@ def _fallback_frame(payload: Mapping[str, Any], *, code: str) -> dict[str, Any]:
 # ....................... #
 
 
-def _finite(value: Any) -> Any:
-    """*value* with every ``NaN`` or infinite float replaced by ``None``, as orjson writes it.
+def _stdlib_dumps(value: Any) -> str:
+    """*value* as the stdlib encodes it, with ``NaN`` and infinities as ``null``.
 
-    Walks what the stdlib encoder walks, in its order, so a ``str`` that is also a
-    container stays a string and anything else is left for the stdlib to refuse.
+    The stdlib writes those as bare tokens, which ``JSON.parse`` rejects. Its output is
+    ASCII with escaped quotes, so outside a string literal such a token is only ever one.
     """
 
-    if isinstance(value, (str, int)):
-        return value
+    encoded = json.dumps(value, separators=(",", ":"))
 
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-
-    if isinstance(value, (list, tuple)):
-        return [_finite(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
-
-    if isinstance(value, dict):
-        return {k: _finite(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-
-    return value
+    return _NON_FINITE.sub(lambda m: m[0] if m[0][0] == '"' else "null", encoded)
 
 
 # ....................... #
@@ -103,9 +95,8 @@ def _dumps(payload: Mapping[str, Any]) -> str:
 
     except TypeError:
         # Ints past 64 bits, float subclasses, lone surrogates, non-str keys and nesting
-        # past 254 levels: orjson refuses them, the stdlib encoded them, so it still does,
-        # with non-finite floats as ``null`` (a bare ``NaN`` is not JSON to a browser).
-        return json.dumps(_finite(payload), separators=(",", ":"))
+        # past 254 levels: orjson refuses them, the stdlib encoded them, so it still does.
+        return _stdlib_dumps(payload)
 
 
 # ....................... #
@@ -128,12 +119,13 @@ def encode_frame(
     try:
         return _dumps(payload)
 
-    # RecursionError: nesting deeper than the stdlib (or the walk above) can follow.
-    except (TypeError, ValueError, RecursionError) as error:
+    # Anything: a payload value's own methods (a dict subclass's ``items``, a nesting
+    # past the recursion limit) can raise whatever they like, and this must not.
+    except Exception as error:
         logger.critical_exception("Realtime frame is not JSON-serializable", exc=error)
 
         # The stdlib, not orjson: it encodes any scalar a correlation key may hold.
-        return json.dumps(_fallback_frame(payload, code=fallback_code), separators=(",", ":"))
+        return _stdlib_dumps(_fallback_frame(payload, code=fallback_code))
 
 
 # ....................... #

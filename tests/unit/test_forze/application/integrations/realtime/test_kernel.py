@@ -496,6 +496,11 @@ class TestFrameEncoding:
                 '{"n":18446744073709551616,"x":null,"l":[null]}',
             ),
             ({"n": 2**64, "s": _StrMapping("x")}, '{"n":18446744073709551616,"s":"x"}'),
+            # ... and the same tokens inside a string are left alone
+            (
+                {"n": 2**64, "s": 'NaN -Infinity \\"NaN\\" "Infinity"'},
+                '{"n":18446744073709551616,"s":"NaN -Infinity \\\\\\"NaN\\\\\\" \\"Infinity\\""}',
+            ),
         ],
     )
     def test_wire_form(self, payload: dict[Any, Any], wire: str) -> None:
@@ -508,6 +513,17 @@ class TestFrameEncoding:
 
         assert jsonable_frame({"x": float("nan"), "s": "é"}) == {"x": None, "s": "é"}
         assert jsonable_frame({"n": 2**64, "s": "\ud800"}) == {"n": 2**64, "s": "\ud800"}
+
+    def test_nesting_past_orjson_but_within_the_stdlib_still_encodes(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        deep: Any = [2**64]
+        for _ in range(3000):
+            deep = [deep]
+
+        frame = encode_frame({"data": deep})
+
+        assert frame == '{"data":' + "[" * 3001 + "18446744073709551616" + "]" * 3001 + "}"
 
     def test_nesting_too_deep_for_the_stdlib_falls_back(self) -> None:
         import json
@@ -539,6 +555,24 @@ class TestFrameEncoding:
         frame = encode_frame({"type": "ack", "cid": _StrMapping("c1"), "data": object()})
 
         assert frame.startswith('{"type":"ack","cid":"c1","error":')
+
+    def test_a_value_raising_while_the_stdlib_encodes_it_falls_back(self) -> None:
+        import json
+
+        from forze.application.integrations.realtime import (
+            FRAME_UNSERIALIZABLE_CODE,
+            encode_frame,
+        )
+
+        class Hostile(dict[str, Any]):
+            def items(self) -> Any:
+                raise RuntimeError("boom")
+
+        # the big int sends it past orjson, which never calls ``items``
+        frame = json.loads(encode_frame({"cid": "c1", "n": 2**64, "data": Hostile(k=1)}))
+
+        assert frame["cid"] == "c1"
+        assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
 
     def test_fallback_code_is_overridable(self) -> None:
         import json
