@@ -525,23 +525,6 @@ class TestFrameEncoding:
 
         assert frame == '{"data":' + "[" * 3001 + "18446744073709551616" + "]" * 3001 + "}"
 
-    def test_nesting_too_deep_for_the_stdlib_falls_back(self) -> None:
-        import json
-
-        from forze.application.integrations.realtime import (
-            FRAME_UNSERIALIZABLE_CODE,
-            encode_frame,
-        )
-
-        deep: Any = []
-        for _ in range(100_000):
-            deep = [deep]
-
-        frame = json.loads(encode_frame({"type": "ack", "cid": "c1", "data": deep}))
-
-        assert frame["cid"] == "c1"
-        assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
-
     def test_fallback_frame_writes_a_non_finite_correlation_value_as_null(self) -> None:
         from forze.application.integrations.realtime import encode_frame
 
@@ -556,7 +539,10 @@ class TestFrameEncoding:
 
         assert frame.startswith('{"type":"ack","cid":"c1","error":')
 
-    def test_a_value_raising_while_the_stdlib_encodes_it_falls_back(self) -> None:
+    # RecursionError stands in for nesting past the stdlib's limit, which since 3.14
+    # follows the C stack's size and so is no fixed depth a test can build.
+    @pytest.mark.parametrize("error", [RuntimeError("boom"), RecursionError()])
+    def test_a_value_raising_while_the_stdlib_encodes_it_falls_back(self, error: Exception) -> None:
         import json
 
         from forze.application.integrations.realtime import (
@@ -566,7 +552,7 @@ class TestFrameEncoding:
 
         class Hostile(dict[str, Any]):
             def items(self) -> Any:
-                raise RuntimeError("boom")
+                raise error
 
         # the big int sends it past orjson, which never calls ``items``
         frame = json.loads(encode_frame({"cid": "c1", "n": 2**64, "data": Hostile(k=1)}))
