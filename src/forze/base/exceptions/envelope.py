@@ -135,9 +135,8 @@ def _jsonable(context: JsonDict) -> JsonDict:
     matches neither ``except*`` clause and unwinds the connection's whole task group.
     Coercing here keeps the envelope's contract true for every renderer at once:
     whatever it exposes IS renderable — and only the :data:`_RENDERABLE_LEAVES` types
-    render at all (see there for why this is not ``default=str``). orjson writes a NaN or
-    infinite float as ``null`` (Starlette's ``JSONResponse`` refuses a bare ``NaN``); a
-    context that falls back to stdlib ``json`` keeps it.
+    render at all (see there for why this is not ``default=str``). A NaN or infinite float
+    renders as ``null`` on either path (Starlette's ``JSONResponse`` refuses a bare ``NaN``).
     """
 
     try:
@@ -150,7 +149,10 @@ def _jsonable(context: JsonDict) -> JsonDict:
         pass
 
     try:
-        return cast(JsonDict, json.loads(json.dumps(context, default=_render_leaf)))
+        rendered = json.dumps(context, default=_render_leaf)
+
+        # the stdlib writes NaN and infinities bare; read them back as orjson writes them
+        return cast(JsonDict, json.loads(rendered, parse_constant=lambda _: None))
 
     except (TypeError, ValueError):
         # an unknown object leaf, a non-str key, a circular shape: keep the error,

@@ -330,7 +330,10 @@ def test_context_renders_as_the_stdlib_encoder_would(details: dict[str, object])
     from forze.base.scrubbing import sanitize
 
     try:
-        expected = json.loads(json.dumps(sanitize(details, context="egress"), default=_render_leaf))
+        expected = json.loads(
+            json.dumps(sanitize(details, context="egress"), default=_render_leaf),
+            parse_constant=lambda _: None,
+        )
 
     except (TypeError, ValueError):
         expected = {"context_unrenderable": True}
@@ -346,6 +349,16 @@ def test_non_finite_floats_render_as_null() -> None:
     )
 
     assert envelope.context == {"ratio": None, "caps": [None]}
+    json.dumps(envelope.context, allow_nan=False)
+
+
+def test_non_finite_floats_render_as_null_on_the_stdlib_path_too() -> None:
+    # the big int sends the context past orjson
+    envelope = error_envelope(
+        exc.validation("bad", details={"big": 2**64, "ratio": float("nan"), "low": float("-inf")})
+    )
+
+    assert envelope.context == {"big": 2**64, "ratio": None, "low": None}
     json.dumps(envelope.context, allow_nan=False)
 
 
