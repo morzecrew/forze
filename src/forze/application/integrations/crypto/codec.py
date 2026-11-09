@@ -56,6 +56,7 @@ from forze.base.crypto import (
     ENVELOPE_B64_PREFIX,
     EncryptedEnvelope,
     is_envelope,
+    pack_envelope,
     unpack_envelope,
 )
 from forze.base.exceptions import CoreException, exc
@@ -87,12 +88,27 @@ def _maybe_envelope(value: str) -> bytes | None:
         return None
 
     try:
-        blob = base64.b64decode(value, validate=True)
+        # ``base64.b64decode(value, validate=True)`` without its Python wrapper: the same
+        # strict decode, and a non-ASCII str raises ValueError there too.
+        blob = binascii.a2b_base64(value, strict_mode=True)
 
     except (binascii.Error, ValueError):
         return None
 
     return blob if is_envelope(blob) else None
+
+
+def _parse_envelope(value: Any) -> EncryptedEnvelope | None:
+    """Parse a stored field value as a Forze envelope, or ``None`` when it is not one.
+
+    :raises CoreException: ``validation`` when the value is an envelope (magic present)
+        but malformed — the same error :func:`~forze.base.crypto.unpack_envelope` raises.
+    """
+
+    if not isinstance(value, str) or (blob := _maybe_envelope(value)) is None:
+        return None
+
+    return unpack_envelope(blob)
 
 
 # ....................... #
@@ -103,6 +119,13 @@ class _SupportsFieldDecryptSnapshot(Protocol):
     """A field cipher that can snapshot resolved data keys for thread-safe offloaded decrypt."""
 
     def freeze_decryptor(self, envelopes: Iterable[EncryptedEnvelope]) -> FieldCipherPort: ...
+
+
+@runtime_checkable
+class _SupportsEnvelopeDecrypt(Protocol):
+    """A field cipher that opens an envelope the codec already parsed (no second parse)."""
+
+    def decrypt_envelope_sync(self, envelope: EncryptedEnvelope, *, aad: bytes = b"") -> bytes: ...
 
 
 @runtime_checkable
@@ -205,6 +228,16 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     where no gateway ever awaits :meth:`prepare_decrypt`; a real backend decides this
     to ``False`` once, at construction, so its per-row decode pays nothing."""
 
+    _opens_envelopes: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: isinstance(self.cipher, _SupportsEnvelopeDecrypt),
+            takes_self=True,
+        ),
+    )
+    """Whether the cipher takes the envelope a decode already parsed (decided once)."""
+
     # ....................... #
 
     @property
@@ -227,11 +260,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             return
 
         envelopes = [
-            unpack_envelope(blob)
+            envelope
             for mapping in mappings
             for field in self.fields
-            if isinstance((value := mapping.get(field)), str)
-            and (blob := _maybe_envelope(value)) is not None
+            if (envelope := _parse_envelope(mapping.get(field))) is not None
         ]
 
         if envelopes:
@@ -382,11 +414,10 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             return None
 
         envelopes = [
-            unpack_envelope(blob)
+            envelope
             for mapping in rows
             for field in self.fields
-            if isinstance((value := mapping.get(field)), str)
-            and (blob := _maybe_envelope(value)) is not None
+            if (envelope := _parse_envelope(mapping.get(field))) is not None
         ]
         frozen_cipher = self.cipher.freeze_decryptor(envelopes)
 
@@ -417,33 +448,35 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             code="core.crypto.plaintext_rejected",
         )
 
-    def _sync_fill_for(self, mapping: JsonDict) -> None:
+    def _sync_fill_for(self, mapping: JsonDict) -> dict[str, EncryptedEnvelope]:
         """Run the decrypt pre-pass synchronously for *mapping*'s envelopes.
 
         The synchronous twin of :meth:`prepare_decrypt`, taken only when the cipher
         advertises a computation-only key backend: the same per-envelope tenant
         (key-ownership) authorization runs, so the policy holds on a backend that
-        never awaits the async pre-pass.
+        never awaits the async pre-pass. Returns the parsed envelopes by field, so the
+        decode opens them without parsing again.
         """
 
-        envelopes = [
-            unpack_envelope(blob)
+        envelopes = {
+            field: envelope
             for field in self.fields
-            if isinstance((value := mapping.get(field)), str)
-            and (blob := _maybe_envelope(value)) is not None
-        ]
+            if (envelope := _parse_envelope(mapping.get(field))) is not None
+        }
 
         if envelopes:
             cast("_SupportsSyncPrepass", self.cipher).ensure_unwrapped_sync(
-                envelopes, tenant=self.tenant_provider()
+                envelopes.values(), tenant=self.tenant_provider()
             )
+
+        return envelopes
 
     def _decrypt_fields(self, mapping: JsonDict) -> JsonDict:
         if not self.fields and not self.searchable_fields:
             return mapping
 
-        if self._sync_prepass:
-            self._sync_fill_for(mapping)
+        # Each stored envelope is parsed once: the sync pre-pass hands its parse to the open.
+        parsed = self._sync_fill_for(mapping) if self._sync_prepass else None
 
         out: JsonDict | None = None
         tenant: Any = _UNSET
@@ -454,7 +487,9 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             if value is None:
                 continue
 
-            if not isinstance(value, str) or (blob := _maybe_envelope(value)) is None:
+            envelope = _parse_envelope(value) if parsed is None else parsed.get(field)
+
+            if envelope is None:
                 # A marked field holding a non-envelope value: legacy plaintext to
                 # tolerate during a rollout, or a fail-open leak to reject post-migration.
                 if self.reject_plaintext:
@@ -467,7 +502,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             if out is None:
                 out = dict(mapping)
 
-            out[field] = orjson.loads(self._decrypt_field_blob(field, tenant, mapping, blob))
+            out[field] = orjson.loads(self._decrypt_field(field, tenant, mapping, envelope))
 
         if self.searchable_fields:
             det = self._require_det()
@@ -515,12 +550,21 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return out if out is not None else mapping
 
-    def _decrypt_field_blob(
+    def _open(self, envelope: EncryptedEnvelope, aad: bytes) -> bytes:
+        if self._opens_envelopes:
+            return cast("_SupportsEnvelopeDecrypt", self.cipher).decrypt_envelope_sync(
+                envelope, aad=aad
+            )
+
+        # A cipher that only takes bytes gets the envelope re-packed (byte-identical).
+        return self.cipher.decrypt_sync(pack_envelope(envelope), aad=aad)
+
+    def _decrypt_field(
         self,
         field: str,
         tenant: TenantIdentity | None,
         mapping: JsonDict,
-        blob: bytes,
+        envelope: EncryptedEnvelope,
     ) -> bytes:
         """Decrypt one randomized-field envelope, tolerating a binding migration.
 
@@ -535,15 +579,13 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         """
 
         if self.record_id_field is None:
-            return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+            return self._open(envelope, self._aad(field, tenant))
 
         rid = mapping.get(self.record_id_field)
 
         if rid is not None:
             try:
-                return self.cipher.decrypt_sync(
-                    blob, aad=self._aad(field, tenant, record_id=str(rid))
-                )
+                return self._open(envelope, self._aad(field, tenant, record_id=str(rid)))
 
             except CoreException as error:
                 if error.code != _AEAD_AUTH_FAILED_CODE or self.reject_plaintext:
@@ -552,7 +594,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                     raise
                 # Pre-binding ciphertext: retry the legacy id-less AAD. A transplanted
                 # id-bound value fails this too and stays rejected (aead_auth_failed).
-                return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+                return self._open(envelope, self._aad(field, tenant))
 
         # Binding is configured but the record id is absent from this row. Under strict
         # mode the id is mandatory (no id-less fallback); otherwise a legacy (pre-binding)
@@ -563,7 +605,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             raise self._record_id_required(field)
 
         try:
-            return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+            return self._open(envelope, self._aad(field, tenant))
 
         except CoreException as error:
             if error.code != _AEAD_AUTH_FAILED_CODE:

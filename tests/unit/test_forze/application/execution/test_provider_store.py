@@ -1,19 +1,47 @@
 """Unit tests for :class:`ProviderStore`."""
 
+import pickle
+
 import pytest
 
-from forze.application.contracts.deps import DepKey, ProviderStore
+from forze.application.contracts.deps import DepKey, ProviderStore, ShadowedFallback
 from forze.application.execution.deps.resolution import frame_for
 from forze.base.exceptions import CoreException, ExceptionKind
 
 _A = DepKey[str]("a")
+_B = DepKey[str]("b")
 _R = DepKey[str]("r")
+
+
+class TestDepKeyHash:
+    def test_cached_hash_follows_equality(self) -> None:
+        key = DepKey[str]("a")
+        hash(key)  # fill the cache
+
+        assert key == _A and hash(key) == hash(_A)
+        assert key != _B and hash(key) != hash(_B)
+
+    def test_unpickled_key_hashes_like_the_original(self) -> None:
+        # The cache is dropped on unpickle: a string hash differs across processes.
+        hash(_A)
+        copy = pickle.loads(pickle.dumps(_A))
+
+        assert copy == _A and hash(copy) == hash(_A)
+        assert {_A: 1}[copy] == 1
 
 
 class TestProviderStoreConstruction:
     def test_routed_map_must_not_be_empty(self) -> None:
         with pytest.raises(CoreException, match="no routes"):
             ProviderStore(routed_deps={_R: {}})
+
+    def test_shadow_records_are_deduplicated_and_sorted(self) -> None:
+        late, early = ShadowedFallback(key=_R, route="x"), ShadowedFallback(key=_A)
+
+        assert ProviderStore(shadowed_fallbacks=(late, early, late)).shadowed_fallbacks == (
+            early,
+            late,
+        )
 
 
 class TestProviderStoreGetProvider:
@@ -63,6 +91,32 @@ class TestProviderStoreMerge:
 
         assert merged.get_provider(_R, route="x") == 1
         assert merged.get_provider(_R, route="y") == 2
+
+    def test_merge_of_one_store_is_that_store(self) -> None:
+        store = ProviderStore(plain_deps={_A: 1}, routed_deps={_R: {"x": 2}})
+
+        assert ProviderStore.merge(store) is store
+
+    def test_disjoint_merge_keeps_order_marks_and_shadows(self) -> None:
+        # Stores sharing no key merge as a union; it keeps what resolving overlaps would.
+        hybrid = ProviderStore.merge(
+            ProviderStore(plain_deps={_A: "real"}),
+            ProviderStore(plain_deps={_A: "mock"}, fallback_plain={_A}),
+        )
+        other = ProviderStore(
+            plain_deps={_B: "mock-b"},
+            routed_deps={_R: {"x": 1, "y": 2}},
+            fallback_plain={_B},
+            fallback_routes={_R: {"y"}},
+        )
+        merged = ProviderStore.merge(other, hybrid)
+
+        assert list(merged.plain_deps.items()) == [(_B, "mock-b"), (_A, "real")]
+        assert list(merged.routed_deps[_R].items()) == [("x", 1), ("y", 2)]
+        assert merged.fallback_plain == {_B}
+        assert merged.fallback_routes == {_R: frozenset({"y"})}
+        assert merged.shadowed_fallbacks == (ShadowedFallback(key=_A),)
+        assert merged.fallback_report().hybrid
 
 
 class TestProviderStoreInventory:

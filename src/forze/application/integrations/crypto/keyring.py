@@ -45,6 +45,8 @@ from forze.base.crypto import (
     ChunkedStreamReader,
     ChunkFrame,
     EncryptedEnvelope,
+    KeyedAead,
+    bind_aead,
     ensure_algorithm,
     open_chunk,
     pack_chunked_header,
@@ -96,9 +98,10 @@ class _FrozenFieldCipher:
     aead: Aead
     """The AEAD, shared with the source keyring (stateless, thread-safe)."""
 
-    deks: dict[bytes, bytes] = attrs.field(repr=False)
-    """Resolved ``wrapped_dek → data key`` snapshot for this batch (``repr`` suppressed
-    — the values are plaintext data keys)."""
+    ciphers: dict[bytes, KeyedAead] = attrs.field(repr=False)
+    """Resolved ``wrapped_dek → data key`` snapshot for this batch, each key bound into its
+    cipher (``repr`` suppressed — the values hold plaintext data keys). The ciphers are
+    shared with the source keyring's cache entries; they keep no per-call state."""
 
     # ....................... #
 
@@ -129,19 +132,18 @@ class _FrozenFieldCipher:
     # ....................... #
 
     def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
-        envelope = unpack_envelope(blob)
-        ensure_algorithm(envelope, self.aead.algorithm)
-        dek = self.deks.get(envelope.wrapped_dek)
+        return self.decrypt_envelope_sync(unpack_envelope(blob), aad=aad)
 
-        if dek is None:
+    # ....................... #
+
+    def decrypt_envelope_sync(self, envelope: EncryptedEnvelope, *, aad: bytes = b"") -> bytes:
+        ensure_algorithm(envelope, self.aead.algorithm)
+        cipher = self.ciphers.get(envelope.wrapped_dek)
+
+        if cipher is None:
             raise _not_warm("decrypt")
 
-        return self.aead.open(
-            key=dek,
-            nonce=envelope.nonce,
-            ciphertext=envelope.ciphertext,
-            aad=aad,
-        )
+        return cipher.open(nonce=envelope.nonce, ciphertext=envelope.ciphertext, aad=aad)
 
 
 # ....................... #
@@ -216,9 +218,10 @@ async def _rechunk(
 class _ActiveDataKey:
     """A cached data key used for encryption, with a reuse counter."""
 
-    plaintext: bytes = attrs.field(repr=False)
-    """Raw data-encryption key — ``repr`` suppressed so no log/trace/debugger dump
-    of the keyring or its caches can print it (mirrors ``DataKey.plaintext``)."""
+    cipher: KeyedAead = attrs.field(repr=False)
+    """The raw data-encryption key bound into its AEAD (built once, reused per seal) —
+    ``repr`` suppressed so no log/trace/debugger dump of the keyring or its caches can
+    print the key (mirrors ``DataKey.plaintext``)."""
 
     wrapped: bytes = attrs.field(repr=False)
     """Wrapped data-encryption key — ``repr`` suppressed (mirrors ``DataKey.wrapped``)."""
@@ -245,8 +248,10 @@ class _ActiveDataKey:
 class _CachedDek:
     """An unwrapped data key on the decrypt path, with an optional staleness deadline."""
 
-    plaintext: bytes = attrs.field(repr=False)
-    """Raw data-encryption key — ``repr`` suppressed (mirrors ``DataKey.plaintext``)."""
+    cipher: KeyedAead = attrs.field(repr=False)
+    """The raw data-encryption key bound into its AEAD — built once per cached key, so
+    it lives and is evicted exactly with the entry; ``repr`` suppressed (mirrors
+    ``DataKey.plaintext``)."""
 
     expires_at: float | None = None
     """Monotonic deadline after which the entry is treated as a miss and re-unwrapped."""
@@ -342,8 +347,8 @@ class Keyring:
         init=False,
         repr=False,
     )
-    """wrapped data key → cached plaintext data key (decrypt path, LRU). ``repr``
-    suppressed — the entries hold plaintext data keys."""
+    """wrapped data key → cached plaintext data key, bound into its cipher (decrypt path,
+    LRU). ``repr`` suppressed — the entries hold plaintext data keys."""
 
     _tenant_key: OrderedDict[str, str] = attrs.field(factory=OrderedDict, init=False)
     """tenant cache key → resolved key_id (lets the sync path skip the directory, LRU)."""
@@ -407,8 +412,8 @@ class Keyring:
 
     # ....................... #
 
-    def _cached_dek(self, wrapped: bytes) -> bytes | None:
-        """Return a fresh unwrapped data key from the decrypt cache, or ``None``.
+    def _cached_dek(self, wrapped: bytes) -> KeyedAead | None:
+        """Return a fresh unwrapped data key (bound into its cipher) from the cache, or ``None``.
 
         Drops the entry on a TTL miss so the next resolution re-unwraps through the KMS
         (which re-validates the KEK), bounding a rotated/revoked key's live window.
@@ -423,15 +428,15 @@ class Keyring:
             del self._dec_cache[wrapped]
             return None
 
-        return entry.plaintext
+        return entry.cipher
 
     # ....................... #
 
-    def _store_dek(self, wrapped: bytes, plaintext: bytes) -> None:
+    def _store_dek(self, wrapped: bytes, cipher: KeyedAead) -> None:
         _lru_put(
             self._dec_cache,
             wrapped,
-            _CachedDek(plaintext, self._expiry()),
+            _CachedDek(cipher, self._expiry()),
             cap=self.decrypt_cache_max,
         )
 
@@ -461,11 +466,7 @@ class Keyring:
 
         key_ref = await self._resolve_key_ref(tenant)
         dek = await self._active_data_key(key_ref)
-        nonce, ciphertext = self.aead.seal(
-            key=dek.plaintext,
-            plaintext=plaintext,
-            aad=aad,
-        )
+        nonce, ciphertext = dek.cipher.seal(plaintext=plaintext, aad=aad)
 
         envelope = EncryptedEnvelope(
             alg=self.aead.algorithm,
@@ -495,14 +496,9 @@ class Keyring:
 
         envelope = unpack_envelope(blob)
         ensure_algorithm(envelope, self.aead.algorithm)
-        dek = await self._unwrap(envelope, tenant=tenant)
+        cipher = await self._unwrap(envelope, tenant=tenant)
 
-        return self.aead.open(
-            key=dek,
-            nonce=envelope.nonce,
-            ciphertext=envelope.ciphertext,
-            aad=aad,
-        )
+        return cipher.open(nonce=envelope.nonce, ciphertext=envelope.ciphertext, aad=aad)
 
     # ....................... #
 
@@ -751,11 +747,7 @@ class Keyring:
             self._n_enc_hits += 1
 
         active.uses += 1
-        nonce, ciphertext = self.aead.seal(
-            key=active.plaintext,
-            plaintext=plaintext,
-            aad=aad,
-        )
+        nonce, ciphertext = active.cipher.seal(plaintext=plaintext, aad=aad)
 
         return pack_envelope(
             EncryptedEnvelope(
@@ -777,22 +769,27 @@ class Keyring:
         otherwise call :meth:`ensure_unwrapped` for the rows first.
         """
 
-        envelope = unpack_envelope(blob)
-        ensure_algorithm(envelope, self.aead.algorithm)
-        dek = self._cached_dek(envelope.wrapped_dek)
+        return self.decrypt_envelope_sync(unpack_envelope(blob), aad=aad)
 
-        if dek is None:
+    # ....................... #
+
+    def decrypt_envelope_sync(self, envelope: EncryptedEnvelope, *, aad: bytes = b"") -> bytes:
+        """:meth:`decrypt_sync` for an envelope the caller already parsed.
+
+        Lets the field codec parse each stored value once and hand the result to both its
+        pre-pass and this open, instead of the keyring parsing the bytes a second time.
+        """
+
+        ensure_algorithm(envelope, self.aead.algorithm)
+        cipher = self._cached_dek(envelope.wrapped_dek)
+
+        if cipher is None:
             self._n_cold += 1
             raise _not_warm("decrypt")
 
         self._n_dec_hits += 1
 
-        return self.aead.open(
-            key=dek,
-            nonce=envelope.nonce,
-            ciphertext=envelope.ciphertext,
-            aad=aad,
-        )
+        return cipher.open(nonce=envelope.nonce, ciphertext=envelope.ciphertext, aad=aad)
 
     # ....................... #
     # synchronous fill — only under a computation-only key backend (the mock wiring)
@@ -838,7 +835,7 @@ class Keyring:
                     key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
                 )
                 self._n_unwrapped += 1
-                self._store_dek(envelope.wrapped_dek, dek)
+                self._store_dek(envelope.wrapped_dek, bind_aead(self.aead, dek))
 
     # ....................... #
 
@@ -869,9 +866,10 @@ class Keyring:
 
         data_key = kms.generate_data_key_sync(key_ref)
         self._n_generated += 1
+        cipher = bind_aead(self.aead, data_key.plaintext)
 
         active = _ActiveDataKey(
-            plaintext=data_key.plaintext,
+            cipher=cipher,
             wrapped=data_key.wrapped,
             key_id=data_key.key_id,
             key_version=data_key.key_version,
@@ -880,8 +878,8 @@ class Keyring:
         )
         _lru_put(self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max)
 
-        # Seed the decrypt cache so a read-after-write is a hit.
-        self._store_dek(data_key.wrapped, data_key.plaintext)
+        # Seed the decrypt cache so a read-after-write is a hit (sharing the bound cipher).
+        self._store_dek(data_key.wrapped, cipher)
 
         return active
 
@@ -964,18 +962,18 @@ class Keyring:
         from a worker thread. A key still missing (never warmed) is left out; decrypting its
         blob then raises ``cipher_not_warm``, exactly as the live path would."""
 
-        deks: dict[bytes, bytes] = {}
+        ciphers: dict[bytes, KeyedAead] = {}
 
         for envelope in envelopes:
             wrapped = envelope.wrapped_dek
 
-            if wrapped not in deks:
-                dek = self._cached_dek(wrapped)
+            if wrapped not in ciphers:
+                cipher = self._cached_dek(wrapped)
 
-                if dek is not None:
-                    deks[wrapped] = dek
+                if cipher is not None:
+                    ciphers[wrapped] = cipher
 
-        return _FrozenFieldCipher(aead=self.aead, deks=deks)
+        return _FrozenFieldCipher(aead=self.aead, ciphers=ciphers)
 
     # ....................... #
 
@@ -1012,9 +1010,10 @@ class Keyring:
 
             # count only an actual KMS round-trip, not a failed one
             self._n_generated += 1
+            cipher = bind_aead(self.aead, data_key.plaintext)
 
             active = _ActiveDataKey(
-                plaintext=data_key.plaintext,
+                cipher=cipher,
                 wrapped=data_key.wrapped,
                 key_id=data_key.key_id,
                 key_version=data_key.key_version,
@@ -1023,8 +1022,8 @@ class Keyring:
             )
             _lru_put(self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max)
 
-            # Seed the decrypt cache so a read-after-write is a hit.
-            self._store_dek(data_key.wrapped, data_key.plaintext)
+            # Seed the decrypt cache so a read-after-write is a hit (sharing the bound cipher).
+            self._store_dek(data_key.wrapped, cipher)
 
             return active
 
@@ -1036,7 +1035,7 @@ class Keyring:
         *,
         tenant: TenantIdentity | None = None,
         authorized: bool = False,
-    ) -> bytes:
+    ) -> KeyedAead:
         # Authorize the key id against the tenant *before* any cache lookup, so a warm
         # cached ``wrapped_dek`` can never return a data key for an envelope the tenant is
         # not entitled to (a cross-tenant confused-deputy on a cache hit). The check is
@@ -1070,9 +1069,10 @@ class Keyring:
 
             # count only an actual KMS round-trip, not a failed one
             self._n_unwrapped += 1
-            self._store_dek(envelope.wrapped_dek, dek)
+            cipher = bind_aead(self.aead, dek)
+            self._store_dek(envelope.wrapped_dek, cipher)
 
-            return dek
+            return cipher
 
     # ....................... #
 

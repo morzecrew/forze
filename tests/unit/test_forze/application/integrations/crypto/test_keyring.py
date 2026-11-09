@@ -425,7 +425,10 @@ async def test_repr_never_leaks_plaintext_data_keys() -> None:
     blob = await ring.encrypt(b"secret", tenant=None)
 
     active = next(iter(ring._enc_cache.values()))  # type: ignore[attr-defined]
-    plaintext_dek = active.plaintext
+    plaintext_dek = MockKeyManagement().unwrap_data_key_sync(
+        wrapped=active.wrapped,
+        key_ref=KeyRef(key_id=active.key_id, version=active.key_version),
+    )
     dek_literal = repr(plaintext_dek)  # e.g. b'\\x1f...'
 
     assert plaintext_dek  # the fixture actually cached a key
@@ -799,3 +802,184 @@ def test_sync_guard_fails_closed_under_an_async_only_directory() -> None:
     # Without a tenant there is nothing to authorize — the fill itself proceeds.
     ring.ensure_unwrapped_sync([envelope])
     assert ring.decrypt_sync(blob) == b"secret"
+
+
+# ....................... #
+# bound cipher cache: one cipher per cached data key, with exactly the key's lifetime
+
+
+@attrs.define
+class _BindCountingAead:
+    """AES-256-GCM that records every ``bind`` (one per cipher object built)."""
+
+    inner: AesGcmAead = attrs.field(factory=AesGcmAead)
+    binds: list[bytes] = attrs.field(factory=list)
+
+    @property
+    def algorithm(self) -> str:
+        return self.inner.algorithm
+
+    def seal(self, *, key: bytes, plaintext: bytes, aad: bytes = b"") -> tuple[bytes, bytes]:
+        return self.inner.seal(key=key, plaintext=plaintext, aad=aad)
+
+    def open(self, *, key: bytes, nonce: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
+        return self.inner.open(key=key, nonce=nonce, ciphertext=ciphertext, aad=aad)
+
+    def bind(self, key: bytes):  # type: ignore[no-untyped-def]
+        self.binds.append(key)
+        return self.inner.bind(key)
+
+
+def _counting_ring(aead: _BindCountingAead, **kw) -> Keyring:  # type: ignore[no-untyped-def]
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=aead,
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        **kw,
+    )
+
+
+async def test_one_data_key_binds_one_cipher_shared_by_encrypt_and_decrypt() -> None:
+    aead = _BindCountingAead()
+    ring = _counting_ring(aead)
+
+    await ring.warm(None)
+    blobs = [ring.encrypt_sync(b"v%d" % i, tenant=None) for i in range(5)]
+    blobs.append(await ring.encrypt(b"async", tenant=None))
+
+    assert [ring.decrypt_sync(b) for b in blobs[:5]] == [b"v%d" % i for i in range(5)]
+    assert await ring.decrypt(blobs[5]) == b"async"
+    assert len(aead.binds) == 1  # every seal and open above reused it
+
+    active = next(iter(ring._enc_cache.values()))  # type: ignore[attr-defined]
+    assert ring._dec_cache[active.wrapped].cipher is active.cipher  # type: ignore[attr-defined]
+
+
+async def test_each_distinct_data_key_gets_its_own_cipher() -> None:
+    aead = _BindCountingAead()
+    ring = _counting_ring(aead, max_dek_messages=1)  # a fresh data key per encrypt
+
+    blobs = [await ring.encrypt(b"x%d" % i, tenant=None) for i in range(3)]
+
+    assert len(aead.binds) == 3
+    assert len(set(aead.binds)) == 3
+    # A cipher served under the wrong data key would fail the tag check here.
+    assert [ring.decrypt_sync(b) for b in blobs] == [b"x0", b"x1", b"x2"]
+
+    # Keyed by wrapped data key: a reader binds once per distinct key, however many
+    # envelopes name it.
+    reader_aead = _BindCountingAead()
+    reader = _counting_ring(reader_aead)
+    await reader.ensure_unwrapped([unpack_envelope(b) for b in blobs * 2])
+
+    assert len(reader_aead.binds) == 3
+    assert [reader.decrypt_sync(b) for b in blobs] == [b"x0", b"x1", b"x2"]
+
+
+async def test_evicted_data_key_takes_its_cipher_with_it() -> None:
+    aead = _BindCountingAead()
+    ring = _counting_ring(aead, max_dek_messages=1, decrypt_cache_max=1)
+
+    first = await ring.encrypt(b"first", tenant=None)
+    await ring.encrypt(b"second", tenant=None)  # evicts the first key and its cipher
+
+    with pytest.raises(CoreException) as excinfo:
+        ring.decrypt_sync(first)
+
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+    await ring.ensure_unwrapped([unpack_envelope(first)])
+
+    assert len(aead.binds) == 3  # re-unwrapped → bound afresh
+    assert ring.decrypt_sync(first) == b"first"
+
+
+async def test_expired_data_key_is_rebound_after_reunwrap() -> None:
+    clock = _ManualClock()
+    aead = _BindCountingAead()
+
+    with bind_time_source(clock):
+        ring = _counting_ring(aead, dek_ttl_seconds=10.0)
+        blob = await ring.encrypt(b"secret", tenant=None)
+        wrapped = unpack_envelope(blob).wrapped_dek
+        before = ring._dec_cache[wrapped].cipher  # type: ignore[attr-defined]
+
+        clock.t = 11.0
+        assert await ring.decrypt(blob) == b"secret"
+
+        assert len(aead.binds) == 2
+        assert ring._dec_cache[wrapped].cipher is not before  # type: ignore[attr-defined]
+
+
+async def test_an_aead_without_bind_still_round_trips() -> None:
+    class _NoBind:
+        inner = AesGcmAead()
+        algorithm = inner.algorithm
+
+        def seal(self, **kw):  # type: ignore[no-untyped-def]
+            return self.inner.seal(**kw)
+
+        def open(self, **kw):  # type: ignore[no-untyped-def]
+            return self.inner.open(**kw)
+
+    ring = Keyring(
+        kms=MockKeyManagement(),
+        aead=_NoBind(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+    blob = await ring.encrypt(b"secret", tenant=None)
+
+    assert await ring.decrypt(blob) == b"secret"
+    assert ring.decrypt_sync(blob) == b"secret"
+    assert ring.freeze_decryptor([unpack_envelope(blob)]).decrypt_sync(blob) == b"secret"
+
+
+# ....................... #
+# wire-format stability: envelopes sealed by the original code still open
+
+_GOLDEN_AAD = b"forze.field|field=email|tenant=None"
+_GOLDEN = {
+    "AES-256-GCM": (
+        AesGcmAead(),
+        (
+            "465a4576010b4145532d3235362d47434d0003636d6b0276310c6465666768696a6b6c6d6e6f"
+            "0020fe01fe2849b897309ed3272b10aba4da64c99d15957c5e841caa01ebdb473b786a7aba07"
+            "398c2eff5312338df4060590602d1812c8cef8f5e5bfd819885b545858"
+        ),
+    ),
+    "ChaCha20-Poly1305": (
+        ChaCha20Poly1305Aead(),
+        (
+            "465a4576011143686143686132302d506f6c79313330350003636d6b0276310c646566676869"
+            "6a6b6c6d6e6f0020fe01fe2849b897309ed3272b10aba4da64c99d15957c5e841caa01ebdb47"
+            "3b781670dfabd8c00e3396ae791adceab7fe52c8e769b1674939a7832c56fda2f7542d"
+        ),
+    ),
+}
+"""Envelopes packed by the pre-``bind`` keyring under ``MockKeyManagement`` (key ``cmk``,
+version ``v1``) with a fixed data key and nonce."""
+
+
+@pytest.mark.parametrize("alg", sorted(_GOLDEN))
+async def test_golden_envelope_from_the_original_code_decrypts(alg: str) -> None:
+    aead, golden_hex = _GOLDEN[alg]
+    blob = bytes.fromhex(golden_hex)
+    ring = Keyring(
+        kms=MockKeyManagement(),
+        aead=aead,
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+    with pytest.raises(CoreException):
+        ring.decrypt_sync(blob, aad=_GOLDEN_AAD)  # cold
+
+    assert await ring.decrypt(blob, aad=_GOLDEN_AAD) == b'"ada@example.com"'
+    assert ring.decrypt_sync(blob, aad=_GOLDEN_AAD) == b'"ada@example.com"'
+
+    frozen = ring.freeze_decryptor([unpack_envelope(blob)])
+    assert frozen.decrypt_sync(blob, aad=_GOLDEN_AAD) == b'"ada@example.com"'
+
+    with pytest.raises(CoreException) as excinfo:
+        ring.decrypt_sync(blob, aad=b"other")
+
+    assert excinfo.value.code == "core.crypto.aead_auth_failed"

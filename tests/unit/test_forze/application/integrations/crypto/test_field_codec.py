@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from unittest.mock import patch
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
@@ -312,14 +315,14 @@ async def test_batched_decode_decrypts_lazily_per_batch() -> None:
     ]
 
     calls = 0
-    original = Keyring.decrypt_sync
+    original = Keyring.decrypt_envelope_sync
 
     def _counting(self: Keyring, *args: object, **kwargs: object) -> bytes:
         nonlocal calls
         calls += 1
         return original(self, *args, **kwargs)  # type: ignore[arg-type]
 
-    with patch.object(Keyring, "decrypt_sync", _counting):
+    with patch.object(Keyring, "decrypt_envelope_sync", _counting):
         batches = codec.decode_mapping_many_batched(rows, batch_size=2)
 
         first = next(batches)
@@ -457,3 +460,89 @@ def _codec_for(cipher: Keyring, *, tenant=None):  # type: ignore[no-untyped-def]
         fields=frozenset({"email", "prefs"}),
         tenant_provider=tenant or (lambda: None),
     )
+
+
+# ....................... #
+# parse-once decode: wire stability and the bytes-only cipher fallback
+
+_GOLDEN_EMAIL = (
+    "RlpFdgELQUVTLTI1Ni1HQ00AA2NtawJ2MQxkZWZnaGlqa2xtbm8AIP4B/ihJuJcwntMnKxCrpNpkyZ0VlXxehByq"
+    "AevbRzt4anq6BzmMLv9TEjON9AYFkGAtGBLIzvj15b/YGYhbVFhY"
+)
+"""``email`` sealed by the original codec + keyring (``MockKeyManagement``, key ``cmk``)."""
+
+
+@pytest.mark.parametrize("sync_kms", [True, False], ids=["sync-prepass", "async-prepass"])
+async def test_golden_row_from_the_original_code_decodes(sync_kms: bool) -> None:
+    codec = _codec(_sync_keyring() if sync_kms else _keyring(), fields=frozenset({"email"}))
+    row = {"id": "1", "name": "Ada", "email": _GOLDEN_EMAIL}
+
+    if not sync_kms:
+        await codec.prepare_decrypt([row])
+
+    assert codec.decode_mapping(dict(row)).email == "ada@example.com"
+
+    frozen = codec.freeze_for_decrypt([row])
+    assert frozen is not None
+    assert frozen.decode_mapping(dict(row)).email == "ada@example.com"
+
+
+# ....................... #
+
+
+async def test_a_bytes_only_cipher_receives_the_stored_bytes() -> None:
+    """A cipher without ``decrypt_envelope_sync`` gets exactly the bytes that were stored."""
+
+    ring = _keyring()
+    seen: list[bytes] = []
+
+    class _BytesOnly:
+        async def warm(self, tenant):  # type: ignore[no-untyped-def]
+            await ring.warm(tenant)
+
+        async def ensure_unwrapped(self, envelopes, *, tenant=None):  # type: ignore[no-untyped-def]
+            await ring.ensure_unwrapped(envelopes, tenant=tenant)
+
+        def encrypt_sync(self, plaintext, *, tenant, aad=b""):  # type: ignore[no-untyped-def]
+            return ring.encrypt_sync(plaintext, tenant=tenant, aad=aad)
+
+        def decrypt_sync(self, blob, *, aad=b""):  # type: ignore[no-untyped-def]
+            seen.append(blob)
+            return ring.decrypt_sync(blob, aad=aad)
+
+    codec = _codec(_BytesOnly(), fields=frozenset({"email"}))  # type: ignore[arg-type]
+    await codec.prepare_encrypt()
+    stored = codec.encode_persistence_mapping(_PROFILE)
+    await codec.prepare_decrypt([stored])
+
+    assert codec.decode_mapping(dict(stored)) == _PROFILE
+    assert seen == [base64.b64decode(stored["email"])]
+
+
+# ....................... #
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    st.text(
+        alphabet=st.sampled_from(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n -_é"
+        ),
+        max_size=40,
+    )
+)
+def test_envelope_gate_decodes_exactly_like_b64decode_validate(tail: str) -> None:
+    from forze.application.integrations.crypto.codec import (
+        ENVELOPE_B64_PREFIX,
+        _maybe_envelope,
+    )
+
+    value = ENVELOPE_B64_PREFIX + "dgE" + tail  # "FZEv\x01…" when it decodes
+
+    try:
+        blob: bytes | None = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        blob = None
+
+    expected = blob if blob is not None and is_envelope(blob) else None
+    assert _maybe_envelope(value) == expected

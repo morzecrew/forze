@@ -67,6 +67,17 @@ def _freeze_routes(routes: Mapping[DepKey[Any], Iterable[StrKey]]) -> FallbackRo
 # ....................... #
 
 
+def _sort_shadowed(entries: Iterable[ShadowedFallback]) -> tuple[ShadowedFallback, ...]:
+    """Deduplicate shadow records and sort them by key name, then route."""
+
+    return tuple(
+        sorted(dict.fromkeys(entries), key=lambda entry: (entry.key.name, str(entry.route or "")))
+    )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _Entry:
@@ -210,6 +221,40 @@ def _reject_route_conflicts(
 # ....................... #
 
 
+def _keys_disjoint(stores: Sequence[ProviderStore]) -> bool:
+    """Whether no key is registered, plain or routed, by more than one of *stores*."""
+
+    seen: set[DepKey[Any]] = set()
+
+    for store in stores:
+        keys = set(store.plain_deps)
+        keys.update(store.routed_deps)
+
+        if not seen.isdisjoint(keys):
+            return False
+
+        seen |= keys
+
+    return True
+
+
+# ....................... #
+
+
+def _union[V](maps: Iterable[Mapping[DepKey[Any], V]]) -> dict[DepKey[Any], V]:
+    """Combine maps with disjoint keys, in order."""
+
+    combined: dict[DepKey[Any], V] = {}
+
+    for mapping in maps:
+        combined.update(mapping)
+
+    return combined
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ProviderStore:
@@ -242,10 +287,14 @@ class ProviderStore:
     )
     """Which :attr:`routed_deps` routes are fallback registrations, per key."""
 
-    shadowed_fallbacks: tuple[ShadowedFallback, ...] = attrs.field(default=(), eq=False)
+    shadowed_fallbacks: tuple[ShadowedFallback, ...] = attrs.field(
+        default=(),
+        eq=False,
+        converter=_sort_shadowed,
+    )
     """Merge provenance (not registration): fallback entries a real registration
-    displaced. Carried so :meth:`fallback_report` can name them at freeze — a hybrid
-    wiring stays observable rather than ambient."""
+    displaced, deduplicated and sorted. Carried so :meth:`fallback_report` can name them
+    at freeze — a hybrid wiring stays observable rather than ambient."""
 
     # ....................... #
 
@@ -427,7 +476,11 @@ class ProviderStore:
             # quietly does not fail. Naming it separately is what makes the report a
             # mitigation rather than a list. Routes that are themselves fallback do not
             # count: that key is simply an unwired plane, not a half-real one.
-            catch_all=frozenset(key for key in self.fallback_plain if self._has_real_route(key)),
+            catch_all=frozenset(
+                key
+                for key in self.fallback_plain.intersection(self.routed_deps)
+                if self._has_real_route(key)
+            ),
             mixed=bool(fallback_count) and bool(real_count),
         )
 
@@ -451,6 +504,24 @@ class ProviderStore:
         """
 
         logger.trace("Merging %s provider store(s)", len(stores))
+
+        if len(stores) == 1:
+            # One store has no cross-store overlap to resolve, so merging it is the identity:
+            # it is frozen and was normalized at construction.
+            return stores[0]
+
+        if _keys_disjoint(stores):
+            # No key in two stores: nothing can conflict, shadow or displace, so the merge is
+            # the union. Copying whole maps reuses their stored hashes instead of rehashing.
+            return cls(
+                plain_deps=_union(store.plain_deps for store in stores),
+                routed_deps=_union(store.routed_deps for store in stores),
+                fallback_plain=frozenset().union(*(store.fallback_plain for store in stores)),
+                fallback_routes=_union(store.fallback_routes for store in stores),
+                shadowed_fallbacks=tuple(
+                    entry for store in stores for entry in store.shadowed_fallbacks
+                ),
+            )
 
         plain_entries: dict[DepKey[Any], list[_Entry]] = {}
         routed_entries: dict[DepKey[Any], dict[StrKey, list[_Entry]]] = {}
@@ -525,9 +596,7 @@ class ProviderStore:
             routed_deps=routed_acc,
             fallback_plain=frozenset(fallback_plain),
             fallback_routes=fallback_routes,
-            shadowed_fallbacks=tuple(
-                sorted(shadowed, key=lambda entry: (entry.key.name, str(entry.route or "")))
-            ),
+            shadowed_fallbacks=tuple(shadowed),
         )
 
     # ....................... #
