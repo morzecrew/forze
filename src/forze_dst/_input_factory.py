@@ -13,15 +13,17 @@ had before. A ``UUID1`` takes a draw ``uuid1()`` did not, so the fields built af
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import partial
-from typing import Any, TypeGuard
+from types import NoneType
+from typing import Annotated, Any, TypeGuard, get_args, get_origin
 from uuid import UUID
 
 from polyfactory.factories.base import BuildContext
 from polyfactory.factories.pydantic_factory import ModelFactory
 from polyfactory.field_meta import FieldMeta
+from polyfactory.utils.normalize_type import normalize_type
 from polyfactory.utils.predicates import is_safe_subclass
 from pydantic import (
     AwareDatetime,
@@ -33,6 +35,7 @@ from pydantic import (
     PastDatetime,
 )
 
+from forze.base.primitives import AwareDatetime as ForzeAwareDatetime
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -65,6 +68,70 @@ def _same(value: date) -> date:
     return value
 
 
+_FORZE_AWARE = get_args(ForzeAwareDatetime)[1]
+"""The validator forze's :data:`~forze.base.primitives.AwareDatetime` puts on a ``datetime``."""
+
+
+class _AwarePastDatetime(datetime):
+    """A past instant that must be aware: pydantic has no type for one."""
+
+
+class _AwareFutureDatetime(datetime):
+    """A future instant that must be aware: pydantic has no type for one."""
+
+
+_AWARE_AS: dict[type, Any] = {
+    datetime: AwareDatetime,
+    PastDatetime: _AwarePastDatetime,
+    FutureDatetime: _AwareFutureDatetime,
+}
+"""The type a datetime leaf builds as when its metadata asks for an aware value."""
+
+
+def _asks_aware(metadata: Iterable[Any]) -> bool | None:
+    """Whether a datetime's metadata asks for an aware (true) or a naive (false) value."""
+
+    for m in metadata:
+        if m is _FORZE_AWARE or m is AwareDatetime or isinstance(m, AwareDatetime):
+            return True
+
+        if m is NaiveDatetime or isinstance(m, NaiveDatetime):
+            return False
+
+    return None
+
+
+def _name_awareness(meta: FieldMeta, source: Any) -> None:
+    """Type each datetime leaf of *meta* as pydantic's aware or naive datetime where its
+    *source* annotation's metadata asks for one: polyfactory keeps only the constraints."""
+
+    metadata: list[Any] = []
+
+    while (named := normalize_type(source)) != source:  # a ``type`` alias, as polyfactory reads it
+        source = named
+
+    if get_origin(source) is Annotated:
+        source, *metadata = get_args(source)
+
+    if not meta.children:
+        aware = _asks_aware(metadata)
+
+        if aware and isinstance(source, type) and source in _AWARE_AS:
+            meta.annotation = _AWARE_AS[source]
+
+        elif aware is False and source is datetime:
+            meta.annotation = NaiveDatetime
+
+        return
+
+    # A union's children skip ``None``; a generic's follow its arguments, when they line up.
+    args = [arg for arg in get_args(source) if arg is not NoneType]
+
+    if len(args) == len(meta.children):
+        for child, arg in zip(meta.children, args, strict=True):
+            _name_awareness(child, arg)
+
+
 def _in_zone(bounds: tuple[Any, ...], aware: bool | None) -> tzinfo | None:
     """The zone a bounded instant is drawn in, or :obj:`None` for a naive one: an aware
     bound's zone, or UTC for a field that must be aware."""
@@ -86,7 +153,8 @@ def _framed(bound: Any, zone: tzinfo | None) -> Any:
     if zone is None:
         return bound.replace(tzinfo=None)
 
-    return bound if bound.tzinfo is not None else bound.replace(tzinfo=zone)
+    # in UTC, arithmetic runs on instants: within one zone it is wall-clock and drops ``fold``
+    return (bound if bound.tzinfo is not None else bound.replace(tzinfo=zone)).astimezone(UTC)
 
 
 # ....................... #
@@ -104,6 +172,25 @@ class InputFactory(ModelFactory[BaseModel]):
         # A base factory joins polyfactory's global registry: never pick this one for another
         # factory's nested models. Ours reach it through ``__base_factory_overrides__``.
         return cls is not InputFactory and super().is_supported_type(value)
+
+    # ....................... #
+
+    @classmethod
+    def get_model_fields(cls) -> list[FieldMeta]:
+        """polyfactory's fields, each datetime typed aware or naive where its metadata asks."""
+
+        # polyfactory reads the fields once per factory; name the awareness on that pass
+        first = "_fields_metadata" not in cls.__dict__
+        fields = super().get_model_fields()
+
+        if first:
+            for meta, info in zip(fields, cls.__model__.model_fields.values(), strict=True):
+                source = (
+                    Annotated[info.annotation, *info.metadata] if info.metadata else info.annotation
+                )
+                _name_awareness(meta, source)
+
+        return fields
 
     # ....................... #
 
@@ -131,8 +218,10 @@ class InputFactory(ModelFactory[BaseModel]):
             timedelta: lambda: _WINDOW * cls.__faker__.random.random(),
             PastDatetime: past,
             PastDate: lambda: past().date(),
+            _AwarePastDatetime: lambda: past().replace(tzinfo=UTC),
             FutureDatetime: future,
             FutureDate: lambda: future().date(),
+            _AwareFutureDatetime: lambda: future().replace(tzinfo=UTC),
         }
 
     # ....................... #
@@ -196,7 +285,7 @@ class InputFactory(ModelFactory[BaseModel]):
             epoch: date = DEFAULT_EPOCH.date()
 
         elif zone is not None:
-            epoch = DEFAULT_EPOCH.astimezone(zone)
+            epoch = DEFAULT_EPOCH
 
         else:
             epoch = DEFAULT_EPOCH.replace(tzinfo=None)

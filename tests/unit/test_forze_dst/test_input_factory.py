@@ -11,7 +11,8 @@ import random
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
+from zoneinfo import ZoneInfo
 
 import faker.providers.date_time as faker_date_time
 import polyfactory.value_generators.constrained_dates as constrained_dates
@@ -29,6 +30,7 @@ from pydantic import (
     PastDatetime,
 )
 
+from forze.base.primitives import AwareDatetime as ForzeAwareDatetime
 from forze_dst._input_factory import InputFactory
 from forze_dst.derive import _arg_builder
 from forze_dst.engines.cases import OperationCase
@@ -37,6 +39,10 @@ from forze_dst.scenario import ModelState
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
+
+type _Stamp = ForzeAwareDatetime
+type _Stamps = list[_Stamp]
+type _Pair[T] = tuple[T, T]
 
 
 class _Leg(BaseModel):
@@ -202,11 +208,14 @@ class TestTimeWindows:
 
     def test_a_bounded_instant_is_as_aware_as_its_bounds_and_type_say(self) -> None:
         plus5 = timezone(timedelta(hours=5))
+        # New York's 01:00-02:00 on 2026-11-01 happens twice; fold=1 is the second, later pass
+        repeated = datetime(2026, 11, 1, 1, tzinfo=ZoneInfo("America/New_York"), fold=1)
 
         class Window(BaseModel):
             mixed: datetime = Field(gt=datetime(2026, 1, 1, tzinfo=plus5), lt=datetime(2026, 1, 2))
             aware: AwareDatetime = Field(lt=datetime(2030, 1, 1))
             naive: NaiveDatetime = Field(gt=datetime(2020, 1, 1, tzinfo=UTC))
+            again: datetime = Field(gt=repeated, lt=repeated.replace(minute=50))
 
         factory = InputFactory.create_factory(Window)
 
@@ -215,7 +224,39 @@ class TestTimeWindows:
             window = factory.build()  # pydantic checks every bound and the awareness on build
 
             assert window.mixed.tzinfo is plus5 and window.aware.tzinfo is UTC
-            assert window.naive.tzinfo is None
+            assert window.naive.tzinfo is None and window.again.fold == 1
+
+    def test_a_datetime_whose_metadata_asks_for_awareness_gets_it(self) -> None:
+        # polyfactory drops the validator forze's AwareDatetime adds, and pydantic's marker
+        # instances, so plain polyfactory draws a naive value each of these refuses.
+        class Stamped(BaseModel):
+            at: ForzeAwareDatetime
+            maybe: ForzeAwareDatetime | None
+            many: list[ForzeAwareDatetime]
+            keyed: dict[str, ForzeAwareDatetime]
+            pair: tuple[ForzeAwareDatetime, int] | None
+            run: tuple[ForzeAwareDatetime, ...]
+            capped: Annotated[ForzeAwareDatetime, Field(lt=datetime(2030, 1, 1, tzinfo=UTC))]
+            marked: Annotated[datetime, AwareDatetime()]
+            naive: Annotated[datetime, NaiveDatetime(), Field(gt=datetime(2020, 1, 1, tzinfo=UTC))]
+            named: _Stamp
+            names: _Stamps
+            paired: _Pair[_Stamp]
+            bounded: Annotated[_Stamp, Field(gt=datetime(2020, 1, 1, tzinfo=UTC))]
+            was: Annotated[PastDatetime, AwareDatetime()]
+            will: Annotated[FutureDatetime, AwareDatetime()]
+
+        factory = InputFactory.create_factory(Stamped)
+
+        for seed in range(100):
+            factory.seed_random(seed)
+            stamped = factory.build()  # pydantic and forze's validator check each value on build
+
+            leaves = (stamped.at, stamped.capped, stamped.marked, *stamped.many, *stamped.run)
+            leaves += (stamped.named, *stamped.names, *stamped.paired, stamped.bounded)
+            leaves += (stamped.was, stamped.will)
+            assert all(value.tzinfo is UTC for value in (*leaves, *stamped.keyed.values()))
+            assert stamped.naive.tzinfo is None
 
     def test_plain_factories_keep_polyfactory_providers(
         self, wall_clock: Callable[[timedelta], None]
