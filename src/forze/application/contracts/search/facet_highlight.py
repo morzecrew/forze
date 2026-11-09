@@ -138,7 +138,8 @@ def _casefold(text: str) -> str:
     if len(folded) == len(text):
         return folded
 
-    return "".join(ch.lower()[:1] for ch in text)
+    # no current code point but ``İ`` expands; this guards a future Unicode database
+    return "".join(ch.lower()[:1] for ch in text)  # pragma: no cover
 
 
 def highlight_tokens(terms: Sequence[str]) -> tuple[str, ...]:
