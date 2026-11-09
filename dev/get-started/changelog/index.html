@@ -11110,12 +11110,30 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The Postgres pool no longer pings a connection used in the last half second</strong> (<strong>behaviour change</strong>). New <code>PostgresConfig.check_idle_after</code> (default 500 ms) sets the window; one the server ended inside it fails one operation. <code>timedelta(0)</code> pings every checkout.</p>
 </li>
 <li>
+<p><strong>The realtime hub's live fan-out is 6–30× cheaper per delivered frame.</strong> Its queues hold a <code>HubDelivery</code>, which still unpacks and indexes as <code>(signal, event_id)</code>. <abbr title="Server-Side Encryption">SSE</abbr> and WebSocket frames are UTF-8 JSON from orjson: a <code>UUID</code> or an <code>Enum</code> goes out as its value, <code>NaN</code> or an infinity as <code>null</code> (<strong>behaviour change</strong>).</p>
+</li>
+<li>
 <p><strong><code>ForzeJwtTokenVerifier</code> reuses a repeat token's verified signature and claims: a repeat verify drops from ~50 to ~4 µs (HS256).</strong> Set by <code>AccessTokenConfig.verify_cache_ttl</code> (30 s, at most 5 min, <code>0</code> disables) and <code>verify_cache_max_entries</code>. Expiry, session and revocation checks still run per request.</p>
+</li>
+<li>
+<p><strong>Postgres renders a filter's SQL once per filter shape and binds only each query's values, so repeated queries spend less time in Python.</strong> Every backend also parses a filter once per query, not twice. Without I/O, a 10-predicate <code>find_many</code> compiles about 40% faster and a find by id about 20%.</p>
+</li>
+<li>
+<p><strong>A Postgres gateway copies its <code>nested_field_hints</code> when it is built</strong> (<strong>behaviour change</strong>). Changing that mapping afterwards no longer affects its queries.</p>
+</li>
+<li>
+<p><strong>Search highlighting runs about 5× faster on long text, with the same fragments.</strong> Highlighting 1 KB of ASCII takes about 12 µs instead of 60, and 1 KB of Cyrillic about 18 µs instead of 88. Federated <abbr title="Reciprocal Rank Fusion">RRF</abbr> merges also run about 18% faster.</p>
+</li>
+<li>
+<p><strong>Scrubbed logging costs about a quarter less per event.</strong> A JSON <code>logger.info</code> with eight extras drops from ~50 to ~37 µs and log-context <code>sanitize</code> on the same fields from ~20 to ~7 µs; what gets masked is unchanged.</p>
+</li>
+<li>
+<p><strong>Calling an operation through a facade costs about 3 µs less.</strong> A facade factory such as <code>document_facade(...)</code> now returns the same frozen facade while the runtime's context stays current (<code>users() is users()</code> within one scope), instead of a new one per call; it never carries one into another scope.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong><code>TinyLfuStore</code> no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.</strong> One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

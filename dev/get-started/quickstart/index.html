@@ -6907,7 +6907,8 @@ override or to disable an operation.</p>
 assembles an <a href="../../core-concepts/runtime/"><code>ExecutionRuntime</code></a> around it. Then
 <code>document_facade(...)</code> returns a small factory: call <code>users()</code> to get a fully-typed
 <a href="../../core-concepts/application-layer/"><code>DocumentFacade</code></a> bound to the runtime's
-current scope context — fresh each call, never cached across requests.</p>
+current scope context. It holds no per-request state, so it is reused while that
+context stays current and never carried into another scope.</p>
 <div class="highlight"><pre><span></span><code><span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MockDepsModule</span><span class="p">())</span>
 
 <span class="c1"># A per-call, fully-typed facade factory bound to the runtime's current context.</span>
