@@ -22,21 +22,21 @@ def _validate_parts(sep: str, *parts: StrKey) -> None:
 # ....................... #
 
 
-@lru_cache(maxsize=1024, typed=True)
-def _joined_key(prefix: StrKey, sep: str, *parts: StrKey) -> str:
-    """Validate and join *prefix* and *parts* with *sep*.
+@lru_cache(maxsize=1024)
+def _joined_key(sep: str, *parts: str) -> str:
+    """Validate and join the already rendered *parts* with *sep*.
 
-    Memoized because an operation facade rebuilds the same key on every call. The cache
-    key is every argument's value **and type** (``typed=True``): ``str()`` of a ``str`` or
-    a ``StrEnum`` member is a function of the two, while a mixed-in ``(str, Enum)`` member
-    equals its value yet renders as ``Cls.NAME`` — so the two must never share an entry. An
-    invalid part raises, and a raise is never cached. Bounded (``maxsize=1024``) since
+    Memoized because an operation facade rebuilds the same key on every call. The caller
+    passes each part's ``str()``, which is all the validation and the join read, so parts
+    that render differently never share an entry: a mixed-in ``(str, Enum)`` member equals
+    its value yet renders as ``Cls.NAME``, and a ``str`` subclass may render as it likes.
+    An invalid part raises, and a raise is never cached. Bounded (``maxsize=1024``) since
     parts are caller-controlled; an evicted entry is simply rebuilt.
     """
 
-    _validate_parts(sep, prefix, *parts)
+    _validate_parts(sep, *parts)
 
-    return sep.join(map(str, (prefix, *parts)))
+    return sep.join(parts)
 
 
 # ....................... #
@@ -63,4 +63,4 @@ class StrKeyNamespace:
         if not parts:
             raise exc.internal("No parts provided")
 
-        return _joined_key(self.prefix, self.sep, *parts)
+        return _joined_key(self.sep, str(self.prefix), *map(str, parts))

@@ -54,7 +54,6 @@ def test_equal_inputs_hit_the_memo() -> None:
         (StrKeyNamespace(prefix="orders", sep=":"), ("get",), "orders:get"),
         (StrKeyNamespace(prefix="orders"), ("list",), "orders.list"),
         (StrKeyNamespace(prefix="orders"), ("get", "x"), "orders.get.x"),
-        (StrKeyNamespace(prefix="orders"), (_Op.GET,), "orders.get"),
     ],
 )
 def test_any_differing_input_misses(
@@ -79,6 +78,37 @@ def test_a_part_equal_by_value_but_rendered_differently_never_shares_an_entry() 
 
     with pytest.raises(CoreException, match="must not contain separator"):
         dotted.key(_MixedOp.GET)
+
+
+def test_a_part_rendering_as_its_value_shares_the_entry() -> None:
+    ns = StrKeyNamespace(prefix="orders")
+
+    assert ns.key("get") == ns.key(_Op.GET) == "orders.get"
+    assert _joined_key.cache_info().misses == 1
+
+
+class _Tagged(str):
+    """Equal to its value, but ``str()`` renders the tag it carries too."""
+
+    __slots__ = ("tag",)
+
+    def __new__(cls, value: str, tag: str) -> "_Tagged":
+        self = super().__new__(cls, value)
+        self.tag = tag
+        return self
+
+    def __str__(self) -> str:
+        return f"{str.__str__(self)}-{self.tag}"
+
+
+def test_equal_parts_of_one_type_that_render_differently_never_share_an_entry() -> None:
+    ns = StrKeyNamespace(prefix="orders")
+
+    assert ns.key(_Tagged("get", "a")) == "orders.get-a"
+    assert ns.key(_Tagged("get", "b")) == "orders.get-b"
+
+    with pytest.raises(CoreException, match="must not contain separator"):
+        ns.key(_Tagged("get", "a.b"))
 
 
 def test_invalid_parts_raise_on_every_call() -> None:
