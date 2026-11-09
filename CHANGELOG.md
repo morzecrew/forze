@@ -23,9 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres gateway copies its `nested_field_hints` when it is built** (**behaviour change**). Changing that mapping afterwards no longer affects its queries.
 
+- **Search highlighting runs about 5× faster on long text, with the same fragments.** Highlighting 1 KB of ASCII takes about 12 µs instead of 60, and 1 KB of Cyrillic about 18 µs instead of 88. Federated RRF merges also run about 18% faster.
+
 - **Scrubbed logging costs about a quarter less per event.** A JSON `logger.info` with eight extras drops from ~50 to ~37 µs and log-context `sanitize` on the same fields from ~20 to ~7 µs; what gets masked is unchanged.
 
 - **The in-memory filter matcher no longer compares each row with every `$in` value.** `forze_mock` adapters and `compile_filter` work out `$in`, `$nin`, set-relation and `$like` / `$ilike` operands once per filter, with the same results: a mock `find_many` with a 200-value `$in` over 1,000 rows takes 2 ms, not 179.
+
+- **Calling an operation through a facade costs about 3 µs less.** A facade factory such as `document_facade(...)` now returns the same frozen facade while the runtime's context stays current (`users() is users()` within one scope), instead of a new one per call; it never carries one into another scope.
 
 ### Fixed
 

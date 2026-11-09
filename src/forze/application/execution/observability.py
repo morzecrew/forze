@@ -637,7 +637,21 @@ def _telemetry_factory(
     counter: "Counter",
     duration: "Histogram",
 ) -> MiddlewareFactory:
-    from opentelemetry.trace import Status, StatusCode
+    from opentelemetry import context as otel_context
+    from opentelemetry.trace import Status, StatusCode, set_span_in_context
+
+    # Built once per operation, not per call: the metric labels of each kind and outcome.
+    labels = {
+        kind: {
+            outcome: {
+                "forze.operation": op_name,
+                "forze.operation.kind": kind,
+                "forze.outcome": outcome,
+            }
+            for outcome in ("success", "failed", "error")
+        }
+        for kind in ("query", "command")
+    }
 
     def factory(ctx: "ExecutionContext") -> Middleware[Any, Any]:
         async def middleware(
@@ -645,45 +659,54 @@ def _telemetry_factory(
             args: Any,
         ) -> Any:
             kind = "query" if ctx.inv_ctx.is_read_only() else "command"
-            labels = {"forze.operation": op_name, "forze.operation.kind": kind}
 
             start = perf_counter()
             outcome = "success"
 
-            with tracer.start_as_current_span(
+            # What ``start_as_current_span`` does, without its two generator context managers.
+            span = tracer.start_span(
                 op_name,
                 attributes=_span_attributes(ctx, op_name, kind),
                 # Classified below, as the port spans do: OTel's own handling would mark
                 # every failure an error and record a server error's exception twice.
                 record_exception=False,
                 set_status_on_exception=False,
-            ) as span:
+            )
+            token = otel_context.attach(set_span_in_context(span))
+
+            try:
+                return await next(args)
+
+            except BaseException as exc:
+                # Classify like the port spans: a client-class domain failure
+                # (validation, not-found, conflict, precondition — a 4xx kind the
+                # caller may handle) is an *expected* outcome recorded as ``failed``
+                # with a clean span, so error-rate alerting on
+                # ``forze.operations{forze.outcome="error"}`` tracks genuine faults.
+                # A 5xx CoreException (but ``unavailable``, an operator-chosen
+                # state) or any other exception paints the span red.
+                if isinstance(exc, CoreException) and not is_server_error_kind(exc.kind):
+                    outcome = "failed"
+
+                else:
+                    outcome = "error"
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR))
+
+                raise
+
+            finally:
                 try:
-                    return await next(args)
-
-                except BaseException as exc:
-                    # Classify like the port spans: a client-class domain failure
-                    # (validation, not-found, conflict, precondition — a 4xx kind the
-                    # caller may handle) is an *expected* outcome recorded as ``failed``
-                    # with a clean span, so error-rate alerting on
-                    # ``forze.operations{forze.outcome="error"}`` tracks genuine faults.
-                    # A 5xx CoreException (but ``unavailable``, an operator-chosen
-                    # state) or any other exception paints the span red.
-                    if isinstance(exc, CoreException) and not is_server_error_kind(exc.kind):
-                        outcome = "failed"
-
-                    else:
-                        outcome = "error"
-                        span.record_exception(exc)
-                        span.set_status(Status(StatusCode.ERROR))
-
-                    raise
-
-                finally:
                     elapsed_ms = (perf_counter() - start) * 1000.0
-                    out = {**labels, "forze.outcome": outcome}
+                    out = labels[kind][outcome]
+                    # Recorded while the span is current, so a trace-based exemplar filter
+                    # still links the points to it.
                     counter.add(1, out)
                     duration.record(elapsed_ms, out)
+
+                finally:
+                    otel_context.detach(token)
+                    span.end()
 
         return middleware
 

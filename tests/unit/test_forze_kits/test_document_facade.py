@@ -51,7 +51,7 @@ def test_namespace_can_be_overridden() -> None:
 
 
 @pytest.mark.asyncio
-async def test_yields_a_fresh_facade_on_the_current_scope_context() -> None:
+async def test_yields_a_facade_on_the_current_scope_context() -> None:
     spec = _spec()
     runtime = build_runtime(MockDepsModule())
     registry = build_document_registry(spec).freeze()
@@ -59,12 +59,18 @@ async def test_yields_a_fresh_facade_on_the_current_scope_context() -> None:
 
     async with runtime.scope():
         a = widgets()
+
+        # Bound to the active context, and reused while it stays current.
+        assert isinstance(a, DocumentFacade)
+        assert a.ctx is runtime.get_context()
+        assert widgets() is a
+
+    async with runtime.scope():
         b = widgets()
 
-        # A fresh facade each call, never a cached one, bound to the active context.
-        assert isinstance(a, DocumentFacade)
-        assert a is not b
-        assert a.ctx is runtime.get_context()
+        # Never carried into another scope.
+        assert b is not a
+        assert b.ctx is runtime.get_context()
 
 
 @pytest.mark.asyncio
