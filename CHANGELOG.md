@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres renders a filter's SQL once per filter shape and binds only each query's values, so repeated queries spend less time in Python.** Every backend also parses a filter once per query, not twice. Without I/O, a 10-predicate `find_many` compiles about 40% faster and a find by id about 20%.
 
+- **A Postgres gateway copies its `nested_field_hints` when it is built** (**behaviour change**). Changing that mapping afterwards no longer affects its queries.
+
 ### Fixed
 
 - ...

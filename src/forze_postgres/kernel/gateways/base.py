@@ -34,7 +34,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell, projection_roots
+from forze.base.primitives import JsonDict, MappingConverter, OnceCell, projection_roots
 from forze.base.serialization import ModelCodec, default_model_codec, enum_values
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
@@ -156,8 +156,14 @@ class PostgresGateway[M: BaseModel](
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
 
-    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(default=None)
-    """Optional per-path Python types when read-model annotations are ambiguous."""
+    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Optional per-path Python types when read-model annotations are ambiguous.
+
+    Copied read-only at construction: the filter SQL memo keys on the filter's shape
+    alone, so a hint changed later in the caller's mapping must not reach the gateway."""
 
     lenient_read_fields: frozenset[str] = attrs.field(factory=frozenset)
     """Read-model fields not stored on this relation; excluded from the read

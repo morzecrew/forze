@@ -400,6 +400,27 @@ class TestPostgresReadGatewayFilterSql:
         assert _entries(gw._filter_sql_cache) == 1  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
+    async def test_a_hint_changed_after_construction_never_reaches_the_sql(self) -> None:
+        hints: dict[str, type[Any]] = {"address.city": str}
+        gw = PostgresReadGateway(
+            relation=("public", "t"),
+            client=_client(),
+            model_type=_Row,
+            codec=default_model_codec(_Row),
+            introspector=_introspector({"public": _TYPES}),
+            tenant_aware=False,
+            nested_field_hints=hints,
+        )
+
+        before, _ = await gw.where_clause({"$values": {"address.city": "5"}})
+        hints["address.city"] = int
+        gw._filter_sql_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        after, _ = await gw.where_clause({"$values": {"address.city": "5"}})
+
+        assert after.as_string(None) == before.as_string(None)
+        assert gw.nested_field_hints == {"address.city": str}
+
+    @pytest.mark.asyncio
     async def test_tenant_predicate_stays_outside_the_memo(self) -> None:
         client = _client()
         tenant = {"id": uuid4()}
