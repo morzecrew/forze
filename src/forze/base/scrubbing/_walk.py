@@ -1,6 +1,7 @@
 """Internal tree walk for :func:`~forze.base.scrubbing.sanitize`."""
 
 from collections.abc import Mapping, Sequence
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, SecretStr
@@ -81,6 +82,10 @@ def walk_value(
             )
             for item in value  # pyright: ignore[reportUnknownVariableType]
         ]
+
+    if isinstance(value, Enum) and isinstance(value.value, (Mapping, list, tuple)):
+        # An encoder writes a member as its value, so scrub the container it would write.
+        return walk_value(value.value, text_scrub=text_scrub, depth=depth, max_depth=max_depth)
 
     return value
 

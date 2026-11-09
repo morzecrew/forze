@@ -374,3 +374,18 @@ def test_an_enum_member_renders_as_its_value_when_the_value_renders() -> None:
     assert context(_State.PAID) == {"state": "paid"}
     assert context(_State.TOTAL) == {"state": "19.90"}
     assert context(_State.OPAQUE) == {"context_unrenderable": True}
+
+
+def test_an_enum_member_holding_a_container_renders_it_masked() -> None:
+    class _Shape(Enum):
+        MAPPING = {"password": "hunter2", "size": 1}
+        LIST = ({"token": "t"},)
+
+    envelope = error_envelope(
+        exc.validation("bad", details={"m": _Shape.MAPPING, "l": _Shape.LIST})
+    )
+
+    assert envelope.context == {
+        "m": {"password": "**********", "size": 1},
+        "l": [{"token": "**********"}],
+    }
