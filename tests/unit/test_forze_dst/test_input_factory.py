@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -199,6 +199,23 @@ class TestTimeWindows:
 
             assert window.after > date(2026, 3, 1) and window.before < date(2026, 3, 1)
             assert window.afternoon.tzinfo is None and window.aware.tzinfo is UTC
+
+    def test_a_bounded_instant_is_as_aware_as_its_bounds_and_type_say(self) -> None:
+        plus5 = timezone(timedelta(hours=5))
+
+        class Window(BaseModel):
+            mixed: datetime = Field(gt=datetime(2026, 1, 1, tzinfo=plus5), lt=datetime(2026, 1, 2))
+            aware: AwareDatetime = Field(lt=datetime(2030, 1, 1))
+            naive: NaiveDatetime = Field(gt=datetime(2020, 1, 1, tzinfo=UTC))
+
+        factory = InputFactory.create_factory(Window)
+
+        for seed in range(100):
+            factory.seed_random(seed)
+            window = factory.build()  # pydantic checks every bound and the awareness on build
+
+            assert window.mixed.tzinfo is plus5 and window.aware.tzinfo is UTC
+            assert window.naive.tzinfo is None
 
     def test_plain_factories_keep_polyfactory_providers(
         self, wall_clock: Callable[[timedelta], None]

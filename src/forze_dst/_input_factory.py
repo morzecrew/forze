@@ -14,7 +14,7 @@ had before. A ``UUID1`` takes a draw ``uuid1()`` did not, so the fields built af
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import partial
 from typing import Any, TypeGuard
 from uuid import UUID
@@ -63,6 +63,30 @@ def _day(value: date) -> date:
 
 def _same(value: date) -> date:
     return value
+
+
+def _in_zone(bounds: tuple[Any, ...], aware: bool | None) -> tzinfo | None:
+    """The zone a bounded instant is drawn in, or :obj:`None` for a naive one: an aware
+    bound's zone, or UTC for a field that must be aware."""
+
+    if aware is False:
+        return None
+
+    zones = (b.tzinfo for b in bounds if isinstance(b, datetime) and b.tzinfo is not None)
+
+    return next(zones, UTC if aware else None)
+
+
+def _framed(bound: Any, zone: tzinfo | None) -> Any:
+    # pydantic compares a naive bound or value with an aware one by wall clock, and two
+    # aware ones as instants: a naive bound reads in the value's zone, an aware one keeps its
+    if not isinstance(bound, datetime):
+        return bound
+
+    if zone is None:
+        return bound.replace(tzinfo=None)
+
+    return bound if bound.tzinfo is not None else bound.replace(tzinfo=zone)
 
 
 # ....................... #
@@ -126,8 +150,15 @@ class InputFactory(ModelFactory[BaseModel]):
         if constraints.get("uuid_version") == 1:
             return UUID(int=cls.__faker__.random.getrandbits(128), version=1)
 
-        if is_safe_subclass(annotation, date) and "json" not in constraints:
-            return cls._bounded(constraints, instant=is_safe_subclass(annotation, datetime))
+        # polyfactory refuses a bound on pydantic's aware and naive datetime types outright
+        named = annotation is AwareDatetime or annotation is NaiveDatetime
+
+        if (named or is_safe_subclass(annotation, date)) and "json" not in constraints:
+            return cls._bounded(
+                constraints,
+                instant=named or is_safe_subclass(annotation, datetime),
+                aware=annotation is AwareDatetime if named else None,
+            )
 
         return super().get_constrained_field_value(
             annotation,
@@ -139,15 +170,21 @@ class InputFactory(ModelFactory[BaseModel]):
     # ....................... #
 
     @classmethod
-    def _bounded(cls, constraints: Any, *, instant: bool) -> date:
+    def _bounded(cls, constraints: Any, *, instant: bool, aware: bool | None = None) -> date:
         """A day, or an *instant*, within ``ge``/``gt``/``le``/``lt``, with "now" at the epoch.
 
         The tighter bound of each side holds, and an instant keeps its bounds' time of day and
-        zone. A missing bound sits :data:`_BOUND_SPAN` past the given one or the epoch,
-        whichever is farther out, so a one-sided bound never leaves an empty window.
+        zone: aware when a bound is or *aware* is true, naive when *aware* is false. A missing
+        bound sits :data:`_BOUND_SPAN` past the given one or the epoch, whichever is farther
+        out, so a one-sided bound never leaves an empty window.
         """
 
         ge, gt, le, lt = (constraints.get(key) for key in ("ge", "gt", "le", "lt"))
+        zone = _in_zone((ge, gt, le, lt), aware) if instant else None
+
+        if instant:
+            ge, gt, le, lt = (_framed(b, zone) for b in (ge, gt, le, lt))
+
         # An exclusive bound moves in by the smallest step the value can take.
         step, edge = (_MICROSECOND, _same) if instant else (_DAY, _day)
         lows = (edge(ge) if ge is not None else None, edge(gt) + step if gt is not None else None)
@@ -158,8 +195,8 @@ class InputFactory(ModelFactory[BaseModel]):
         if not instant:
             epoch: date = DEFAULT_EPOCH.date()
 
-        elif getattr(low or high, "tzinfo", None) is not None:
-            epoch = DEFAULT_EPOCH
+        elif zone is not None:
+            epoch = DEFAULT_EPOCH.astimezone(zone)
 
         else:
             epoch = DEFAULT_EPOCH.replace(tzinfo=None)
@@ -170,7 +207,10 @@ class InputFactory(ModelFactory[BaseModel]):
         if high is None:
             high = max(epoch, low) + _BOUND_SPAN
 
-        return low + (high - low) * cls.__faker__.random.random()
+        value = low + (high - low) * cls.__faker__.random.random()
+
+        # bounds in two zones: the wall clock a naive bound is read by is the one in ``zone``
+        return value.astimezone(zone) if isinstance(value, datetime) and zone else value
 
 
 # Nested models build through this factory too, so their dates come from the seed as well.
