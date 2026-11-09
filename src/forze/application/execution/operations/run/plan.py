@@ -223,13 +223,19 @@ async def run_resolved_operation_plan[Args, R](
     future, shared by retries and inherited by hedge child contexts.
     """
 
+    # Quoted casts: subscripting the generic protocols at runtime costs ~1 µs per call.
+    if not plan.two_phase and plan.tx.route is None:
+        # No prepare and no transaction: the outer scope wraps the handler itself, without
+        # a per-call closure and its frame (what ``transactional_core`` would do here).
+        return await run_resolved_scope(plan.outer, cast("Handler[Args, R]", handler), args)
+
     async def transactional_core(call_args: Args) -> R:
         if plan.two_phase:
             inner = await _prepare_apply_handler(
-                cast(TwoPhaseHandler[Args, Any, R], handler), call_args, inv_ctx
+                cast("TwoPhaseHandler[Args, Any, R]", handler), call_args, inv_ctx
             )
         else:
-            inner = cast(Handler[Args, R], handler)
+            inner = cast("Handler[Args, R]", handler)
 
         if plan.tx.route is None:
             # A route-less tx scope with stages is rejected at plan-resolution time

@@ -7,6 +7,7 @@ run with no metadata bound still logs a surface: ``unknown``.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from typing import Any
@@ -104,3 +105,56 @@ async def test_an_operation_with_no_metadata_logs_unknown() -> None:
     assert _line(records, "port call")[SURFACE_KEY] == "unknown"
     # Bound for the call only.
     assert SURFACE_KEY not in get_contextvars()
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _Seen(Handler[None, None]):
+    seen: list[dict[str, Any]]
+    started: asyncio.Event | None = None
+
+    async def __call__(self, _args: None) -> None:
+        self.seen.append(get_contextvars())
+
+        if self.started is None:
+            raise RuntimeError("boom")
+
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+async def test_the_unknown_surface_is_unbound_after_a_failed_operation() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    seen: list[dict[str, Any]] = []
+    registry = OperationRegistry(handlers={"op": lambda _ctx: _Seen(seen)}).freeze()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await run_operation(registry, "op", None, ctx)
+
+    assert seen == [{SURFACE_KEY: "unknown"}]
+    assert SURFACE_KEY not in get_contextvars()
+
+
+async def test_the_unknown_surface_is_unbound_after_a_cancelled_operation() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    seen: list[dict[str, Any]] = []
+    started = asyncio.Event()
+    registry = OperationRegistry(handlers={"op": lambda _ctx: _Seen(seen, started)}).freeze()
+
+    async def _driver() -> dict[str, Any]:
+        # The same task runs the operation and then reads its own logging context.
+        try:
+            await run_operation(registry, "op", None, ctx)
+        except asyncio.CancelledError:
+            return get_contextvars()
+
+        raise AssertionError("the operation was not cancelled")
+
+    task = asyncio.create_task(_driver())
+    await started.wait()
+    task.cancel()
+
+    assert seen == [{SURFACE_KEY: "unknown"}]
+    assert SURFACE_KEY not in await task

@@ -6,7 +6,9 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+import hypothesis.strategies as st
 import pytest
+from hypothesis import given, settings
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -98,6 +100,55 @@ def test_order_federated_secondary_sorts_none_and_dict_direction() -> None:
     # Explicit ``nulls`` overrides the direction default (absolute placement).
     assert _run({"dir": "asc", "nulls": "last"}) == ["1", "3", "2"]
     assert _run({"dir": "desc", "nulls": "first"}) == ["2", "3", "1"]
+
+
+def _merge_ids_oracle(
+    leg_rows: Sequence[tuple[str, Sequence[str], float]], k: int
+) -> list[tuple[str, str, float]]:
+    """The thin merge as it stood before its sort read the scored items directly."""
+
+    scores: dict[tuple[str, str], float] = {}
+
+    for member, ids, weight in leg_rows:
+        if weight <= 0.0:
+            continue
+
+        for rank, rid in enumerate(ids, start=1):
+            key = (member, rid)
+            scores[key] = scores.get(key, 0.0) + float(weight) / (float(k) + float(rank))
+
+    ordered = sorted(scores.keys(), key=lambda kk: (-scores[kk], kk[0], kk[1]))
+
+    return [(member, rid, scores[(member, rid)]) for member, rid in ordered]
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    legs=st.lists(
+        st.tuples(
+            st.sampled_from(("a", "b", "c")),
+            st.lists(st.sampled_from(("w", "x", "y", "z")), max_size=8),
+            st.sampled_from((1.0, 0.5, 2.0, 0.0, -1.0, 3)),
+        ),
+        max_size=5,
+    ),
+    k=st.sampled_from((1, 10, 60)),
+)
+def test_merge_ids_matches_the_former_merge(
+    legs: list[tuple[str, list[str], float]], k: int
+) -> None:
+    assert SearchResultSnapshot.weighted_rrf_merge_ids(leg_rows=legs, k=k) == (
+        _merge_ids_oracle(legs, k)
+    )
+
+
+def test_merge_ids_of_empty_legs_never_converts_k() -> None:
+    merged = SearchResultSnapshot.weighted_rrf_merge_ids(
+        leg_rows=[("a", [], 1.0), ("b", [], 2.0)],
+        k=10**400,
+    )
+
+    assert merged == []
 
 
 def test_merge_ids_skips_nonpositive_weight() -> None:
