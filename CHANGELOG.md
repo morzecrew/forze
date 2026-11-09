@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Calling an operation through a facade costs about 3 µs less.** A facade factory such as `document_facade(...)` now returns the same frozen facade while the runtime's context stays current (`users() is users()` within one scope), instead of a new one per call; it never carries one into another scope.
 
+- **A mock-backed DST seed takes up to a third less time.** Freezing a deps registry and generating a derived scenario's inputs both cost less; recorded seeds replay unchanged.
+
 ### Fixed
 
 - **`TinyLfuStore` no longer stalls the event loop for tens of milliseconds when it ages its frequency counters.** One aging pass takes about 0.07 ms at capacity 10k (was 9 ms) and 0.5 ms at 100k (was 72 ms); the counters and admission decisions are unchanged.
