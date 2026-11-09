@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.24.0] - 2026-11-09
+
+### Added
+
 - **An update replaces a field marked `ReplaceOnUpdate` whole, so a key it leaves out is removed.** Use `Annotated[dict[str, Any], ReplaceOnUpdate()]` from `forze.domain.models`, at any depth. Unmarked mappings still merge key by key. `ChildCollectionSync` accepts a marked mapping as a compare field.
 
 ### Changed
@@ -3068,7 +3082,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.23.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/morzecrew/forze/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/morzecrew/forze/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/morzecrew/forze/compare/v0.20.0...v0.21.0
