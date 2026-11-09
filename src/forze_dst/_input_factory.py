@@ -26,16 +26,20 @@ from polyfactory.field_meta import FieldMeta
 from polyfactory.utils.normalize_type import normalize_type
 from polyfactory.utils.predicates import is_safe_subclass
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     FutureDate,
     FutureDatetime,
     NaiveDatetime,
     PastDate,
     PastDatetime,
+    PlainValidator,
+    TypeAdapter,
+    WrapValidator,
 )
 
-from forze.base.primitives import AwareDatetime as ForzeAwareDatetime
 from forze_dst.time_source import DEFAULT_EPOCH
 
 # ----------------------- #
@@ -68,10 +72,6 @@ def _same(value: date) -> date:
     return value
 
 
-_FORZE_AWARE = get_args(ForzeAwareDatetime)[1]
-"""The validator forze's :data:`~forze.base.primitives.AwareDatetime` puts on a ``datetime``."""
-
-
 class _AwarePastDatetime(datetime):
     """A past instant that must be aware: pydantic has no type for one."""
 
@@ -88,17 +88,49 @@ _AWARE_AS: dict[type, Any] = {
 """The type a datetime leaf builds as when its metadata asks for an aware value."""
 
 
-def _asks_aware(metadata: Iterable[Any]) -> bool | None:
-    """Whether a datetime's metadata asks for an aware (true) or a naive (false) value."""
+_VALIDATORS = (AfterValidator, BeforeValidator, PlainValidator, WrapValidator)
+"""Metadata that can refuse a value; with markers (:data:`_HOOK`), what the awareness probe keeps."""
 
-    for m in metadata:
-        if m is _FORZE_AWARE or m is AwareDatetime or isinstance(m, AwareDatetime):
-            return True
+_HOOK = "__get_pydantic_core_schema__"
+"""What a marker such as ``AwareDatetime()`` defines to shape the schema."""
 
-        if m is NaiveDatetime or isinstance(m, NaiveDatetime):
-            return False
 
-    return None
+def _asks_aware(source: type, metadata: Iterable[Any]) -> bool | None:
+    """Whether a datetime's metadata asks for an aware (true) or a naive (false) value.
+
+    The field answers for itself: one instant is validated naive and aware against *source*
+    with the metadata's validators and markers, bounds left out. A validator or marker that
+    refuses exactly one of the two says which, forze's ``AwareDatetime`` and a user's own
+    alike. Each validator runs on both samples when the factory first reads its fields.
+    """
+
+    checks = [m for m in metadata if isinstance(m, _VALIDATORS) or hasattr(m, _HOOK)]
+
+    if not checks:
+        return None
+
+    annotation: Any = Annotated[source, *checks]
+
+    try:
+        adapter: TypeAdapter[Any] = TypeAdapter(annotation)
+
+    except Exception:  # metadata pydantic cannot build a schema for: the model cannot either
+        return None
+
+    sample = _FUTURE + _WINDOW if source is FutureDatetime else DEFAULT_EPOCH
+    naive, aware = _accepts(adapter, sample.replace(tzinfo=None)), _accepts(adapter, sample)
+
+    return aware if naive != aware else None
+
+
+def _accepts(adapter: TypeAdapter[Any], value: datetime) -> bool:
+    try:
+        adapter.validate_python(value)
+
+    except Exception:  # a user's validator can refuse a value with any exception
+        return False
+
+    return True
 
 
 def _name_awareness(meta: FieldMeta, source: Any) -> None:
@@ -114,9 +146,12 @@ def _name_awareness(meta: FieldMeta, source: Any) -> None:
         source, *metadata = get_args(source)
 
     if not meta.children:
-        aware = _asks_aware(metadata)
+        if not (isinstance(source, type) and source in _AWARE_AS):
+            return
 
-        if aware and isinstance(source, type) and source in _AWARE_AS:
+        aware = _asks_aware(source, metadata)
+
+        if aware:
             meta.annotation = _AWARE_AS[source]
 
         elif aware is False and source is datetime:

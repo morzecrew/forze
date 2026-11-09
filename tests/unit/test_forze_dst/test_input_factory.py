@@ -20,6 +20,7 @@ import pytest
 from polyfactory.factories.pydantic_factory import ModelFactory
 from pydantic import (
     UUID1,
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     Field,
@@ -257,6 +258,40 @@ class TestTimeWindows:
             leaves += (stamped.was, stamped.will)
             assert all(value.tzinfo is UTC for value in (*leaves, *stamped.keyed.values()))
             assert stamped.naive.tzinfo is None
+
+    def test_a_validator_that_refuses_one_awareness_gets_the_other(self) -> None:
+        # Nothing in the metadata names the awareness: the factory asks the validators.
+        def zoned(value: datetime) -> datetime:
+            if value.tzinfo is None:
+                raise ValueError("send a zone")
+
+            return value
+
+        def local(value: datetime) -> datetime:
+            if value.tzinfo is not None:
+                raise ValueError("send a wall-clock time")
+
+            return value
+
+        def recent(value: datetime) -> datetime:
+            return value if value > datetime(2000, 1, 1, tzinfo=UTC) else datetime.now(UTC)
+
+        class Booked(BaseModel):
+            at: Annotated[datetime, AfterValidator(zoned)]
+            wall: Annotated[datetime, AfterValidator(local), Field(gt=datetime(2000, 1, 1))]
+            many: list[Annotated[datetime, AfterValidator(zoned)]]
+            since: Annotated[datetime, AfterValidator(recent)]  # a naive value raises TypeError
+            due: Annotated[FutureDatetime, AfterValidator(zoned)]
+
+        factory = InputFactory.create_factory(Booked)
+
+        for seed in range(100):
+            factory.seed_random(seed)
+            booked = factory.build()  # each validator checks its value on build
+
+            leaves = (booked.at, *booked.many, booked.since, booked.due)
+            assert all(value.tzinfo is UTC for value in leaves)
+            assert booked.wall.tzinfo is None
 
     def test_plain_factories_keep_polyfactory_providers(
         self, wall_clock: Callable[[timedelta], None]
