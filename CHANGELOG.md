@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ...
+
+## [0.24.1] - 2026-11-10
+
+### Fixed
+
 - **The SSE live tail resumes where it stopped after a crash.** A restart after a failed stream read skipped to the end of the stream, so every SSE and WebSocket stream on the node missed the signals appended meanwhile; they now arrive once the tail restarts.
 
 ## [0.24.0] - 2026-11-09
@@ -3082,7 +3088,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.24.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/morzecrew/forze/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/morzecrew/forze/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/morzecrew/forze/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0
