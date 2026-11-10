@@ -7668,7 +7668,11 @@ rather than per instance, so every connect's replay and ack still counts: see
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
 and is at-most-once by contract: the mailbox carries the durable guarantee, and
 something else must write it (see <a href="#offline-delivery-without-socketio">offline delivery without
-Socket.IO</a>). Without a hub the endpoint is
+Socket.IO</a>). Once the tail is live, a crash
+restarts it after <code>restart_backoff</code> (5 s by default) from the last signal it read, so
+the signals appended meanwhile reach open streams late, not never, unless the stream
+trims them first. A startup, or a crash before the tail went live, skips the backlog.
+Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with <code>?topics=a,b</code> (live-only, like Socket.IO rooms)
 and are <strong>fail-closed</strong>: they require an <code>authorize_topics</code> resolver — <code>(ctx,
