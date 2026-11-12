@@ -42,7 +42,8 @@ Please describe the use case and why the feature would be useful.
 
 Prerequisites:
 
-- Python 3.13+
+- Python 3.13, 3.14 or 3.15. `uv` uses the 3.14 that `.python-version` names, as CI's test
+  matrix does; a lighter CI job also installs and unit-tests each supported version
 - [uv](https://docs.astral.sh/uv/)
 - [d2](https://d2lang.com/) (optional, for regenerating diagrams in docs)
 

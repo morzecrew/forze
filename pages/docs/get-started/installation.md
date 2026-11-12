@@ -12,7 +12,9 @@ the core (it runs fully in-memory, no Docker), then add integrations as you grow
 
 Forze requires:
 
-- Python 3.13 or 3.14
+- Python 3.13, 3.14 or 3.15. On 3.15 a few dependencies still build from source: PyYAML (pure
+  Python without a C compiler), and in the `zstd` and `kms-yc` extras zstandard and grpcio-tools,
+  which need a C and a C++ toolchain
 - [uv](https://docs.astral.sh/uv/){:target="_blank"} or another PEP 517-compatible package manager
 
 ## Install core

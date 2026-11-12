@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Python 3.15 is supported.** On 3.15, PyYAML builds from source (pure Python without a C compiler), and so do zstandard for the `zstd` extra and grpcio-tools for `kms-yc`, which need a C and a C++ toolchain until they publish 3.15 wheels.
 
 ### Changed
 

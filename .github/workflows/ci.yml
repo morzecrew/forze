@@ -25,6 +25,7 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".python-version"
       - ".gitleaks.toml"
       - ".pre-commit-config.yaml"
       - ".github/workflows/ci.yml"
@@ -75,6 +76,8 @@ jobs:
               - "tests/**"
               - "pyproject.toml"
               - "uv.lock"
+              # The Python every job but `python-compat` runs on.
+              - ".python-version"
               - ".gitleaks.toml"
               - ".pre-commit-config.yaml"
               - ".github/workflows/ci.yml"
@@ -260,6 +263,54 @@ jobs:
           report_type: test_results
           files: ./junit-${{ matrix.name }}.xml
 
+  # The jobs above run on the Python `.python-version` names. This one checks the rest of
+  # the supported range: everything installs (on 3.15 a few dependencies still build from
+  # source), mypy type-checks against that version's standard library, and the unit suite
+  # passes. No containers and no coverage, so it stays one runner per version.
+  python-compat:
+    name: Python compatibility (${{ matrix.python }})
+    needs: [changes, quality]
+    if: |
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
+      needs.quality.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14", "3.15"]
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          # Per version: the wheels built from source on 3.15 are worth keeping.
+          cache-suffix: py${{ matrix.python }}
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+
+      - name: Type-check
+        run: uv run mypy src
+
+      - name: Run unit tests
+        run: uv run pytest -m "not perf and not fuzz and not lake_slow" tests/unit
+
   # Combine per-shard coverage into one report, enforce the threshold, upload.
   coverage:
     name: Coverage gate
@@ -359,7 +410,7 @@ jobs:
 
   required-ci:
     name: Required Continuous Integration
-    needs: [changes, quality, test, coverage, conformance]
+    needs: [changes, quality, test, python-compat, coverage, conformance]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -381,6 +432,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          PYTHON_COMPAT_RESULT: ${{ needs.python-compat.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           CONFORMANCE_RESULT: ${{ needs.conformance.result }}
           CODE: ${{ needs.changes.outputs.code }}
@@ -390,6 +442,7 @@ jobs:
           echo "changes.result=${CHANGES_RESULT}"
           echo "quality.result=${QUALITY_RESULT}"
           echo "test.result=${TEST_RESULT}"
+          echo "python-compat.result=${PYTHON_COMPAT_RESULT}"
           echo "coverage.result=${COVERAGE_RESULT}"
           echo "conformance.result=${CONFORMANCE_RESULT}"
           echo "code=${CODE}"
@@ -410,6 +463,10 @@ jobs:
               echo "test matrix did not succeed"
               exit 1
             fi
+            if [[ "${PYTHON_COMPAT_RESULT}" != "success" ]]; then
+              echo "python compatibility matrix did not succeed"
+              exit 1
+            fi
             if [[ "${COVERAGE_RESULT}" != "success" ]]; then
               echo "coverage gate did not succeed"
               exit 1
@@ -426,7 +483,7 @@ jobs:
               echo "quality job did not succeed"
               exit 1
             fi
-            for result in "${TEST_RESULT}" "${COVERAGE_RESULT}" "${CONFORMANCE_RESULT}"; do
+            for result in "${TEST_RESULT}" "${PYTHON_COMPAT_RESULT}" "${COVERAGE_RESULT}" "${CONFORMANCE_RESULT}"; do
               if [[ "${result}" != "skipped" ]]; then
                 echo "a code-only job ran for a docs-only change"
                 exit 1
@@ -439,6 +496,10 @@ jobs:
             fi
             if [[ "${TEST_RESULT}" != "skipped" ]]; then
               echo "test was expected to be skipped"
+              exit 1
+            fi
+            if [[ "${PYTHON_COMPAT_RESULT}" != "skipped" ]]; then
+              echo "python-compat was expected to be skipped"
               exit 1
             fi
             if [[ "${COVERAGE_RESULT}" != "skipped" ]]; then
