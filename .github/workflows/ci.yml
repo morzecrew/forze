@@ -25,6 +25,7 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".python-version"
       - ".gitleaks.toml"
       - ".pre-commit-config.yaml"
       - ".github/workflows/ci.yml"
@@ -75,6 +76,8 @@ jobs:
               - "tests/**"
               - "pyproject.toml"
               - "uv.lock"
+              # The Python every job but `python-compat` runs on.
+              - ".python-version"
               - ".gitleaks.toml"
               - ".pre-commit-config.yaml"
               - ".github/workflows/ci.yml"
