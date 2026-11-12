@@ -217,7 +217,7 @@ There is no deprecation window yet: a contract that moves, moves in that release
 rather than shipping beside the old one for a cycle first. Read the changelog before upgrading
 a minor.
 
-Python 3.13 and 3.14 are supported.
+Python 3.13, 3.14 and 3.15 are supported.
 
 ## Contributing
 
