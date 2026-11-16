@@ -1220,11 +1220,14 @@ class TestEdges:
         plain_file.write_text("")
         real_fstat = os.fstat
         plain_fd = os.open(plain_file, os.O_RDONLY)
-        monkeypatch.setattr(os, "fstat", lambda _fd: real_fstat(plain_fd))
 
         try:
-            with pytest.raises(CoreException) as caught:
-                _Directory(path=directory).open(create=False)
+            # Undone before the close: pytest's own capture calls os.fstat after the test.
+            with monkeypatch.context() as patched:
+                patched.setattr(os, "fstat", lambda _fd: real_fstat(plain_fd))
+
+                with pytest.raises(CoreException) as caught:
+                    _Directory(path=directory).open(create=False)
 
         finally:
             os.close(plain_fd)
