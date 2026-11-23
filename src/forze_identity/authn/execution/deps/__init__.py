@@ -22,12 +22,13 @@ from .deps import (
     ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
 )
-from .module import AuthnDepsModule
+from .module import AuthnDepsModule, EligibilityChoice
 
 # ----------------------- #
 
 __all__ = [
     "AuthnDepsModule",
+    "EligibilityChoice",
     "AuthnKernelConfig",
     "AuthnSharedServices",
     "build_authn_shared_services",

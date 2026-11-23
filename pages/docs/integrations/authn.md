@@ -43,18 +43,66 @@ other is refused when the module is built. A `token_verifiers` override also nee
 `resolvers` override on its route: the default resolver would take an external token's
 subject as an internal principal id.
 
-By default every wired route checks the authenticating principal against an
-active `policy_principal` document — the posture for deployments running the
-authz plane. A token-only service with no authz plane opts out explicitly:
+### Principal eligibility
+
+Before every authentication, credential issue and credential change, authn asks whether the
+principal may still authenticate. `eligibility=` chooses what answers, for every route the
+module wires:
+
+| `eligibility=` | Reads | Admits |
+|---|---|---|
+| `"policy_principal"` (default) | the authz plane's `policy_principal` document, row-locked on issue | an active row, so a deactivation takes effect on the next check |
+| a gate factory | the registry you name | what your gate admits |
+| [`local_identity_deps`](../recipes/local-identity.md#principal-eligibility)'s default | the policy-principal document where it resolves, otherwise the preset's key file | an active row; or, from the key file, a principal named on an API key |
+| `"allow_all"` | nothing | every principal: nobody is checked |
+
+The default is for deployments running the authz plane, whose policy principals are the
+principal registry. A deployment with a registry of its own, such as a users table, passes a
+factory that builds a gate over it:
 
 ```python
-AuthnDepsModule(..., eligibility="allow_all")
+from typing import final
+
+import attrs
+
+from forze.application.contracts.authn import AuthnSpec, PrincipalEligibilityPort
+from forze.application.execution import ExecutionContext
+from forze_identity.authn import AuthnDepsModule
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableUserEligibility:
+    """Build the gate over the application's own users table."""
+
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> PrincipalEligibilityPort:
+        return UserEligibility(users=ctx.doc.query(user_spec))  # refuses unknown or inactive
+
+
+AuthnDepsModule(
+    kernel=kernel,
+    authn={"api": frozenset({"token"})},
+    eligibility=ConfigurableUserEligibility(),
+)
 ```
 
-That is a declared decision, never a silent fallback (an unknown value is
-refused at wiring): with it, deactivating a principal no longer blocks token
-issuance, so revocation rests entirely on credential lifecycle — session revoke
-and API-key revoke.
+The gate must:
+
+- refuse a principal it does not know with `authentication`, as it refuses an inactive one;
+- read state that is not tenant-aware, because eligibility runs before a tenant is bound;
+- read the row locked when asked `for_update` inside a transaction, if an issue should
+  serialize with the gate's own deactivation.
+
+Only the default gate skips its read after a
+[fast-path admission](#skip-the-eligibility-read). A factory's gate reads on every check.
+
+`allow_all` is a declared decision, never a fallback. With it, deactivating a principal no
+longer blocks token issuance, so revocation rests on credential lifecycle alone: session revoke
+and API-key revoke. Any other string, or a value that is not callable, is refused when the
+module is constructed (`authn_eligibility_invalid`).
+
+[`local_identity_deps`](../recipes/local-identity.md#principal-eligibility) chooses its gate by
+what is wired.
 
 ## What it provides
 

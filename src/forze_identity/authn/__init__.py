@@ -36,6 +36,7 @@ from .execution import (
     ConfigurablePasswordLifecycle,
     ConfigurablePasswordReset,
     ConfigurableTokenLifecycle,
+    EligibilityChoice,
     build_authn_shared_services,
 )
 from .observability import instrument_revocation_states, instrument_signing
@@ -58,6 +59,7 @@ __all__ = [
     "MIN_SECRET_BYTES",
     "Argon2PasswordVerifier",
     "AuthnDepsModule",
+    "EligibilityChoice",
     "AuthnKernelConfig",
     "AuthnOrchestrator",
     "AuthnSharedServices",

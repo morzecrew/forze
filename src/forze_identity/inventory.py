@@ -108,8 +108,7 @@ PASSWORD_LIFECYCLE_SPECS = (
 )
 """What password lifecycle touches end to end: accounts, reset tokens, invites, the
 sessions revoked on password change or reset, and the policy principal the default
-eligibility gate reads on every flow (unused but harmless under
-``eligibility="allow_all"``)."""
+eligibility gate reads on every flow (unused but harmless under any other gate)."""
 
 TENANT_RESOLUTION_SPECS = (principal_tenant_binding_spec, tenant_spec)
 """What tenant resolution reads: the principal-tenant binding, plus the tenant row when
@@ -203,11 +202,14 @@ def spec_contributions(*, planes: Sequence[IdentityPlane] | None = None) -> Spec
     coupling documented here.
 
     It is not *enforced* here: this function never sees the ``AuthnSpec`` and so cannot
-    know whether that check is on. And it is on unless the application opted out —
+    know whether that check is on. And it is on unless the application chose another gate —
     ``eligibility="policy_principal"`` is the authn module's default — so
-    ``planes=["authn"]`` belongs with ``eligibility="allow_all"``, and narrowing past a
-    live gate binds ``authz_policy_principals`` without cataloguing it. Reconciliation says
-    so from the bound side, at resolve time for a routeless provider.
+    ``planes=["authn"]`` belongs with any other gate that reads no authz document (a factory
+    over the application's own registry, the local preset's config gate where no authz store
+    is wired, or ``eligibility="allow_all"``). Narrowing past a gate that does read one, the
+    live policy-principal gate or a factory over ``authz_policy_principals``, binds that
+    document without cataloguing it, unless the application catalogues it itself.
+    Reconciliation says so from the bound side, at resolve time for a routeless provider.
 
     An empty selection is refused rather than read as "nothing", exactly as
     :func:`identity_document_names` refuses one: an emptied constant or a bad

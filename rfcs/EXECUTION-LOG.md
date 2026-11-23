@@ -7690,3 +7690,58 @@ in, every scheduled phase of RFC 0084 has shipped, and the RFC is marked complet
 | 0084 | 75 | Accepted | `ASSUMED` | A union worker's points are stamped at its snapshot write | D-283 |
 | 0084 | 76 | Accepted | `ASSUMED` | The meta line records `server.attribution`; the CLI warns before load | D-284 |
 | 0084 | 77 | Accepted | `ASSUMED` | Windows run back to back on a fixed schedule; nothing is sent after the last boundary | D-285 |
+
+---
+
+# Unit 25 · RFC 0081 P1 — the gate seam and the local preset's gate
+
+Branch `feat/authn-eligibility-seam`, cut from `main` at `e9eac5fda`. RFC 0081 P1 per §12: W1
+(§5.2) and W2 (§5.3), the §6 W1 and W2 tests, the §7 pages those two touch, and the changelog's
+**Added** entry. Not built, as §12 assigns them to later phases: W4, the `allow_all` posture
+finding (P2), and W3, the freeze-time requirement check with provider-level findings (P3). Rows
+4, 5, 6, 10, 11 and 14 hold as written. The `LOCKED` rows 1, 2 and 3 hold, and D-286 closes them
+out. Rows 7, 8, 9, 12, 13 and 15 belong to P2 and P3.
+
+**Drift count: 0.** One entry, D-286, a close-out.
+
+**Where each item lives.** The seam (`EligibilityChoice`, the construction refusal, the routed
+registration) is in
+[`authn/execution/deps/module.py`](../src/forze_identity/authn/execution/deps/module.py). The
+config gate is in [`builtin/local/eligibility.py`](../src/forze_identity/builtin/local/eligibility.py).
+The detecting factory is in [`builtin/local/deps.py`](../src/forze_identity/builtin/local/deps.py),
+and the passthrough in [`builtin/local/wiring.py`](../src/forze_identity/builtin/local/wiring.py).
+§6's W1 tests extend
+[`test_authn_execution_deps.py`](../tests/unit/test_forze_authn/test_authn_execution_deps.py).
+Two more W1 cases run a factory's gate end to end over the fast path's stack, in
+[`test_eligibility_skip.py`](../tests/unit/test_forze_identity/authn/test_eligibility_skip.py): a
+warm API key still reads, and a logout still locks the principal. The W2 tests are in
+[`builtin/local/test_eligibility.py`](../tests/unit/test_forze_identity/builtin/local/test_eligibility.py).
+
+## D-286 — Close-out: the default, `allow_all` and the skips hold
+
+- **Touches:** rows 1, 2 and 3 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:**
+  - **Row 1.** The default stays `"policy_principal"`
+    ([`module.py`](../src/forze_identity/authn/execution/deps/module.py), the `eligibility`
+    field). The local preset picks its gate by what is wired and keeps today's gate wherever
+    the policy-principal document resolves, so it changes no default either.
+  - **Row 2.** `ConfigurableAllowAllEligibility` is registered only for the literal
+    `"allow_all"`. The local preset passes `ConfigurableLocalPrincipalEligibility` unless the
+    caller passes a choice, and no other path selects it.
+  - **Row 3.** `_api_key_skip`, `_principals_to_lock` and
+    `ConfigurablePolicyPrincipalEligibility` in
+    [`deps.py`](../src/forze_identity/authn/execution/deps/deps.py) are unchanged on this
+    branch. The skips still test for the default gate's class positively, and the lock still
+    tests negatively for `allow_all`.
+- **Evidence:** sabotages run on this branch, each reverted after.
+  - Making `_api_key_skip` accept any gate but `allow_all` failed
+    `test_a_gate_factory_reads_on_every_api_key_verification` and
+    `TestAGateFactoryNeverSkips::test_an_api_key_never_skips_its_read`.
+  - Making `_principals_to_lock` test positively for the default gate failed
+    `test_a_logout_locks_the_principal_only_where_an_issue_does[own-reads2]` and
+    `TestAGateFactoryNeverSkips::test_an_epoch_raise_locks_the_principal_for_every_gate_but_allow_all[factory]`.
+  - Making the local factory always build the default gate failed
+    `TestDetection::test_without_a_policy_principal_store_the_config_is_the_registry` and
+    `TestThePreset::test_it_authenticates_its_own_keys_without_an_authz_plane`.
+- **Action:** decided.
