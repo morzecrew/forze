@@ -1,6 +1,8 @@
 # RFC 0081 — Authentication eligibility without an authorization plane
 
-- **Status:** 🚧 In progress — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on 2026-11-04 (rows 7 and 9).
+- **Status:** ✅ Complete — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on
+  2026-11-04 (rows 7 and 9), and the maintainer accepted the proposed rows on 2026-11-23
+  (rows 12, 13 and 16–19).
   - **P1 shipped**: the gate seam and the local preset's gate, recorded in
     [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 25 (D-286). It has no core change and changes no
     deployment that works today.
@@ -9,9 +11,7 @@
   - **P3 shipped**: a requirement check in `DepsRegistry.freeze()`, a core change, recorded in
     Units 27 and 28 (D-289 to D-295). It is **breaking** for wiring that can never
     authenticate (row 7).
-  - Every scheduled phase is built. The rows Units 26 to 28 propose wait on the maintainer, and
-    the RFC is marked complete once they are settled. The demand-gated items stay as §12 lists
-    them.
+  - Every scheduled phase is built. The demand-gated items stay as §12 lists them.
 - **Scope:** How an application authenticates without wiring the authz plane, and stays fail
   closed. Today the principal-eligibility gate offers two values. `policy_principal` reads the
   authz plane's `authz_policy_principals` document. `allow_all` checks nobody. The work:
@@ -617,10 +617,14 @@ Q4 is demand-gated.
 | 9 | `LOCKED` | The `allow_all` posture finding refuses under a production posture, accepted by the maintainer on 2026-11-04 (§10 Q2) over warning-only. As designed, `AuthnDepsModule` is `PostureAware` and reports `authn_eligibility:<route>` (P2). Provider-level collection, with one `ConfigurableAllowAllEligibility` per route, covers built `Deps` (P3). There is one construction warning without a posture. Under a production posture, including an unset environment, the boot is refused unless `Exempt` covers it. That is breaking for bi-backend. |
 | 10 | `ASSUMED` | The mock-server examples keep their policy-principal seed (`app.py:191-198`, `served.py:37-46`), and the mock-server docs warning stays. On the mock the plain fallback resolves the document, so the preset keeps today's gate there. |
 | 11 | `ASSUMED` | `principal_deactivation` still requires `authz_route` (`module.py:312-316`). An application with its own registry deactivates there and revokes tokens itself (§8). |
-| 12 | `OPEN` | The names and module of `Requirement` and `DeclaresRequirements`, and the remedy's shape (a string on the record, or a hint keyed by error code). The accessor is named and in scope (row 7). Settle these while writing P3, and log the choice. |
-| 13 | `OPEN` | Whether `ConfigurablePrincipalDeactivation` declares its authz registry route in the same change. It is the same mechanism and additive. Decide by the size of P3's diff, and log it. |
+| 12 | `ASSUMED` | `Requirement` (keyword-only `key`, `route` and `remedy: str`) and `DeclaresRequirements` live in `forze.application.contracts.deps.requirements` and are exported from `forze.application.contracts.deps`. The remedy is a string on the record. Accepted by the maintainer on 2026-11-23. (D-289) |
+| 13 | `ASSUMED` | `ConfigurablePrincipalDeactivation` declares `(PrincipalRegistryDepKey, authz_route)` and `(TokenLifecycleDepKey, <its route>)`, so deactivation without either is refused at freeze, in the same **Breaking** entry. Accepted by the maintainer on 2026-11-23. (D-290, D-295) |
 | 14 | `ASSUMED` | No built-in credential-backed gate in this RFC. It is demand-gated on a consumer that needs a deactivation switch without an authz plane and accepts the registration carve-out (§5.8 A3). |
 | 15 | `ASSUMED` | W4 ships ahead of W3, at module level, in its own phase (P2), with no core change. Built-`Deps` `allow_all` wiring gets only the warning until P3's provider walk. No preset selects `allow_all`, and the one known consumer with a production posture passes the module. |
+| 16 | `ASSUMED` | The P2 changelog entry shows the `Exempt` line, and the consumers it affects are named in the PR only. (D-288) |
+| 17 | `ASSUMED` | Only an instance declares requirements or posture findings. A class registered as a factory declares nothing. (D-291) |
+| 18 | `ASSUMED` | One refusal names every unbound requirement, sorted, and each distinct remedy once. (D-292) |
+| 19 | `ASSUMED` | `DepsRegistry.freeze()` collects posture findings from modules and then from registered providers, keeping one per `(target, rule)`. (D-293) |
 
 ## 12. Phasing
 
