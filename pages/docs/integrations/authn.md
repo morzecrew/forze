@@ -101,7 +101,8 @@ longer blocks token issuance, so revocation rests on credential lifecycle alone:
 and API-key revoke. It logs a warning when the module is constructed, and it is a
 [production posture](../running-in-prod/production-posture.md) finding: under a production
 posture each route refuses the boot unless an `Exempt` names `authn_eligibility:<route>` with
-its reason. Any other string, or a value that is not callable, is refused when the module is
+its reason. The finding comes from a module passed to `build_runtime`; built `Deps`, such as
+`local_identity_deps` returns, get only the warning. Any other string, or a value that is not callable, is refused when the module is
 constructed (`authn_eligibility_invalid`).
 
 [`local_identity_deps`](../recipes/local-identity.md#principal-eligibility) chooses its gate by

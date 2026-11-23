@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`eligibility="allow_all"` is a production posture finding** (**Breaking**): under a `ProductionPosture`, an unset environment included, each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it. It also logs a warning when the module is constructed.
+- **`eligibility="allow_all"` is a production posture finding** (**Breaking**): passed to `build_runtime` as a module, under a `ProductionPosture` (an unset environment included), each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it. Constructing the module logs a warning.
 
 ### Fixed
 
