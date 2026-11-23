@@ -7792,3 +7792,132 @@ tests are in
 - **Class:** `spec-gap`. §12 did not say which release notes it meant.
 - **Proposed row (RFC 0081):** `ASSUMED`. The P2 changelog entry shows the `Exempt` line, and the
   consumers it affects are named in the PR only.
+
+---
+
+# Unit 27 · RFC 0081 P3 — refusing an unbuildable gate at boot
+
+Branch `feat/authn-requirement-check`, cut from Unit 26's branch at `ed8c330d8`. RFC 0081 P3 per
+§12: W3 (§5.5), meaning `Requirement`, `DeclaresRequirements`, `ProviderStore.providers()` and
+the freeze check. Also built: the policy-principal declaration (row 8), provider-level posture
+findings with one `ConfigurableAllowAllEligibility` per route (row 9), the §6 W3 tests, the §7
+pages, and the changelog's **Changed** entry, marked **Breaking**. §10 Q3 is settled as row 7
+says: the check runs in `freeze()`, which had everything it needed. Rows 1 to 6, 10, 11, 14 and
+15 hold as written, and row 8 holds. The `LOCKED` rows 7 and 9 hold as D-291 to D-293 refine
+them, and D-294 closes them out. Rows 12 and 13 are decided by D-289 and D-290.
+
+**Drift count: 0.** Six entries, D-289 to D-294: four `spec-gap`, one `discovery` and one
+close-out.
+
+**What the check cost forze's own suites (§9).** Four tests changed, and none of them predates
+this RFC's branches. Three are this RFC's own P1 and P2 tests: they wired the default gate
+without its store and now give it one, or assert the boot refusal. The fourth built
+`ConfigurableAllowAllEligibility()`, which now takes its route. That class is not exported. The
+unit suite and the authn integration suites pass otherwise, so no other forze test wires a gate
+it could never build.
+
+**Where each item lives.** The record and the protocol are in
+[`contracts/deps/requirements.py`](../src/forze/application/contracts/deps/requirements.py), and
+the walk is in [`contracts/deps/store.py`](../src/forze/application/contracts/deps/store.py)
+(`providers`). The check and the provider-level findings are in
+[`execution/deps/registry.py`](../src/forze/application/execution/deps/registry.py)
+(`_refuse_unbound_requirements`, `_provider_findings`, `freeze`). The declarations and the
+per-route `allow_all` gate are in
+[`authn/execution/deps/deps.py`](../src/forze_identity/authn/execution/deps/deps.py). The tests
+are in
+[`test_deps_requirements.py`](../tests/unit/test_forze/application/execution/test_deps_requirements.py)
+and
+[`test_eligibility_requirement.py`](../tests/unit/test_forze_identity/authn/test_eligibility_requirement.py).
+The changelog also gains an **Added** entry beside §7's **Changed** one, so the new public names
+are recorded.
+
+## D-289 — `Requirement` and `DeclaresRequirements` live beside the store, and the remedy is a string
+
+- **Touches:** row 12 (`OPEN`), §5.5.
+- **RFC said:** settle the names and module of the record and the protocol, and the remedy's
+  shape: a string on the record, or a hint keyed by error code.
+- **Built:** both keep the sketch's names. They live in
+  [`contracts/deps/requirements.py`](../src/forze/application/contracts/deps/requirements.py)
+  and are exported from `forze.application.contracts.deps` beside `ProviderStore`. The remedy is a
+  string on the record.
+- **Because:** the refusal is the only place a remedy is read. A hint keyed by error code would
+  put every provider's remedy into one shared table, under a code that names none of them.
+- **Class:** `spec-gap`. Row 12 left it to execution.
+- **Proposed row (RFC 0081):** `ASSUMED`. `Requirement(key, route, remedy: str)` and
+  `DeclaresRequirements` live in `forze.application.contracts.deps.requirements` and are
+  exported from `forze.application.contracts.deps`.
+
+## D-290 — Principal deactivation declares its authz registry route
+
+- **Touches:** row 13 (`OPEN`), §8 ("Other cross-plane requirements").
+- **RFC said:** decide by the size of P3's diff whether `ConfigurablePrincipalDeactivation`
+  declares its authz registry route in the same change.
+- **Built:** it declares `(PrincipalRegistryDepKey, authz_route)`. The remedy names the two ways
+  out: wire the authz plane's principal registry on that route, or drop the route from
+  `principal_deactivation`. It is the same mechanism, and its diff is a method and a test.
+- **Class:** `spec-gap`. Row 13 left it to execution.
+- **Proposed row (RFC 0081):** `ASSUMED`. `ConfigurablePrincipalDeactivation` declares
+  `(PrincipalRegistryDepKey, authz_route)`, so deactivation without the authz registry is refused
+  at freeze, in the same **Breaking** entry.
+
+## D-291 — A class registered as a factory declares nothing
+
+- **Touches:** row 7 (`LOCKED`) and row 9 (`LOCKED`), §5.5's sketch
+  (`isinstance(provider, DeclaresRequirements)`).
+- **Found:** a class registered as a factory passes the protocol check, because `isinstance`
+  against a `runtime_checkable` protocol finds the method in the class's own namespace. Calling
+  that method on the class fails for want of `self`, so a factory registered as `SomeClass`
+  rather than `SomeClass()` would crash the freeze. A mock does not pass: on Python 3.12 and later
+  the check reads attributes statically, so a `Mock`'s dynamic ones are not seen. This entry was
+  first drafted on the opposite premise, that mocks pass. `test_a_mock_declares_nothing` refuted
+  it before the draft reached this log.
+- **Built:** `freeze()` reads a provider's requirements, and its posture findings, only when the
+  provider is an instance and the protocol check passes. Row 7 is otherwise as written.
+- **Class:** `discovery`.
+- **Proposed row (RFC 0081):** `ASSUMED`. Only an instance declares requirements or posture
+  findings. A class registered as a factory declares nothing.
+
+## D-292 — A refusal lists every unbound requirement
+
+- **Touches:** row 7 (`LOCKED`), §5.5's sketch (raise at the first unbound frame).
+- **Built:** `freeze()` collects every unbound requirement and raises once
+  (`dependency_requirement_unbound`). There is one sentence per frame, sorted, and each remedy
+  is given once. Wiring that misses one store on several routes then learns it in one boot.
+- **Class:** `spec-gap`. The sketch shows the check, not how several failures report.
+- **Proposed row (RFC 0081):** `ASSUMED`. One refusal names every unbound requirement, sorted, and
+  each distinct remedy once.
+
+## D-293 — Findings are deduplicated where they are collected
+
+- **Touches:** row 9 (`LOCKED`), §5.4 ("the duplicate is dropped by `(target, rule)`
+  (`posture.py:300`)").
+- **Found:** `ProductionPosture.findings` deduplicates. `FrozenDepsRegistry.posture_findings`
+  and the `WiringReport` built from it would still carry a module-passed `allow_all` route twice,
+  once from the module and once from its provider.
+- **Built:** `freeze()` keeps the first finding per `(target, rule)`, modules first, then
+  providers in registration order.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0081):** `ASSUMED`. `DepsRegistry.freeze()` collects posture findings from
+  modules and then from registered providers, keeping one per `(target, rule)`.
+## D-294 — Close-out: the boot refusal and the provider-level finding hold
+
+- **Touches:** rows 7 and 9 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:**
+  - **Row 7.** `DepsRegistry.freeze()` walks `ProviderStore.providers()` and refuses
+    (`configuration`, `dependency_requirement_unbound`) a declared frame that has neither its
+    route nor a plain fallback registered. The walk is per provider, so built `Deps` are checked.
+    The refusal names keys and routes only.
+  - **Row 9.** Under `eligibility="allow_all"`, each route registers its own
+    `ConfigurableAllowAllEligibility(route=...)`, which reports `authn_eligibility:<route>`.
+    `freeze()` collects it from built `Deps` as well as from the module.
+- **Evidence:** sabotages run on this branch, each reverted after.
+  - Removing the check from `freeze()` failed six tests across both files, the built-`Deps` and
+    OIDC preset cases included.
+  - Dropping the provider findings failed
+    `TestAllowAllPassedAsBuiltDeps::test_a_production_posture_refuses_it` and
+    `test_a_providers_findings_are_collected_from_built_deps`.
+  - Keeping duplicates failed the two report-once tests.
+  - `test_a_provider_needing_an_unregistered_route_refuses_the_freeze` pins the refusal's full
+    text, which carries no value.
+- **Action:** decided.

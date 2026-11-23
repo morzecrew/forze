@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, Self, cast, final
 
 import attrs
@@ -426,6 +426,19 @@ class ProviderStore:
                 frames.add(frame_for(key, route))
 
         return frozenset(frames)
+
+    # ....................... #
+
+    def providers(self) -> Iterator[tuple[DepKey[Any], StrKey | None, Any]]:
+        """Every registered provider once, as ``(key, route, provider)``: the plain ones first,
+        with ``route`` ``None``, then the routed ones, in registration order."""
+
+        for key, dep in self.plain_deps.items():
+            yield key, None, dep
+
+        for key, routes in self.routed_deps.items():
+            for route, dep in routes.items():
+                yield key, route, dep
 
     # ....................... #
 

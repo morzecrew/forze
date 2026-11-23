@@ -159,16 +159,14 @@ class TestThePreset:
         ],
     )
     def test_an_explicit_choice_skips_detection(self, choice: Any, registered: type) -> None:
-        ctx = context_from_deps(local_identity_deps(_CONFIG, eligibility=choice))
+        deps = local_identity_deps(_CONFIG, eligibility=choice).merge(_routed_store())
+        ctx = context_from_deps(deps)
 
         assert isinstance(ctx.deps.provide(PrincipalEligibilityDepKey, route="main"), registered)
 
-    async def test_an_explicit_policy_principal_choice_needs_its_store(self) -> None:
-        ctx = context_from_deps(local_identity_deps(_CONFIG, eligibility="policy_principal"))
-
+    def test_an_explicit_policy_principal_choice_is_refused_without_its_store(self) -> None:
+        # The detecting gate declares nothing; the default one needs its document at boot.
         with pytest.raises(CoreException) as caught:
-            await ctx.authn.authn(_SPEC).authenticate_with_api_key(
-                ApiKeyCredentials(key="dev-key"),
-            )
+            context_from_deps(local_identity_deps(_CONFIG, eligibility="policy_principal"))
 
-        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "dependency_requirement_unbound"

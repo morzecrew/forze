@@ -96,13 +96,20 @@ The gate must:
 Only the default gate skips its read after a
 [fast-path admission](#skip-the-eligibility-read). A factory's gate reads on every check.
 
+The default gate needs its document. If `authz_policy_principals` has neither its own route nor
+a plain document fallback, the boot is refused (`dependency_requirement_unbound`), naming the
+route and the three ways out: wire the document, pass a gate, or declare `allow_all`. A plain
+fallback, as on the mock, satisfies the check even when it holds no policy principals, so there
+an unseeded principal still gets `Principal not found`. `principal_deactivation` routes are
+checked the same way: they need the authz principal registry on `authz_route`.
+
 `allow_all` is a declared decision, never a fallback. With it, deactivating a principal no
 longer blocks token issuance, so revocation rests on credential lifecycle alone: session revoke
 and API-key revoke. It logs a warning when the module is constructed, and it is a
 [production posture](../running-in-prod/production-posture.md) finding: under a production
 posture each route refuses the boot unless an `Exempt` names `authn_eligibility:<route>` with
-its reason. The finding comes from a module passed to `build_runtime`; built `Deps`, such as
-`local_identity_deps` returns, get only the warning. Any other string, or a value that is not callable, is refused when the module is
+its reason, whether the module or its built `Deps` (as `local_identity_deps` returns) is
+passed. Any other string, or a value that is not callable, is refused when the module is
 constructed (`authn_eligibility_invalid`).
 
 [`local_identity_deps`](../recipes/local-identity.md#principal-eligibility) chooses its gate by

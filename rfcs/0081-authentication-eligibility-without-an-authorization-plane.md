@@ -6,8 +6,11 @@
     deployment that works today.
   - **P2 shipped**: `allow_all` is a posture finding, also with no core change, recorded in
     Unit 26 (D-287, D-288). It is **breaking** under a production posture (row 9).
-  - P3 adds a requirement check to `DepsRegistry.freeze()`, a core change. It is **breaking**
-    for wiring that can never authenticate (row 7).
+  - **P3 shipped**: a requirement check in `DepsRegistry.freeze()`, a core change, recorded in
+    Unit 27 (D-289 to D-294). It is **breaking** for wiring that can never authenticate (row 7).
+  - Every scheduled phase is built. The rows Units 26 and 27 propose wait on the maintainer, and
+    the RFC is marked complete once they are settled. The demand-gated items stay as §12 lists
+    them.
 - **Scope:** How an application authenticates without wiring the authz plane, and stays fail
   closed. Today the principal-eligibility gate offers two values. `policy_principal` reads the
   authz plane's `authz_policy_principals` document. `allow_all` checks nobody. The work:

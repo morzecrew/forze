@@ -100,7 +100,8 @@ local = local_identity_deps(config, eligibility="policy_principal")
 
 `eligibility=` takes anything
 [`AuthnDepsModule.eligibility`](../integrations/authn.md#principal-eligibility) takes, and
-skips the detection.
+skips the detection. With `"policy_principal"` and no policy-principal store wired, the boot is
+refused rather than every authentication failing.
 
 ## At the boundary
 

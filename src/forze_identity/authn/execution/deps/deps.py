@@ -34,9 +34,9 @@ from forze.application.contracts.authn import (
     TokenVerifierPort,
     resolve_authn_event_emitter,
 )
-from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.authz import AuthzSpec, PrincipalRegistryDepKey
 from forze.application.contracts.counter import CounterSpec
-from forze.application.contracts.deps import backend_of, implements
+from forze.application.contracts.deps import Requirement, backend_of, implements
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentCommandHookDepKey,
@@ -45,7 +45,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, WiringFinding
 from forze.application.integrations.authn import (
     LOCKOUT_COUNTER_ROUTE,
     LockoutConfig,
@@ -101,6 +101,16 @@ from ...verifiers import (
 from .configs import AuthnSharedServices
 
 # ----------------------- #
+
+ALLOW_ALL_RULE = "admits every principal: deactivating one does not stop its authentication"
+"""The rule an ``eligibility="allow_all"`` finding reports, for every route it covers."""
+
+_POLICY_PRINCIPAL_REMEDY = (
+    "Wire the authz plane's policy principal document, pass AuthnDepsModule(eligibility=...) a "
+    'gate over your own principal registry, or declare eligibility="allow_all".'
+)
+
+# ....................... #
 
 
 def _resolve_eligibility(
@@ -618,12 +628,37 @@ class ConfigurablePolicyPrincipalEligibility:
 
         return AdmittedTokenEligibilityAdapter(inner=adapter)
 
+    # ....................... #
+
+    def requirements(self) -> tuple[Requirement, ...]:
+        """The policy principal document every check reads, so wiring without it is refused
+        when the registry is frozen instead of on every authentication."""
+
+        return (
+            Requirement(
+                key=DocumentQueryDepKey,
+                route=policy_principal_spec.name,
+                remedy=_POLICY_PRINCIPAL_REMEDY,
+            ),
+        )
+
 
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableAllowAllEligibility:
-    """Build :class:`AllowAllPrincipalEligibilityAdapter` — no documents required."""
+    """Build :class:`AllowAllPrincipalEligibilityAdapter` — no documents required.
+
+    Built once per route, so the posture finding it reports names that route, whether the
+    wiring reaches the registry as a module or as built ``Deps``.
+    """
+
+    route: StrKey
+    """The route this gate is registered for."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -632,6 +667,21 @@ class ConfigurableAllowAllEligibility:
     ) -> PrincipalEligibilityPort:
         _ = ctx, spec
         return AllowAllPrincipalEligibilityAdapter()
+
+    # ....................... #
+
+    def posture_findings(self) -> tuple[WiringFinding, ...]:
+        """The route admits every principal, which a production posture refuses unless an
+        ``Exempt`` names ``authn_eligibility:<route>``."""
+
+        return (
+            WiringFinding(
+                source="forze_identity",
+                # The value, not str(): a ``(str, Enum)`` route renders as ``Routes.MAIN``.
+                target=f"authn_eligibility:{str.__str__(self.route)}",
+                rule=ALLOW_ALL_RULE,
+            ),
+        )
 
 
 # ....................... #
@@ -684,6 +734,22 @@ class ConfigurablePrincipalDeactivation:
     shared: AuthnSharedServices | None = None
     """Shared services; their revocation states make deactivation refuse to run outside a
     transaction."""
+
+    def requirements(self) -> tuple[Requirement, ...]:
+        """The authz principal registry deactivation writes first, so wiring without it is
+        refused when the registry is frozen instead of on the first deactivation."""
+
+        return (
+            Requirement(
+                key=PrincipalRegistryDepKey,
+                route=self.authz_route,
+                remedy=(
+                    "Wire the authz plane's principal registry on that route "
+                    "(AuthzDepsModule(principal_registry=...)), or drop the route from "
+                    "AuthnDepsModule(principal_deactivation=...)."
+                ),
+            ),
+        )
 
     def __call__(
         self,

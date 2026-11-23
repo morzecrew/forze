@@ -101,7 +101,7 @@ async def test_module_eligibility_knob_selects_the_gate() -> None:
         AllowAllPrincipalEligibilityAdapter,
     )
 
-    built = ConfigurableAllowAllEligibility()(MagicMock(), MagicMock())
+    built = ConfigurableAllowAllEligibility(route="main")(MagicMock(), MagicMock())
     assert isinstance(built, AllowAllPrincipalEligibilityAdapter)
     assert isinstance(
         ConfigurablePolicyPrincipalEligibility, type
