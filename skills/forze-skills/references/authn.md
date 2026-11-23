@@ -93,7 +93,7 @@ Routes without verifier/resolver overrides fall back to the first-party defaults
 
 ## Authn document specs
 
-`forze_identity.authn` exposes five `DocumentSpec`s (`password_account_spec`, `api_key_account_spec`, `password_invite_spec`, `session_spec`, `identity_mapping_spec`). All five are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `password_invite_spec` is only needed when you enable single-use password invites (`AuthnKernelConfig.invite_token_pepper`). The default eligibility gate additionally requires tenant-unaware `authz_policy_principals` (`policy_principal_spec`). User offboarding uses `PrincipalDeactivationPort`, not `deactivate_principal` alone. `MappingTableResolver` forbids cache and history on `identity_mapping_spec`.
+`forze_identity.authn.application.specs` holds the authn `DocumentSpec`s (`password_account_spec`, `api_key_account_spec`, `password_invite_spec`, `password_reset_spec`, `session_spec`, `identity_mapping_spec`). All six are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` (exported by `forze_identity.authn.application`) and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `password_invite_spec` is only needed when you enable single-use password invites (`AuthnKernelConfig.invite_token_pepper`). The default eligibility gate additionally requires tenant-unaware `authz_policy_principals` (`policy_principal_spec`). User offboarding uses `PrincipalDeactivationPort`, not `deactivate_principal` alone. `MappingTableResolver` forbids cache and history on `identity_mapping_spec`.
 
 ## Authz
 
