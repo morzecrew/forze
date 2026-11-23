@@ -930,8 +930,14 @@ class TestSoakRun:
             return httpx.Response(503)
 
         soak = Soak(duration_s=2.4, window_s=0.2, workers=1)
+        done = asyncio.Event()
+        lag = asyncio.create_task(_loop_lag(done))
 
         result = await run(_plan(metrics=None), soak, transport=httpx.MockTransport(failing))
+        done.set()
+        # A stalled loop reads the stopping row late by the stall, which no schedule can
+        # prevent; a stop read only at the next boundary is a window late with none.
+        stall = await lag
         stopped, last = result.summary["stopped"], result.rows[-1]
 
         # The stopping window's row is read as its calls drain, early in the next window,
@@ -939,7 +945,7 @@ class TestSoakRun:
         assert stopped["reason"] == "errors"
         assert len(result.rows) < soak.windows
         assert last.get("cut_short")
-        assert last["t_s"] - stopped["window"] * soak.window_s < 0.1
+        assert last["t_s"] - stopped["window"] * soak.window_s < 0.1 + stall
         assert max(sends) <= sends[0] + last["t_s"] + 0.05
 
     async def test_open_arrivals_keep_their_schedule_across_windows(self) -> None:
