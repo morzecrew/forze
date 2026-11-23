@@ -6815,6 +6815,17 @@ network is not — is an exemption the deployment writes down, with its reason:<
 </code></pre></div>
 <p>An exemption needs a non-blank reason, so it reads as a reviewed line. It matches a rule's
 settings path as well as an integration's target; a path that does not resolve cannot be exempted.</p>
+<p>An authn module whose <a href="../../integrations/authn/#principal-eligibility">eligibility gate</a> is
+<code>eligibility="allow_all"</code> is the other: it checks nobody, so deactivating a principal does not
+stop its authentication. It warns when constructed, and under a production posture every route it
+wires refuses the boot, named <code>authn_eligibility:&lt;route&gt;</code>. A deployment that has no principal
+registry to check yet writes that down:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">Exempt</span>
+
+<span class="n">Exempt</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s2">"authn_eligibility:main"</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">"No authorization plane yet"</span><span class="p">)</span>
+</code></pre></div>
+<p>The finding is collected from an <code>AuthnDepsModule</code> passed to <code>build_runtime</code> as a module. Wiring
+handed over as built <code>Deps</code> gets only the warning.</p>
 <div class="admonition warning">
 <p class="admonition-title">Adopting a posture can refuse a deployment that boots today</p>
 <p>That is the point, and it is still a break. Run <code>check_wiring</code> with the posture in CI first,
