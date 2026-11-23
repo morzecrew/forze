@@ -115,7 +115,7 @@ Redis](../../integrations/authn.md#check-sessions-and-api-keys-from-redis).
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
 | `name` | `str \| StrEnum` | required | route name |
-| `tenancy_mode` | `"global" \| "require_invocation_tenant"` | `"global"` | whether grant resolution is partitioned by the invocation tenant — set `require_invocation_tenant` in a multi-tenant deployment; it refuses a call with no tenant bound as `tenant_required` (401), which asks the client to select a tenant, not to refresh its token |
+| `tenancy_mode` | `"global" \| "require_invocation_tenant"` | `"global"` | `global` is one catalog for every tenant, where a principal-role binding holds in every tenant unless it names one (`scope_tenant_id`); use it over documents that are not tenant-aware. `require_invocation_tenant` is a catalog per tenant over tenant-aware documents; it refuses a call with no tenant bound as `tenant_required` (401), which asks the client to select a tenant, not to refresh its token |
 | `enforce_principal_active` | `bool` | `True` | refuse a decision for a deactivated principal |
 | `enforce_delegation_grant` | `bool` | `False` | a delegated identity (`actor` set) also needs a recorded delegation grant; enabling it with no delegation port wired is a configuration error |
 
@@ -140,8 +140,9 @@ A *subject* below is any of `PrincipalRef \| UUID \| AuthnIdentity \| AuthzSubje
 | `AuthzScopePort` | `scope_document(request)` | `AuthzDocumentScopeRequest` → `AuthzDocumentScope`, a [query-DSL](../query-syntax.md) constraint for list, search and read paths. Scopes the request's subject alone; `AuthzDocumentScopeWrap` walks a delegation chain and conjoins the answers |
 | | `authorize_sensitive_resource(request)` | `AuthzSensitiveAccessRequest` → `bool`; a delegated subject passes only when every principal in its chain does |
 | `GrantQueryPort` | `resolve_effective_grants(subject, *, scope=None)` | the subject's `EffectiveGrants` |
-| `RoleAssignmentPort` | `assign_role(subject, role_key, *, scope=None)` · `revoke_role(…)` | `role_key` names a catalog role |
-| | `list_roles(subject, *, scope=None)` | `frozenset[RoleRef]` |
+| `RoleAssignmentPort` | `assign_role(subject, role_key, *, scope=None)` · `revoke_role(…)` | `role_key` names a catalog role. The binding is held in the bound tenant, else in `scope`'s tenant, else in every tenant ([roles in one tenant](../../identity-tenancy-enc/identity.md#roles-in-one-tenant)). A revoke inside a tenant of a role held in every tenant is refused with `conflict`, `authz.role_held_globally` (409) |
+| | `revoke_tenant_roles(subject, *, tenant_id)` | removes the subject's bindings in that tenant and keeps global ones; what `detach_principal` calls, from whichever tenant is bound. A tenant-aware binding store needs that tenant bound |
+| | `list_roles(subject, *, scope=None)` | `frozenset[RoleRef]`: global roles plus the bound tenant's |
 | `PrincipalRegistryPort` | `ensure_principal(principal_id, kind, *, is_active=True)` | idempotent create-or-return; `kind` is `"user"` or `"service"` |
 | | `create_principal(kind)` · `get_principal(principal_id)` | a new `PrincipalRef`; a known one, or `None` |
 | | `deactivate_principal(principal_id)` | mark inactive for policy |

@@ -9,13 +9,25 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID, uuid4
 
-from forze.application.contracts.authz import PermissionRef, RoleRef
+import pytest
+
+from forze.application.contracts.authz import (
+    AuthzScope,
+    AuthzSpec,
+    PermissionRef,
+    RoleAssignmentPort,
+    RoleRef,
+)
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
+from forze_identity.authz.adapters.role_assignment import RoleAssignmentAdapter
 from forze_identity.authz.application.specs import (
     group_permission_binding_spec,
     group_principal_binding_spec,
     group_role_binding_spec,
     group_spec,
     permission_definition_spec,
+    policy_principal_spec,
     principal_permission_binding_spec,
     principal_role_binding_spec,
     role_definition_spec,
@@ -33,6 +45,7 @@ from forze_identity.authz.domain.models.group import CreateGroupCmd, ReadGroup, 
 from forze_identity.authz.domain.models.permission_definition import (
     CreatePermissionDefinitionCmd,
 )
+from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_identity.authz.domain.models.role_definition import CreateRoleDefinitionCmd
 from forze_identity.authz.services.grants import (
     AuthzGrantResolver,
@@ -290,3 +303,85 @@ async def resolve_both_ways(
         raise AssertionError("the batched and the row-by-row resolution disagree")
 
     return {r.role_key for r in roles}, {p.permission_key for p in permissions}
+
+
+# ----------------------- #
+# Tenant-held role bindings (RFC 0082)
+
+TENANT_ROLE_SPECS = (*GRANT_SPECS, policy_principal_spec)
+"""The documents :func:`seeded_role_assignment` writes and reads."""
+
+
+async def seeded_role_assignment(ctx: Any) -> tuple[RoleAssignmentPort, UUID]:
+    """A policy principal, the roles ``everywhere`` and ``analyst``, and the real role
+    assignment over *ctx*'s documents, its resolver reading the tenant from *ctx*."""
+
+    cmd = ctx.doc.command
+    principal = await cmd(policy_principal_spec).create(CreatePolicyPrincipalCmd(kind="user"))
+
+    for key in ("everywhere", "analyst"):
+        await cmd(role_definition_spec).create(CreateRoleDefinitionCmd(role_key=key))
+
+    adapter = RoleAssignmentAdapter(
+        spec=AuthzSpec(name="tenant_roles"),
+        principal_qry=ctx.doc.query(policy_principal_spec),
+        role_qry=ctx.doc.query(role_definition_spec),
+        pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
+        pr_binding_cmd=cmd(principal_role_binding_spec),
+        resolver=AuthzGrantResolver(deps=grant_deps(ctx), ctx=ctx),
+    )
+
+    return adapter, principal.id
+
+
+async def tenant_held_roles(ctx: Any, ra: RoleAssignmentPort, principal_id: UUID) -> None:
+    """Assign and revoke across two tenants and none on real storage, checking what each
+    context then holds (RFC 0082 §5.2 and §5.3). *principal_id* is a policy principal, and
+    the roles ``everywhere`` and ``analyst`` exist."""
+
+    t, u = uuid4(), uuid4()
+
+    def bound(tenant: UUID | None) -> Any:
+        return ctx.inv_ctx.bind_identity(
+            tenant=TenantIdentity(tenant_id=tenant) if tenant is not None else None
+        )
+
+    async def held(tenant: UUID | None, scope: AuthzScope | None = None) -> set[str]:
+        with bound(tenant):
+            return {r.role_key for r in await ra.list_roles(principal_id, scope=scope)}
+
+    await ra.assign_role(principal_id, "everywhere")  # nothing bound: a global row
+
+    with bound(t):
+        await ra.assign_role(principal_id, "analyst")
+        await ra.assign_role(principal_id, "analyst")  # one row, not two
+
+    with bound(u):
+        await ra.assign_role(principal_id, "analyst")
+
+    assert await held(t) == {"everywhere", "analyst"}
+    assert await held(u) == {"everywhere", "analyst"}
+    assert await held(None) == {"everywhere"}
+    assert await held(None, AuthzScope(tenant_id=u)) == {"everywhere"}
+
+    with bound(t):
+        await ra.assign_role(principal_id, "everywhere")  # T's row beside the global one
+
+        with pytest.raises(CoreException) as caught:
+            await ra.revoke_role(principal_id, "everywhere")
+
+        assert caught.value.code == "authz.role_held_globally"
+        await ra.revoke_role(principal_id, "analyst")
+
+    assert await held(t) == {"everywhere"}
+    assert await held(u) == {"everywhere", "analyst"}
+
+    with bound(t):  # leaving U from inside T
+        await ra.revoke_tenant_roles(principal_id, tenant_id=u)
+
+    assert await held(u) == {"everywhere"}
+
+    await ra.revoke_role(principal_id, "everywhere")  # nothing bound: T's row goes too
+
+    assert await held(None) == set()
+    assert await held(t) == set()

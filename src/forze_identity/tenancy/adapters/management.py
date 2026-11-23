@@ -4,6 +4,7 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.authz import RoleAssignmentPort
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.tenancy import (
     TenantIdentity,
@@ -53,6 +54,11 @@ class TenantManagementAdapter(TenantManagementPort):
     schema / dataset) exist — so the ``namespace``/``dedicated`` isolation tiers don't assume
     hand-provisioned infrastructure. ``None`` (the default) leaves onboarding record-only.
     """
+
+    role_assignment: RoleAssignmentPort | None = None
+    """The authz plane's role assignment; :meth:`detach_principal` revokes the roles the
+    principal holds in the tenant through it before removing the membership. ``None`` keeps
+    them."""
 
     # ....................... #
 
@@ -124,16 +130,16 @@ class TenantManagementAdapter(TenantManagementPort):
     # ....................... #
 
     async def detach_principal(self, principal_id: UUID, tenant_id: UUID) -> None:
-        page = await self.binding_qry.find_many(
-            filters={
-                "$values": {
-                    "principal_id": principal_id,
-                    "tenant_id": tenant_id,
-                },
-            },
+        # Roles first: a failure between the steps leaves a member without roles here, never
+        # a former member who still holds them.
+        if self.role_assignment is not None:
+            await self.role_assignment.revoke_tenant_roles(principal_id, tenant_id=tenant_id)
+
+        bindings = await self._all_bindings(
+            {"$values": {"principal_id": principal_id, "tenant_id": tenant_id}},
         )
 
-        for hit in page.hits:
+        for hit in bindings:
             await self.binding_cmd.kill(hit.id)
 
     # ....................... #

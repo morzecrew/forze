@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
     AuthzRequest,
+    AuthzScope,
     subject_from_authn,
 )
-from forze.application.contracts.document import DocumentCommandDepKey
+from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.base.exceptions import CoreException
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
+from forze_identity.tenancy.adapters.management import TenantManagementAdapter
+from forze_identity.tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.kernel.client.client import PostgresClient
@@ -23,10 +28,16 @@ from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _authz_pg_deps,
     _authz_pg_setup,
 )
-from tests.support.authz_grants import resolve_both_ways, wide_catalog
+from tests.support.authz_grants import (
+    resolve_both_ways,
+    seeded_role_assignment,
+    tenant_held_roles,
+    wide_catalog,
+)
 from tests.support.execution_context import (
     context_from_deps,
 )
+from tests.support.tenant_memberships import TENANCY_SPECS
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -301,3 +312,113 @@ async def test_a_principal_past_one_in_batch_resolves_in_full(pg_client: Postgre
     principal_id, roles, permissions = await wide_catalog(ctx)
 
     assert await resolve_both_ways(ctx, principal_id) == (roles, permissions)
+
+
+async def test_tenant_held_role_bindings(pg_client: PostgresClient) -> None:
+    suffix = uuid4().hex[:8]
+    await _authz_role_grants_ctx(pg_client, suffix=suffix)
+    # Writes to the documents the shared deps leave read-only (policy principals are
+    # writable there already).
+    tables = {
+        AuthzResourceName.ROLES: "role",
+        AuthzResourceName.PRINCIPAL_ROLE_BINDINGS: "pr",
+    }
+    writes = {
+        name: ConfigurablePostgresDocument(config=_rw(f"authz_{table}_{suffix}"))
+        for name, table in tables.items()
+    }
+    ctx = context_from_deps(
+        _authz_pg_deps(pg_client, suffix=suffix).merge(Deps.routed({DocumentCommandDepKey: writes}))
+    )
+    ra, principal_id = await seeded_role_assignment(ctx)
+
+    await tenant_held_roles(ctx, ra, principal_id)
+
+
+async def test_leaving_a_tenant_drops_the_roles_held_in_it(pg_client: PostgresClient) -> None:
+    suffix = uuid4().hex[:8]
+    await _authz_role_grants_ctx(pg_client, suffix=suffix)
+    base = (
+        "id uuid PRIMARY KEY, rev integer NOT NULL, created_at timestamptz NOT NULL, "
+        "last_update_at timestamptz NOT NULL"
+    )
+    await pg_client.execute(
+        f"""
+        CREATE TABLE tenants_{suffix} ({base}, tenant_key text, is_active boolean NOT NULL);
+        CREATE TABLE tenant_bindings_{suffix} (
+            {base}, principal_id uuid NOT NULL, tenant_id uuid NOT NULL
+        );
+        """
+    )
+    writes = {
+        name: ConfigurablePostgresDocument(config=_rw(table))
+        for name, table in {
+            AuthzResourceName.ROLES: f"authz_role_{suffix}",
+            AuthzResourceName.PRINCIPAL_ROLE_BINDINGS: f"authz_pr_{suffix}",
+        }.items()
+    }
+    tenancy = {
+        spec.name: ConfigurablePostgresDocument(config=_rw(table))
+        for spec, table in zip(
+            TENANCY_SPECS, (f"tenants_{suffix}", f"tenant_bindings_{suffix}"), strict=True
+        )
+    }
+    ctx = context_from_deps(
+        _authz_pg_deps(pg_client, suffix=suffix).merge(
+            Deps.routed(
+                {
+                    DocumentCommandDepKey: {**writes, **tenancy},
+                    DocumentQueryDepKey: tenancy,
+                }
+            )
+        )
+    )
+    ra, principal_id = await seeded_role_assignment(ctx)
+    management = TenantManagementAdapter(
+        tenant_qry=ctx.doc.query(tenant_spec),
+        tenant_cmd=ctx.doc.command(tenant_spec),
+        binding_qry=ctx.doc.query(principal_tenant_binding_spec),
+        binding_cmd=ctx.doc.command(principal_tenant_binding_spec),
+        role_assignment=ra,
+    )
+    t, u = uuid4(), uuid4()
+
+    async def held(tenant: UUID) -> set[str]:
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+            return {r.role_key for r in await ra.list_roles(principal_id)}
+
+    await ra.assign_role(principal_id, "everywhere")
+    await ra.assign_role(principal_id, "analyst", scope=AuthzScope(tenant_id=t))
+    await ra.assign_role(principal_id, "analyst", scope=AuthzScope(tenant_id=u))
+    await management.attach_principal(principal_id, t)
+
+    await management.detach_principal(principal_id, t)
+
+    assert await held(t) == {"everywhere"}
+    assert await held(u) == {"everywhere", "analyst"}
+    assert not await management.list_principal_tenants(principal_id)
+
+    # Attached again, the principal starts with no tenant-held roles in T.
+    await management.attach_principal(principal_id, t)
+
+    assert await held(t) == {"everywhere"}
+
+
+async def test_the_binding_index_keeps_one_row_per_tenant(pg_client: PostgresClient) -> None:
+    # NULLS NOT DISTINCT: a second global row is refused like a second row in one tenant, and
+    # a global row and a tenant row of the same role live side by side.
+    suffix = uuid4().hex[:8]
+    await _authz_role_grants_ctx(pg_client, suffix=suffix)
+    principal_id, role_id, tenant_id = uuid4(), uuid4(), uuid4()
+    insert = f"""
+        INSERT INTO authz_pr_{suffix}
+            (id, rev, created_at, last_update_at, principal_id, role_id, scope_tenant_id)
+        VALUES (%s, 1, now(), now(), %s, %s, %s)
+    """
+
+    await pg_client.execute(insert, (uuid4(), principal_id, role_id, None))
+    await pg_client.execute(insert, (uuid4(), principal_id, role_id, tenant_id))
+
+    for tenant in (None, tenant_id):
+        with pytest.raises(CoreException, match="Unique violation"):
+            await pg_client.execute(insert, (uuid4(), principal_id, role_id, tenant))

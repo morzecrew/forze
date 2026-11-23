@@ -140,6 +140,7 @@ def _selector_context() -> ExecutionContext:
     tenancy = TenancyDepsModule(
         tenant_resolver={AUTHN_ROUTE},
         tenant_management={AUTHN_ROUTE},
+        detach_keeps_roles=True,
     )()
 
     return identity_authn_context(

@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.base import Page
@@ -134,9 +135,7 @@ async def test_deprovision_tenant_runs_provisioner_teardown() -> None:
         tenant_cmd=tenant_cmd,
         binding_qry=binding_qry,
         binding_cmd=binding_cmd,
-        provisioner=FunctionTenantProvisioner(
-            on_provision=_noop, on_deprovision=_on_deprovision
-        ),
+        provisioner=FunctionTenantProvisioner(on_provision=_noop, on_deprovision=_on_deprovision),
     )
 
     await adapter.deprovision_tenant(tid)
@@ -216,15 +215,55 @@ async def test_attach_principal_creates_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_detach_principal_kills_bindings() -> None:
+async def test_detach_principal_kills_every_page_of_bindings() -> None:
     adapter = _adapter()
-    hit = MagicMock()
-    hit.id = uuid4()
-    adapter.binding_qry.find_many = AsyncMock(
-        return_value=Page(hits=[hit], count=1, page=1, size=10),
-    )
+    hits = [MagicMock(id=uuid4()) for _ in range(3)]
+
+    async def find_stream(**_kwargs: object) -> Any:
+        # Two batches: a detach that read only the first page would leave the third row.
+        yield hits[:2]
+        yield hits[2:]
+
+    adapter.binding_qry.find_stream = find_stream  # type: ignore[method-assign]
     await adapter.detach_principal(uuid4(), uuid4())
-    adapter.binding_cmd.kill.assert_awaited_once_with(hit.id)
+
+    assert [c.args[0] for c in adapter.binding_cmd.kill.await_args_list] == [h.id for h in hits]  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_detach_principal_revokes_the_tenants_roles_before_the_membership() -> None:
+    calls: list[str] = []
+    role_assignment = MagicMock()
+    role_assignment.revoke_tenant_roles = AsyncMock(
+        side_effect=lambda *a, **k: calls.append("revoke_tenant_roles"),
+    )
+    adapter = attrs.evolve(_adapter(), role_assignment=role_assignment)
+    adapter.binding_qry.find_stream = _one_batch(MagicMock(id=uuid4()))  # type: ignore[method-assign]
+    adapter.binding_cmd.kill = AsyncMock(side_effect=lambda *a: calls.append("kill"))  # type: ignore[method-assign]
+    principal_id, tenant_id = uuid4(), uuid4()
+
+    await adapter.detach_principal(principal_id, tenant_id)
+
+    role_assignment.revoke_tenant_roles.assert_awaited_once_with(principal_id, tenant_id=tenant_id)
+    assert calls == ["revoke_tenant_roles", "kill"]
+
+
+@pytest.mark.asyncio
+async def test_detach_principal_without_an_authz_route_leaves_roles_alone() -> None:
+    adapter = _adapter()
+    adapter.binding_qry.find_stream = _one_batch(MagicMock(id=uuid4()))  # type: ignore[method-assign]
+
+    await adapter.detach_principal(uuid4(), uuid4())
+
+    assert adapter.role_assignment is None
+    adapter.binding_cmd.kill.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+def _one_batch(*hits: object) -> Any:
+    async def find_stream(**_kwargs: object) -> Any:
+        yield list(hits)
+
+    return find_stream
 
 
 @pytest.mark.asyncio

@@ -44,11 +44,10 @@ def validate_authz_query_ports(
     surfaces the misconfiguration at startup rather than failing open at request time.
 
     Conversely, when the route is ``global`` (the default) but the wired ports
-    *are* tenant-aware — the detectable signal of a multi-tenant deployment —
-    a warning is logged once per adapter: grant resolution ignores tenant
-    context in global mode, so roles/permissions are shared across all tenants.
-    That can be a deliberate choice (platform-wide roles over tenant-partitioned
-    stores), hence a warning rather than an error.
+    *are* tenant-aware, a warning is logged once per adapter. Storage still
+    partitions those ports by the bound tenant and refuses unbound calls, so the
+    catalog is per tenant in all but the adapters' own check. That is rarely what
+    ``global`` was chosen for, but it works, hence a warning rather than an error.
 
     :raises CoreException: When a port enables cache/history, or when a tenant-scoped
         route is wired with a non-tenant-aware port.
@@ -74,11 +73,11 @@ def validate_authz_query_ports(
     if spec.tenancy_mode == "global" and tenant_aware_ports:
         logger.warning(
             "Authz route uses tenancy_mode='global' over tenant-aware document "
-            "ports: grant resolution ignores tenant context, so roles and "
-            "permissions are shared across all tenants. Set "
-            "tenancy_mode='require_invocation_tenant' on the AuthzSpec for "
-            "per-tenant grant isolation; keep 'global' only if platform-wide "
-            "roles over tenant-partitioned stores are intended.",
+            "ports: storage still partitions those ports by the bound tenant and "
+            "refuses calls with none bound. For a catalog per tenant, set "
+            "tenancy_mode='require_invocation_tenant'; for one catalog shared by "
+            "every tenant, use ports that are not tenant-aware and bind roles per "
+            "tenant with scope_tenant_id.",
             route=spec.name,
             tenant_aware_ports=sorted(set(tenant_aware_ports)),
         )

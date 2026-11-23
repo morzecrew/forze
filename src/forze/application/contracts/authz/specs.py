@@ -26,16 +26,18 @@ class AuthzSpec(BaseSpec):
     tenancy_mode: AuthzTenancyMode = "global"
     """How strictly tenant context from the invocation must match policy scope.
 
-    ``global`` (the default) resolves grants without tenant partitioning:
-    roles, permissions, and bindings are shared across **all** tenants, even
-    when the backing document ports are tenant-aware. That is a legitimate
-    choice for deliberately platform-wide roles, but in a multi-tenant
-    deployment it usually means the flag was forgotten — set
-    ``require_invocation_tenant`` so grant resolution is partitioned by the
-    invocation tenant (adapters then refuse non-tenant-aware ports at
-    startup, and a call with no tenant bound as ``authentication`` /
-    ``tenant_required``). Authz adapters log a warning when constructed in
-    ``global`` mode over tenant-aware ports.
+    ``global`` (the default) is one catalog for every tenant: a principal-role binding
+    holds in every tenant unless it names one (``scope_tenant_id``), and a binding that
+    names a tenant holds only while that tenant is bound. This is the shape for a fixed
+    catalog, over document ports that are not tenant-aware.
+
+    ``require_invocation_tenant`` is a catalog per tenant: every grant-resolution port
+    must be tenant-aware (adapters refuse others at startup), and a call with no tenant
+    bound is refused as ``authentication`` / ``tenant_required``.
+
+    ``global`` over tenant-aware ports is neither: storage still partitions those ports by
+    the bound tenant and refuses unbound calls; only the adapters' own check is skipped.
+    Authz adapters log a warning when constructed that way.
     """
 
     enforce_principal_active: bool = True

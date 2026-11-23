@@ -53,6 +53,7 @@ _ROUTES = {
     "authn_sessions": AuthnResourceName.TOKEN_SESSIONS,
     "authn_password_resets": AuthnResourceName.PASSWORD_RESETS,
     "authz_policy_principals": AuthzResourceName.POLICY_PRINCIPALS,
+    "authz_principal_role_bindings": AuthzResourceName.PRINCIPAL_ROLE_BINDINGS,
 }
 
 
@@ -67,7 +68,12 @@ def _config(schema: str, table: str) -> PostgresDocumentConfig:
 async def test_the_documented_identity_ddl_validates_without_warnings(
     pg_client: PostgresClient,
 ) -> None:
-    ddl = "\n".join(_SQL.findall(_RECIPE.read_text(encoding="utf-8")))
+    # The blocks that create tables; a migration block is for a deployment that has them.
+    ddl = "\n".join(
+        block
+        for block in _SQL.findall(_RECIPE.read_text(encoding="utf-8"))
+        if "CREATE TABLE" in block
+    )
 
     assert set(_TABLE.findall(ddl)) == set(_ROUTES), "the recipe's tables changed"
 

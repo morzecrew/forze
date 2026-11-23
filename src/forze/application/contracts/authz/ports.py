@@ -191,6 +191,20 @@ class RoleAssignmentPort(Protocol):
         """Revoke a role (catalog ``role_key``) from the subject."""
         ...  # pragma: no cover
 
+    def revoke_tenant_roles(
+        self,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        tenant_id: UUID,
+    ) -> Awaitable[None]:
+        """Revoke every role the subject holds in *tenant_id*, leaving global ones.
+
+        What leaving a tenant calls, so *tenant_id* need not be the bound tenant: the call only
+        removes grants. Over a tenant-aware binding store, which reaches only the bound
+        tenant's rows, a different tenant is refused instead.
+        """
+        ...  # pragma: no cover
+
     def list_roles(
         self,
         subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,

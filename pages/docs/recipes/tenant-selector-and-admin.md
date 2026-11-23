@@ -106,6 +106,26 @@ attach_tenancy_admin_routes(
 `list_members` returns principal ids only (`TenantManagementPort.list_tenant_principals`); join
 them with identity-plane details out of band.
 
+### A member's role in the tenant
+
+A member's role in one tenant is a [tenant-held role
+binding](../identity-tenancy-enc/identity.md#roles-in-one-tenant), written through the authz
+plane:
+
+- **Adding a member:** `attach_principal(principal, tenant)`, then `assign_role` inside the
+  tenant. The tenant comes from the bound invocation; an operator with no tenant bound passes
+  `scope=AuthzScope(tenant_id=tenant)`. A role may be assigned before the principal joins, as an
+  invite does, and it applies only once they enter the tenant.
+- **Changing it:** `revoke_role`, then `assign_role`, inside the tenant.
+- **Removing a member:** `detach_principal(principal, tenant)`, which `DELETE /memberships`
+  calls. It revokes the roles the principal holds in that tenant first, then removes the
+  membership, so someone attached again starts with none there. That needs
+  `TenancyDepsModule(tenant_management=..., authz_route=...)` naming the authz route whose role
+  assignment does the revoking.
+
+A pre-staged role whose invite is declined stays until it is revoked, so revoke it when an
+invite is declined.
+
 ## Enumerating every tenant
 
 The selector's `list_principal_tenants` answers *"which tenants may this principal see"*, so

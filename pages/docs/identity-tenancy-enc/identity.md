@@ -222,6 +222,50 @@ guarding one row by its owner needs an operation and the hook's `resource_factor
 permission as that type's not-found; a missing `may_act` grant, like any refusal without a type,
 stays a 403.
 
+### Roles in one tenant
+
+A principal-role binding may name the one tenant it holds in. A member can then be `analyst` in
+one workspace and `viewer` in another under one role catalog. The catalog (roles, permissions,
+and which permissions a role carries) stays shared by every tenant; only the binding is held per
+tenant. **A role bound in a tenant never grants outside it.**
+
+A binding holds when it names no tenant, or names the tenant bound on the invocation. With
+nothing bound, only bindings that name no tenant hold, whatever `AuthzScope` the call passes.
+
+The tenant a write binds in comes from the invocation too:
+
+| Invocation | `scope` | `assign_role` | `revoke_role` |
+|---|---|---|---|
+| tenant T bound | none or T | binds in T | refused with `authz.role_held_globally` when the role is held in every tenant; otherwise removes T's binding |
+| tenant T bound | U | refused (`authz.scope_tenant_mismatch`) | refused (`authz.scope_tenant_mismatch`) |
+| nothing bound | T | binds in T | as with T bound |
+| nothing bound | none | binds in every tenant | removes the role everywhere, every tenant's binding included |
+
+A forgotten scope inside a tenant therefore narrows a grant to that tenant and never widens it.
+A binding for every tenant is written only with nothing bound: a migration, a seed, or a
+platform operator's operation behind a global permission.
+
+```python
+role_assignment = ctx.authz.role_assignment(spec)
+
+# Inside a request bound to the workspace:
+await role_assignment.assign_role(principal_id, "analyst")
+roles = await role_assignment.list_roles(principal_id)  # global roles plus this workspace's
+```
+
+Leaving a tenant drops the roles held in it. With `TenancyDepsModule(authz_route=...)`,
+`detach_principal(principal, tenant)` calls `revoke_tenant_roles` before it removes the
+membership, from whichever tenant the caller is bound to. A principal attached again starts with
+no roles in that tenant, and its global roles stay. A tenancy module with `tenant_management`
+must name `authz_route` or pass `detach_keeps_roles=True`.
+
+A role does not imply membership. Whether a principal may enter a tenant stays the
+[tenancy plane](multi-tenancy.md)'s question, and a role can be assigned before the principal
+joins, as an invite does. Tenant-held bindings belong to `tenancy_mode="global"` over documents
+that are not tenant-aware; `require_invocation_tenant` stays a catalog per tenant. On Postgres
+the binding table needs one column and a unique index:
+[Provision identity on Postgres](../recipes/provision-identity-postgres.md).
+
 ### Remembering grants between decisions
 
 Every decision reads the principal's role, group and permission bindings. A busy service can

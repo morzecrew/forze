@@ -41,9 +41,12 @@ from forze_identity.tenancy.execution import TenancyDepsModule
 TenancyDepsModule(
     tenant_resolver={"main"},
     tenant_management={"main"},
+    authz_route="main",  # detach revokes the roles held in the tenant
     verify_tenant_active=True,
 )
 ```
+
+With `tenant_management`, say what leaving a tenant does to roles: `authz_route=...` makes `detach_principal` revoke the roles the principal holds in that tenant first (through the authz plane's role assignment, which freezing then requires on that route); `detach_keeps_roles=True` leaves them, for a deployment with no authz plane. Naming neither is refused at construction (`tenancy_detach_roles_unset`).
 
 See [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/) for aggregates, adapters, and the FastAPI `resolve_tenant_identity` pairing.
 
@@ -66,6 +69,7 @@ from forze_identity.tenancy.execution import TenancyDepsModule
 
 TenancyDepsModule(
     tenant_management={"main"},
+    authz_route="main",  # detach revokes the roles held in the tenant
     tenant_provisioner=ObjectStorageTenantProvisioner(
         client=s3_client,
         bucket=lambda tid: f"tenant-{tid}",

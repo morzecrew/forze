@@ -325,6 +325,7 @@ from forze_vault.adapters import VaultTransitTenantProvisioner
 
 TenancyDepsModule(
     tenant_management={"main"},
+    authz_route="main",  # detach revokes the roles held in the tenant
     tenant_provisioner=VaultTransitTenantProvisioner(
         client=vault, directory=directory  # same directory the keyring resolves with
     ),

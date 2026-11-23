@@ -845,6 +845,42 @@ def no_permission_after_deactivation(deactivate: str, guarded: Iterable[str]) ->
     return named("no_permission_after_deactivation", _check)
 
 
+def no_permission_outside_its_tenant(outside: Iterable[str]) -> Invariant:
+    """No operation run outside the tenant a role is bound in succeeds on that role.
+
+    A role binding that names a tenant grants only while that tenant is bound: never in
+    another tenant, never in a call with no tenant bound, whatever scope the call passes. A
+    cache entry made in one tenant answering for another, or a resolver selecting bindings by a
+    caller's scope, would open that door. *outside* names operations the workload runs bound
+    to another tenant or to none, as a principal whose only grant for them is the tenant-bound
+    role; none of them may succeed at any point in the run.
+
+    A recorded operation carries neither its principal nor its tenant, so *outside* must be
+    operations that run only that way.
+    """
+
+    wanted = frozenset(outside)
+
+    if not wanted:
+        raise ValueError("no_permission_outside_its_tenant needs at least one operation")
+
+    def _check(history: History) -> list[Violation]:
+        return [
+            Violation(
+                invariant="no_permission_outside_its_tenant",
+                message=(
+                    f"operation {event.fields.get('op')!r} succeeded outside the tenant its "
+                    "role is bound in"
+                ),
+                events=(event,),
+            )
+            for event in history.of_kind("operation")
+            if event.fields.get("op") in wanted and event.fields.get("outcome") == "ok"
+        ]
+
+    return named("no_permission_outside_its_tenant", _check)
+
+
 def completes_within(op: str, seconds: float) -> Invariant:
     """Every ``op`` operation must finish within *seconds* of **virtual** time (invoke→return).
 
