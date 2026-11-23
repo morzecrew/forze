@@ -19,6 +19,7 @@ from .deps import (
     ConfigurablePolicyPrincipalEligibility,
     ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
+    EligibilityChoice,
     build_authn_shared_services,
 )
 
@@ -26,6 +27,7 @@ from .deps import (
 
 __all__ = [
     "AuthnDepsModule",
+    "EligibilityChoice",
     "AuthnKernelConfig",
     "AuthnSharedServices",
     "build_authn_shared_services",

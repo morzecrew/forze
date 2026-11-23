@@ -23,6 +23,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     PasswordCredentials,
     PrincipalEligibilityDepKey,
+    PrincipalEligibilityPort,
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
@@ -41,8 +42,12 @@ from forze.base.primitives import SystemTimeSource, bind_time_source, utcnow
 from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
+    EligibilityChoice,
     RevocationStates,
     StateMacKeys,
+)
+from forze_identity.authn.adapters.principal_eligibility import (
+    PolicyPrincipalEligibilityAdapter,
 )
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
@@ -138,11 +143,21 @@ class _Stack:
         return await self.epochs.current(principal)
 
 
+def _own_gate(ctx: ExecutionContext, spec: AuthnSpec) -> PrincipalEligibilityPort:
+    """An application's gate over the same registry: built by a factory, not by the default."""
+
+    _ = spec
+    return PolicyPrincipalEligibilityAdapter(
+        principal_qry=ctx.doc.query(policy_principal_spec),
+        in_transaction=lambda: ctx.tx_ctx.depth() > 0,
+    )
+
+
 def _stack(
     *,
     authz: RevocationStates | None = CONFIG,
     authn: RevocationStates | None = CONFIG,
-    eligibility: Literal["policy_principal", "allow_all"] = "policy_principal",
+    eligibility: EligibilityChoice = "policy_principal",
     actor_claim: str | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
@@ -495,17 +510,17 @@ async def test_a_logout_locks_no_principal_on_the_mock() -> None:
 
 @pytest.mark.parametrize(
     ("eligibility", "reads"),
-    [("policy_principal", ["find"]), ("allow_all", [])],
+    [("policy_principal", ["find"]), ("allow_all", []), ("own", ["find"])],
 )
 async def test_a_logout_locks_the_principal_only_where_an_issue_does(
-    eligibility: Literal["policy_principal", "allow_all"],
+    eligibility: Literal["policy_principal", "allow_all", "own"],
     reads: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # As on Postgres. Under allow_all an issue locks no principal, so a raise has no order to match.
     monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
     monkeypatch.setattr(revocation_states, "enlisted", lambda port: True)
-    stack = _stack(eligibility=eligibility)
+    stack = _stack(eligibility=_own_gate if eligibility == "own" else eligibility)
     principal = await stack.principal()
     stack.principal_reads.clear()
 
@@ -601,6 +616,21 @@ async def test_without_the_skip_every_api_key_verification_reads(
     # Without the skip the state records no epoch, and reads as an older version's.
     ((state, _),) = _key_states(stack).values()
     assert state.count("|") == 5
+
+
+async def test_a_gate_factory_reads_on_every_api_key_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Where the policy-principal gate would skip (a warm key on Postgres), an application's own
+    # gate reads every time: only the default gate's class takes the skip (RFC 0081 row 3).
+    _as_postgres(monkeypatch)
+    stack = _stack(eligibility=_own_gate)
+    key = await battery.issue_key(stack, await stack.principal())
+
+    for _ in range(3):
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
+        assert stack.principal_reads == ["find"]
 
 
 async def test_a_state_without_an_epoch_reads_eligibility(

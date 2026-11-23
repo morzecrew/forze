@@ -84,8 +84,11 @@ Seeding needs `polyfactory` (it ships with the `dst` extra).
 !!! warning "Identity needs a principal document"
 
     The default eligibility gate reads a `policy_principal` document, so a dev key whose
-    principal has no document fails authentication with `Principal not found`. Seed it as
-    above — and note it must be the document write: the mock's
+    principal has no document fails authentication with `Principal not found`. That holds
+    for [`local_identity_deps`](local-identity.md#principal-eligibility) too: the mock's plain
+    document fallback counts as a wired store, so the preset keeps the default gate here
+    rather than reading its key file. Seed it as above — and note it must be the document
+    write: the mock's
     `PrincipalRegistryPort.ensure_principal` is a no-op that returns a ref without storing
     anything the gate can read.
 

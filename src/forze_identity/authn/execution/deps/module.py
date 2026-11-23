@@ -20,6 +20,7 @@ from forze.application.contracts.authn import (
     PasswordVerifierDepPort,
     PrincipalDeactivationDepKey,
     PrincipalEligibilityDepKey,
+    PrincipalEligibilityDepPort,
     PrincipalResolverDepKey,
     PrincipalResolverDepPort,
     TokenLifecycleDepKey,
@@ -55,6 +56,14 @@ from .deps import (
 )
 
 # ----------------------- #
+
+type EligibilityChoice = Literal["policy_principal", "allow_all"] | PrincipalEligibilityDepPort
+"""What :attr:`AuthnDepsModule.eligibility` accepts: one of the two built-in gates by name, or
+a gate factory over the principal registry the deployment has."""
+
+_ELIGIBILITY_NAMES = frozenset({"policy_principal", "allow_all"})
+
+# ....................... #
 
 
 @final
@@ -151,16 +160,20 @@ class AuthnDepsModule(DepsModule):
     to the current Argon2 parameters after a successful login (wires the password
     account command port into the verifier). Best-effort; never fails the login."""
 
-    eligibility: Literal["policy_principal", "allow_all"] = attrs.field(default="policy_principal")
+    eligibility: EligibilityChoice = attrs.field(default="policy_principal")
     """Which principal-eligibility gate every wired route resolves.
 
-    ``"policy_principal"`` (default): authentication and credential mutations require
-    an ACTIVE policy principal document — the posture for deployments running the
-    authz plane. ``"allow_all"``: every principal is eligible — the declared opt-out
-    for token-only services with no authz plane, which otherwise must maintain the
-    ``policy_principal`` table (and its upsert bookkeeping) purely to satisfy the
-    gate. Opting out moves revocation entirely onto credential lifecycle (session /
-    API-key revoke); a deactivated principal no longer blocks token issuance."""
+    ``"policy_principal"`` (default): authentication and credential mutations require an
+    ACTIVE policy principal document, the authz plane's principal registry. A gate factory
+    (:data:`~forze.application.contracts.authn.PrincipalEligibilityDepPort`): the gate reads
+    the registry the deployment names, such as the application's own user table, and must
+    refuse a principal it does not know. ``"allow_all"``: nobody is checked, every principal
+    is eligible; revocation then rests on credential lifecycle (session and API-key revoke)
+    alone, and a deactivated principal no longer blocks token issuance.
+
+    Only the policy-principal gate skips its read after a fast-path admission; every other
+    gate reads on every check. Any other string, or a value that is not callable, is refused
+    at construction."""
 
     events: AuthnEventSinkDepPort | None = attrs.field(default=None)
     """Optional authn event sink factory (e.g.
@@ -186,6 +199,21 @@ class AuthnDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # The annotation is not enforced at runtime: anything else must fail closed here,
+        # never fall through to a permissive gate.
+        valid = (
+            self.eligibility in _ELIGIBILITY_NAMES
+            if isinstance(self.eligibility, str)
+            else callable(self.eligibility)
+        )
+
+        if not valid:
+            raise exc.configuration(
+                f"Unknown eligibility {self.eligibility!r}: expected 'policy_principal', "
+                "'allow_all' or a gate factory called with (ctx, spec).",
+                code="authn_eligibility_invalid",
+            )
+
         # Every method resolves its principal through the route's one resolver, so a
         # resolver override needs only the route; a verifier override needs its method too.
         refuse_undeclared_overrides(
@@ -264,15 +292,11 @@ class AuthnDepsModule(DepsModule):
 
         eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pr | pd
         if eligibility_routes:
-            # ``allow_all`` is the declared opt-out for token-only deployments with no
-            # authz plane: the policy-principal gate otherwise forces the
-            # policy_principal document (plus its upsert bookkeeping) to exist purely
-            # so authentication can check ``is_active`` — and the routed registration
-            # here would conflict with any later override, making the default
-            # non-overridable rather than merely default.
-            eligibility_factory: (
-                ConfigurablePolicyPrincipalEligibility | ConfigurableAllowAllEligibility
-            )
+            # The field is the only way to choose the gate: the routed registration here
+            # conflicts with any later one for the same route, so the default is
+            # non-overridable rather than merely default, and a gate other than the
+            # policy-principal one is passed here or not at all.
+            eligibility_factory: PrincipalEligibilityDepPort
 
             if self.eligibility == "policy_principal":
                 eligibility_factory = ConfigurablePolicyPrincipalEligibility(shared=shared)
@@ -281,13 +305,8 @@ class AuthnDepsModule(DepsModule):
                 eligibility_factory = ConfigurableAllowAllEligibility()
 
             else:
-                # The Literal annotation is not enforced at runtime; an unknown
-                # value must fail closed here, never fall through to the
-                # allow-all gate.
-                raise exc.configuration(
-                    f"Unknown eligibility {self.eligibility!r}: expected "
-                    "'policy_principal' or 'allow_all'.",
-                )
+                eligibility_factory = self.eligibility
+
             merged = merged.merge(
                 Deps.routed(
                     {

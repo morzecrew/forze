@@ -1,7 +1,9 @@
 # RFC 0081 — Authentication eligibility without an authorization plane
 
-- **Status:** 📝 Draft — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on 2026-11-04 (rows 7 and 9).
-  - P1 has no core change and changes no deployment that works today.
+- **Status:** 🚧 In progress — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on 2026-11-04 (rows 7 and 9).
+  - **P1 shipped**: the gate seam and the local preset's gate, recorded in
+    [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 25 (D-286). It has no core change and changes no
+    deployment that works today.
   - P2 makes `allow_all` a posture finding, also with no core change. It is **breaking** under
     a production posture (row 9).
   - P3 adds a requirement check to `DepsRegistry.freeze()`, a core change. It is **breaking**

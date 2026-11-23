@@ -54,7 +54,13 @@ Two things break cookie mode if you skip them:
 
 ### Principal eligibility
 
-Every wired route checks the authenticating principal against an active `policy_principal` document. A token-only service with no authz plane opts out explicitly with `AuthnDepsModule(eligibility="allow_all")` — a declared decision (an unknown value is refused at wiring), and one that moves revocation entirely onto credential lifecycle: with it, deactivating a principal no longer blocks token issuance.
+Every wired route checks the authenticating principal before it authenticates, issues or changes a credential. `AuthnDepsModule(eligibility=...)` chooses the check:
+
+- `"policy_principal"` (default): an active `policy_principal` document, the authz plane's registry.
+- A gate factory `(ctx, spec) -> PrincipalEligibilityPort` over your own registry, such as a users table. It must refuse a principal it does not know with `authentication`, read state that is not tenant-aware, and lock the row when asked `for_update` inside a transaction. It reads on every check; only the default gate skips after a fast-path admission.
+- `"allow_all"`: nobody is checked. Revocation then rests on credential lifecycle alone: deactivating a principal no longer blocks token issuance.
+
+Any other value is refused at construction (`authn_eligibility_invalid`). `local_identity_deps` keeps the default gate where the policy-principal document resolves (the mock's plain fallback counts), and otherwise admits exactly the principals its key file names; pass `eligibility=` to choose.
 
 ## Anti-patterns
 

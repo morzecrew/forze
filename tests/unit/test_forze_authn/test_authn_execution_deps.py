@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -41,6 +43,8 @@ from forze_identity.authn import (
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
     JwtNativeUuidResolver,
+    RevocationStates,
+    StateMacKeys,
 )
 from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
@@ -48,6 +52,9 @@ from forze_identity.authn.adapters import (
     PasswordLifecycleAdapter,
     PasswordResetAdapter,
     TokenLifecycleAdapter,
+)
+from forze_identity.authn.adapters.principal_eligibility import (
+    AdmittedTokenEligibilityAdapter,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.execution import (
@@ -67,6 +74,7 @@ from forze_identity.authn.execution import (
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
+from forze_identity.authn.execution.deps import deps as authn_deps
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz.application.constants import AuthzResourceName
 
@@ -173,7 +181,7 @@ class TestAuthnDepsModule:
     def test_unknown_eligibility_fails_closed(self) -> None:
         # The Literal annotation is not enforced at runtime; a typo used to fall
         # through the old ternary into the ALLOW-ALL gate. It must refuse instead.
-        from typing import Any, cast
+        from typing import cast
 
         with pytest.raises(CoreException, match="eligibility"):
             AuthnDepsModule(
@@ -190,6 +198,33 @@ class TestAuthnDepsModule:
         )()
 
         assert deps.exists(PrincipalEligibilityDepKey, route="main")
+
+    @pytest.mark.parametrize("value", ["allow_al", 42, None], ids=["typo", "int", "none"])
+    def test_an_invalid_eligibility_is_refused_at_construction(self, value: object) -> None:
+        # Before any route is built, so nothing can fall through to a permissive gate.
+        from typing import cast
+
+        with pytest.raises(CoreException) as caught:
+            AuthnDepsModule(eligibility=cast("Any", value))
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "authn_eligibility_invalid"
+
+    def test_a_gate_factory_is_registered_on_every_wired_route(self) -> None:
+        def gate(ctx: ExecutionContext, spec: AuthnSpec) -> MagicMock:
+            return MagicMock()
+
+        deps = AuthnDepsModule(
+            kernel=_kernel_full(),
+            authn={"a": frozenset({"token"})},
+            token_lifecycle={"b"},
+            password_lifecycle={"c"},
+            eligibility=gate,
+        )()
+        ctx = context_from_deps(deps)
+
+        for route in ("a", "b", "c"):
+            assert ctx.deps.provide(PrincipalEligibilityDepKey, route=route) is gate
 
     def test_registers_token_route(self) -> None:
         deps = AuthnDepsModule(
@@ -370,6 +405,73 @@ class TestAuthnDepsModule:
 # ....................... #
 
 
+def _own_gate(ctx: ExecutionContext, spec: AuthnSpec) -> MagicMock:
+    """An application's gate: the port it builds is the one every check reads."""
+
+    return MagicMock(name="own-eligibility")
+
+
+class TestAGateFactoryNeverSkips:
+    """Only the policy-principal gate's class takes the RFC 0069 skips; a factory reads on every
+    check, and the epoch raise still locks the principal for it (RFC 0081 row 3)."""
+
+    _SPEC = AuthnSpec(name="main", enabled_methods=frozenset({"token", "api_key"}))
+    _STATES = RevocationStates(
+        route="authn-revocations",
+        ttl=timedelta(minutes=5),
+        key_mac=StateMacKeys(active=b"m" * 32),
+    )
+
+    def _ctx(self, eligibility: Any) -> ExecutionContext:
+        kernel = AuthnKernelConfig(
+            access_token_secret=b"k" * 32,
+            api_key_pepper=b"a" * 32,
+            revocation_states=self._STATES,
+        )
+        module = AuthnDepsModule(
+            kernel=kernel,
+            authn={"main": self._SPEC.enabled_methods},
+            eligibility=eligibility,
+        )
+
+        return context_from_deps(module().merge(_document_deps_only()))
+
+    def test_its_port_is_used_as_built(self) -> None:
+        ctx = self._ctx(_own_gate)
+        built = ctx.deps.provide(PrincipalEligibilityDepKey, route="main")(ctx, self._SPEC)
+
+        assert not isinstance(built, AdmittedTokenEligibilityAdapter)
+        assert built._mock_name == "own-eligibility"
+
+    def test_an_api_key_never_skips_its_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Every other condition of the skip holds, so only the gate's class can refuse it.
+        monkeypatch.setattr(authn_deps, "_skips_eligibility", lambda ctx, config, principals: True)
+        ctx = self._ctx(_own_gate)
+
+        assert authn_deps._api_key_skip(ctx, self._SPEC, self._STATES, MagicMock()) is None
+
+    @pytest.mark.parametrize(
+        ("eligibility", "locks"),
+        [(_own_gate, True), ("allow_all", False)],
+        ids=["factory", "allow_all"],
+    )
+    def test_an_epoch_raise_locks_the_principal_for_every_gate_but_allow_all(
+        self,
+        eligibility: Any,
+        locks: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # As on Postgres, whose locking read excludes a concurrent deactivation.
+        monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
+
+        found = authn_deps._principals_to_lock(self._ctx(eligibility), self._SPEC)
+
+        assert (found is not None) is locks
+
+
+# ....................... #
+
+
 class TestConfigurableFactories:
     def _shared_min(self) -> AuthnSharedServices:
         return build_authn_shared_services(_kernel_min_access())
@@ -408,9 +510,7 @@ class TestConfigurableFactories:
             shared=build_authn_shared_services(kernel),
         )
 
-        port = factory(
-            ctx, AuthnSpec(name="s", enabled_methods=frozenset({"password"}))
-        )
+        port = factory(ctx, AuthnSpec(name="s", enabled_methods=frozenset({"password"})))
 
         assert isinstance(port, Argon2PasswordVerifier)
         assert port.pa_cmd is None
@@ -424,9 +524,7 @@ class TestConfigurableFactories:
             rehash_on_login=True,
         )
 
-        port = factory(
-            ctx, AuthnSpec(name="s", enabled_methods=frozenset({"password"}))
-        )
+        port = factory(ctx, AuthnSpec(name="s", enabled_methods=frozenset({"password"})))
 
         assert isinstance(port, Argon2PasswordVerifier)
         assert port.pa_cmd is not None
@@ -475,9 +573,7 @@ class TestConfigurableFactories:
         with pytest.raises(CoreException, match="enabled_methods"):
             factory(
                 ctx,
-                AuthnSpec(
-                    name="main", enabled_methods=frozenset({"token", "password"})
-                ),
+                AuthnSpec(name="main", enabled_methods=frozenset({"token", "password"})),
             )
 
     def test_token_lifecycle_factory(self) -> None:
@@ -492,9 +588,7 @@ class TestConfigurableFactories:
         ctx = self._ctx()
 
         kernel = AuthnKernelConfig(password=_slow_password_config())
-        factory = ConfigurablePasswordLifecycle(
-            shared=build_authn_shared_services(kernel)
-        )
+        factory = ConfigurablePasswordLifecycle(shared=build_authn_shared_services(kernel))
 
         port = factory(ctx, AuthnSpec(name="s"))
 
@@ -523,9 +617,7 @@ class TestConfigurableFactories:
         ctx = self._ctx()
 
         kernel = AuthnKernelConfig(api_key_pepper=b"a" * 32)
-        factory = ConfigurableApiKeyLifecycle(
-            shared=build_authn_shared_services(kernel)
-        )
+        factory = ConfigurableApiKeyLifecycle(shared=build_authn_shared_services(kernel))
 
         port = factory(ctx, AuthnSpec(name="s"))
 

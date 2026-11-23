@@ -59,7 +59,9 @@ deps = DepsRegistry.from_deps(local)
     ```python
     from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
     from forze_identity.builtin.local import (
-        ConfigurableLocalApiKeyVerifier, ConfigurableLocalTenantResolver,
+        ConfigurableLocalApiKeyVerifier,
+        ConfigurableLocalPrincipalEligibility,
+        ConfigurableLocalTenantResolver,
     )
     from forze_identity.tenancy import TenancyDepsModule
 
@@ -67,12 +69,38 @@ deps = DepsRegistry.from_deps(local)
         kernel=AuthnKernelConfig(),
         authn={"main": frozenset({"api_key"})},
         api_key_verifiers={"main": ConfigurableLocalApiKeyVerifier(config=config)},
+        eligibility=ConfigurableLocalPrincipalEligibility(config=config),
     )
     tenancy = TenancyDepsModule(
         tenant_resolver={"main"},
         tenant_resolvers={"main": ConfigurableLocalTenantResolver(config=config)},
     )
     ```
+
+## Principal eligibility
+
+Every authentication also checks that the principal may still authenticate (see
+[principal eligibility](../integrations/authn.md#principal-eligibility)). The preset chooses
+that check by what is wired when the check is first built:
+
+- **The authz plane's policy-principal document resolves** (its route is registered, or a
+  plain document fallback is, as on the mock): the preset keeps authn's default gate. A key's
+  principal then needs an active `policy_principal` document, and deactivating it there stops
+  its authentication.
+- **It does not resolve:** the key file is the registry. A principal named on an API key is
+  eligible, and any other is refused with `Principal not found`. A principal listed only in
+  `principal_tenants` holds no key, so it is not eligible. Remove a principal's last key and
+  restart to deactivate it.
+
+To insist on the authz gate wherever the preset runs, or to choose another gate, pass it:
+
+```python
+local = local_identity_deps(config, eligibility="policy_principal")
+```
+
+`eligibility=` takes anything
+[`AuthnDepsModule.eligibility`](../integrations/authn.md#principal-eligibility) takes, and
+skips the detection.
 
 ## At the boundary
 

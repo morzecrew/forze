@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Python 3.15 is supported.** On 3.15, PyYAML builds from source (pure Python without a C compiler), and so do zstandard for the `zstd` extra and grpcio-tools for `kms-yc`, which need a C and a C++ toolchain until they publish 3.15 wheels.
 
+- **`AuthnDepsModule(eligibility=...)` takes a gate factory.** A deployment checks its own principal registry with a `(ctx, spec) -> PrincipalEligibilityPort` factory (`EligibilityChoice`). An invalid value is refused at construction (`authn_eligibility_invalid`).
+
+- **`local_identity_deps` authenticates without an authz plane.** Where no `authz_policy_principals` store is wired, it admits exactly the principals its key file names (`ConfigurableLocalPrincipalEligibility`, `LocalPrincipalEligibility`), and keeps the default gate where one is. It takes `eligibility=`.
+
 ### Changed
 
 - ...
