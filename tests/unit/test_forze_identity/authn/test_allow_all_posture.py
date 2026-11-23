@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -20,6 +21,10 @@ pytestmark = pytest.mark.unit
 
 class _Settings(BaseModel):
     env: str | None = None
+
+
+class _Routes(str, Enum):
+    MAIN = "main"
 
 
 def _posture(env: str | None, *exempt: Exempt) -> ProductionPosture:
@@ -61,6 +66,22 @@ class TestTheFinding:
         ]
         assert _module("policy_principal").posture_findings() == ()
         assert _module(lambda ctx, spec: None).posture_findings() == ()
+
+    def test_an_enum_route_is_named_by_its_value(self, warnings: MagicMock) -> None:
+        # str() of a (str, Enum) member is "_Routes.MAIN"; the Exempt a deployment writes
+        # names the route it registered, "main".
+        module = AuthnDepsModule(
+            kernel=AuthnKernelConfig(access_token_secret=b"k" * 32),
+            authn={_Routes.MAIN: frozenset({"token"})},
+            eligibility="allow_all",
+        )
+
+        assert [f.target for f in module.posture_findings()] == ["authn_eligibility:main"]
+        assert warnings.warning.call_args.kwargs["routes"] == ["main"]
+        build_runtime(
+            module,
+            posture=_posture("production", Exempt(target="authn_eligibility:main", reason="r")),
+        )
 
 
 class TestUnderAPosture:

@@ -225,7 +225,7 @@ class AuthnDepsModule(DepsModule):
         if self.eligibility == "allow_all":
             logger.warning(
                 "authn.eligibility.allow_all",
-                routes=sorted(str(route) for route in self._eligibility_routes()),
+                routes=sorted(str.__str__(route) for route in self._eligibility_routes()),
                 detail=(
                     "eligibility='allow_all' checks nobody, so deactivating a principal does "
                     "not stop its authentication; a production posture refuses it unless an "
@@ -288,7 +288,8 @@ class AuthnDepsModule(DepsModule):
                 target=f"authn_eligibility:{route}",
                 rule=ALLOW_ALL_RULE,
             )
-            for route in sorted(str(route) for route in self._eligibility_routes())
+            # The value, not str(): a ``(str, Enum)`` route renders as ``Routes.MAIN``.
+            for route in sorted(str.__str__(route) for route in self._eligibility_routes())
         )
 
     # ....................... #
