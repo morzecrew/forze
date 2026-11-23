@@ -6783,7 +6783,8 @@ that check by what is wired when the check is first built:</p>
 </code></pre></div>
 <p><code>eligibility=</code> takes anything
 <a href="../../integrations/authn/#principal-eligibility"><code>AuthnDepsModule.eligibility</code></a> takes, and
-skips the detection.</p>
+skips the detection. With <code>"policy_principal"</code> and no policy-principal store wired, the boot is
+refused rather than every authentication failing.</p>
 <h2 id="at-the-boundary">At the boundary<a class="headerlink" href="#at-the-boundary" title="Permanent link">&para;</a></h2>
 <p>Local identity uses <strong>API keys</strong>, so the middleware ingress is <code>HeaderApiKeyAuthn</code>
 (see <a href="../authn-authz-tenancy-fastapi/">Authn, authz &amp; tenancy</a> for the full

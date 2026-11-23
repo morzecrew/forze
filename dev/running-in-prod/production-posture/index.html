@@ -6824,8 +6824,9 @@ registry to check yet writes that down:</p>
 
 <span class="n">Exempt</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s2">"authn_eligibility:main"</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">"No authorization plane yet"</span><span class="p">)</span>
 </code></pre></div>
-<p>The finding is collected from an <code>AuthnDepsModule</code> passed to <code>build_runtime</code> as a module. Wiring
-handed over as built <code>Deps</code> gets only the warning.</p>
+<p>The finding is collected however the wiring is passed: from an <code>AuthnDepsModule</code> given to
+<code>build_runtime</code> as a module, and from the gate it registers on each route, so wiring handed over
+as built <code>Deps</code>, as the identity presets build it, is covered too.</p>
 <div class="admonition warning">
 <p class="admonition-title">Adopting a posture can refuse a deployment that boots today</p>
 <p>That is the point, and it is still a break. Run <code>check_wiring</code> with the posture in CI first,

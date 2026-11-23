@@ -6757,6 +6757,14 @@ takes frozen, validated inputs and does not coerce them:</p>
     <span class="n">lifecycle</span><span class="o">=</span><span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">postgres_lifecycle</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Freezing also checks what a provider says it needs. A provider can name the dependencies it
+resolves when called (<code>DeclaresRequirements</code>, one <code>Requirement(key=..., route=..., remedy=...)</code>
+each), and <code>freeze()</code> refuses wiring where one has neither its route nor a plain fallback registered
+(<code>dependency_requirement_unbound</code>). The refusal names each missing key and route and what to wire
+instead. A dependency that could never be built then stops the boot, instead of failing on
+every call. The authn module's default
+<a href="../../integrations/authn/#principal-eligibility">eligibility gate</a> is one such provider: it needs
+the policy-principal document it reads.</p>
 <h2 id="the-execution-context">The execution context<a class="headerlink" href="#the-execution-context" title="Permanent link">&para;</a></h2>
 <p>The <strong><code>ExecutionContext</code></strong> is the seam from the <a href="../overview/">overview</a>: the one
 object handlers use to resolve every port. It also carries request identity — who

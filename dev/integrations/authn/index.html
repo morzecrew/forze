@@ -6957,13 +6957,20 @@ factory that builds a gate over it:</p>
 </ul>
 <p>Only the default gate skips its read after a
 <a href="#skip-the-eligibility-read">fast-path admission</a>. A factory's gate reads on every check.</p>
+<p>The default gate needs its document. If <code>authz_policy_principals</code> has neither its own route nor
+a plain document fallback, the boot is refused (<code>dependency_requirement_unbound</code>), naming the
+route and the three ways out: wire the document, pass a gate, or declare <code>allow_all</code>. A plain
+fallback, as on the mock, satisfies the check even when it holds no policy principals, so there
+an unseeded principal still gets <code>Principal not found</code>. <code>principal_deactivation</code> routes are
+checked the same way: each needs the authz principal registry on <code>authz_route</code> and a token
+lifecycle on its own route, and a plain registration of either counts.</p>
 <p><code>allow_all</code> is a declared decision, never a fallback. With it, deactivating a principal no
 longer blocks token issuance, so revocation rests on credential lifecycle alone: session revoke
 and API-key revoke. It logs a warning when the module is constructed, and it is a
 <a href="../../running-in-prod/production-posture/">production posture</a> finding: under a production
 posture each route refuses the boot unless an <code>Exempt</code> names <code>authn_eligibility:&lt;route&gt;</code> with
-its reason. The finding comes from a module passed to <code>build_runtime</code>; built <code>Deps</code>, such as
-<code>local_identity_deps</code> returns, get only the warning. Any other string, or a value that is not callable, is refused when the module is
+its reason, whether the module or its built <code>Deps</code> (as <code>local_identity_deps</code> returns) is
+passed. Any other string, or a value that is not callable, is refused when the module is
 constructed (<code>authn_eligibility_invalid</code>).</p>
 <p><a href="../../recipes/local-identity/#principal-eligibility"><code>local_identity_deps</code></a> chooses its gate by
 what is wired.</p>

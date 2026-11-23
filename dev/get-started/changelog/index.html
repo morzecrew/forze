@@ -11267,10 +11267,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>local_identity_deps</code> authenticates without an authz plane.</strong> Where no <code>authz_policy_principals</code> store is wired, it admits exactly the principals its key file names (<code>ConfigurableLocalPrincipalEligibility</code>, <code>LocalPrincipalEligibility</code>), and keeps the default gate where one is. It takes <code>eligibility=</code>.</p>
 </li>
+<li>
+<p><strong>Providers can declare what they resolve.</strong> <code>Requirement(key, route, remedy)</code> and <code>DeclaresRequirements</code> in <code>forze.application.contracts.deps</code>, and <code>ProviderStore.providers()</code> to walk a store's registrations.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>eligibility="allow_all"</code> is a production posture finding</strong> (<strong>Breaking</strong>): passed to <code>build_runtime</code> as a module, under a <code>ProductionPosture</code> (an unset environment included), each route refuses the boot unless <code>Exempt(target="authn_eligibility:&lt;route&gt;", reason=...)</code> covers it. Constructing the module logs a warning.</li>
+<li>
+<p><strong><code>eligibility="allow_all"</code> is a production posture finding</strong> (<strong>Breaking</strong>): under a <code>ProductionPosture</code>, an unset environment included, each route refuses the boot unless <code>Exempt(target="authn_eligibility:&lt;route&gt;", reason=...)</code> covers it. Constructing the module logs a warning.</p>
+</li>
+<li>
+<p><strong>An unregistered dependency a provider declares refuses the boot</strong> (<strong>Breaking</strong>): <code>DepsRegistry.freeze()</code> raises <code>dependency_requirement_unbound</code>. The default eligibility gate needs <code>authz_policy_principals</code> (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
