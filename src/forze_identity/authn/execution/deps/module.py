@@ -42,6 +42,7 @@ from .configs import (
     validate_shared_matches_route_sets,
 )
 from .deps import (
+    ALLOW_ALL_RULE,
     ConfigurableAllowAllEligibility,
     ConfigurableApiKeyLifecycle,
     ConfigurableArgon2PasswordVerifier,
@@ -64,9 +65,6 @@ type EligibilityChoice = Literal["policy_principal", "allow_all"] | PrincipalEli
 a gate factory over the principal registry the deployment has."""
 
 _ELIGIBILITY_NAMES = frozenset({"policy_principal", "allow_all"})
-
-ALLOW_ALL_RULE = "admits every principal: deactivating one does not stop its authentication"
-"""The rule an ``eligibility="allow_all"`` finding reports, for every route it covers."""
 
 # ....................... #
 
@@ -121,23 +119,43 @@ class AuthnDepsModule(DepsModule):
     )
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 
-    token_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    # Route sets are copied at construction: freezing reads posture_findings() before it
+    # builds the Deps, and a caller's set changed in between must move neither.
+    token_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party token lifecycle management."""
 
-    password_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    password_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party password lifecycle management."""
 
-    api_key_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    api_key_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party API key lifecycle management."""
 
-    password_account_provisioning: Collection[StrKey] | None = attrs.field(default=None)
+    password_account_provisioning: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party password account provisioning."""
 
-    password_reset: Collection[StrKey] | None = attrs.field(default=None)
+    password_reset: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that expose self-service password reset (requires
     ``kernel.password`` and ``kernel.reset_token_pepper``)."""
 
-    principal_deactivation: Collection[StrKey] | None = attrs.field(default=None)
+    principal_deactivation: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that expose cascaded principal deactivation."""
 
     authz_route: StrKey | None = attrs.field(default=None)
@@ -353,26 +371,24 @@ class AuthnDepsModule(DepsModule):
             # conflicts with any later one for the same route, so the default is
             # non-overridable rather than merely default, and a gate other than the
             # policy-principal one is passed here or not at all.
-            eligibility_factory: PrincipalEligibilityDepPort
+            gates: dict[StrKey, PrincipalEligibilityDepPort]
 
-            if self.eligibility == "policy_principal":
-                eligibility_factory = ConfigurablePolicyPrincipalEligibility(shared=shared)
-
-            elif self.eligibility == "allow_all":
-                eligibility_factory = ConfigurableAllowAllEligibility()
+            if self.eligibility == "allow_all":
+                # One per route, so its posture finding names the route however it is passed.
+                gates = {
+                    route: ConfigurableAllowAllEligibility(route=route)
+                    for route in eligibility_routes
+                }
 
             else:
-                eligibility_factory = self.eligibility
+                factory: PrincipalEligibilityDepPort = (
+                    ConfigurablePolicyPrincipalEligibility(shared=shared)
+                    if self.eligibility == "policy_principal"
+                    else self.eligibility
+                )
+                gates = dict.fromkeys(eligibility_routes, factory)
 
-            merged = merged.merge(
-                Deps.routed(
-                    {
-                        PrincipalEligibilityDepKey: dict.fromkeys(
-                            eligibility_routes, eligibility_factory
-                        ),
-                    },
-                ),
-            )
+            merged = merged.merge(Deps.routed({PrincipalEligibilityDepKey: gates}))
 
         # One shared sink for every wired route (observability is cross-cutting,
         # like actor_claim); override per route by merging an extra routed
@@ -396,6 +412,7 @@ class AuthnDepsModule(DepsModule):
                     {
                         PrincipalDeactivationDepKey: {
                             name: ConfigurablePrincipalDeactivation(
+                                route=name,
                                 authz_route=self.authz_route,
                                 shared=shared,
                             )

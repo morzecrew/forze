@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`local_identity_deps` authenticates without an authz plane.** Where no `authz_policy_principals` store is wired, it admits exactly the principals its key file names (`ConfigurableLocalPrincipalEligibility`, `LocalPrincipalEligibility`), and keeps the default gate where one is. It takes `eligibility=`.
 
+- **Providers can declare what they resolve.** `Requirement(key, route, remedy)` and `DeclaresRequirements` in `forze.application.contracts.deps`, and `ProviderStore.providers()` to walk a store's registrations.
+
 ### Changed
 
-- **`eligibility="allow_all"` is a production posture finding** (**Breaking**): passed to `build_runtime` as a module, under a `ProductionPosture` (an unset environment included), each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it. Constructing the module logs a warning.
+- **`eligibility="allow_all"` is a production posture finding** (**Breaking**): under a `ProductionPosture`, an unset environment included, each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it. Constructing the module logs a warning.
+
+- **An unregistered dependency a provider declares refuses the boot** (**Breaking**): `DepsRegistry.freeze()` raises `dependency_requirement_unbound`. The default eligibility gate needs `authz_policy_principals` (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle.
 
 ### Fixed
 

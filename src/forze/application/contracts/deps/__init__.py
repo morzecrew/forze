@@ -26,6 +26,7 @@ from .keys import (
     implements,
 )
 from .module import DepsModule
+from .requirements import DeclaresRequirements, Requirement
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
 
 # ----------------------- #
@@ -33,6 +34,7 @@ from .store import PlainDepsMap, ProviderStore, RoutedDeps
 __all__ = [
     "ConfigurableDepPort",
     "ConvenientDeps",
+    "DeclaresRequirements",
     "DepKey",
     "Deps",
     "DepsModule",
@@ -40,6 +42,7 @@ __all__ = [
     "GuardedWritePort",
     "PlainDepsMap",
     "ProviderStore",
+    "Requirement",
     "ResolutionFrame",
     "RoutedDeps",
     "ShadowedFallback",

@@ -9,10 +9,13 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.deps import Deps
+from forze.application.contracts.document import DocumentQueryDepKey
 from forze.application.execution import Exempt, ProductionPosture, build_runtime
 from forze.base.exceptions import CoreException
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.execution.deps import module as authn_module
+from forze_identity.authz import policy_principal_spec
 
 pytestmark = pytest.mark.unit
 
@@ -67,6 +70,24 @@ class TestTheFinding:
         assert _module("policy_principal").posture_findings() == ()
         assert _module(lambda ctx, spec: None).posture_findings() == ()
 
+    def test_the_routes_are_the_ones_given_at_construction(self) -> None:
+        # Freezing reads the findings before it builds the module's Deps; a caller's set
+        # changed in between moves neither.
+        routes = {"admin"}
+        module = AuthnDepsModule(
+            kernel=AuthnKernelConfig(access_token_secret=b"k" * 32, refresh_token_pepper=b"p" * 32),
+            authn={"main": frozenset({"token"})},
+            token_lifecycle=routes,
+            eligibility="allow_all",
+        )
+        routes.add("late")
+
+        assert [f.target for f in module.posture_findings()] == [
+            "authn_eligibility:admin",
+            "authn_eligibility:main",
+        ]
+        assert all("late" not in registered for registered in module().routed_deps.values())
+
     def test_an_enum_route_is_named_by_its_value(self, warnings: MagicMock) -> None:
         # str() of a (str, Enum) member is "_Routes.MAIN"; the Exempt a deployment writes
         # names the route it registered, "main".
@@ -78,10 +99,10 @@ class TestTheFinding:
 
         assert [f.target for f in module.posture_findings()] == ["authn_eligibility:main"]
         assert warnings.warning.call_args.kwargs["routes"] == ["main"]
-        build_runtime(
-            module,
-            posture=_posture("production", Exempt(target="authn_eligibility:main", reason="r")),
-        )
+
+        exempt = Exempt(target="authn_eligibility:main", reason="r")
+        build_runtime(module, posture=_posture("production", exempt))
+        build_runtime(deps=module(), posture=_posture("production", exempt))
 
 
 class TestUnderAPosture:
@@ -113,7 +134,11 @@ class TestUnderAPosture:
         assert "authn_eligibility:main" not in caught.value.summary
 
     def test_the_default_gate_boots_in_production(self) -> None:
-        build_runtime(_module("policy_principal"), posture=_posture("production"))
+        store = Deps.routed(
+            {DocumentQueryDepKey: {policy_principal_spec.name: lambda ctx, spec: MagicMock()}}
+        )
+
+        build_runtime(_module("policy_principal"), deps=store, posture=_posture("production"))
 
 
 class TestTheWarning:

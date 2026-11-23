@@ -1,7 +1,8 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
 import os
-from typing import TYPE_CHECKING, Any, Self, final
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, Self, cast, final
 
 import attrs
 
@@ -12,10 +13,16 @@ if TYPE_CHECKING:
 
     from forze.base.logging import Logger
 
-from forze.application.contracts.deps import Deps, DepsModule, ProviderStore
+from forze.application.contracts.deps import (
+    DeclaresRequirements,
+    Deps,
+    DepsModule,
+    ProviderStore,
+)
+from forze.base.exceptions import exc
 
 from ..interception import PortInterceptor, PortInterceptorChain
-from ..posture import PostureAware
+from ..posture import PostureAware, WiringFinding
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
 from .frozen import FrozenDepsRegistry
 from .resolution import (
@@ -75,6 +82,69 @@ def _resolve_runtime_tracer(
         return runtime_tracer_from_flag(freeze_kw)
 
     return runtime_tracer_from_flag(_runtime_trace_from_env())
+
+
+# ....................... #
+
+
+def _declares(provider: object, protocol: type) -> bool:
+    """Whether *provider* implements *protocol*. A class registered as a factory carries the
+    protocol's method unbound, so only an instance declares."""
+
+    return not isinstance(provider, type) and isinstance(provider, protocol)
+
+
+# ....................... #
+
+
+def _refuse_unbound_requirements(store: ProviderStore) -> None:
+    """Refuse a store where a registered provider declares a requirement nothing satisfies.
+
+    A requirement is satisfied as resolution would satisfy it: its route is registered for the
+    key, or a plain registration of the key is. The spec inventory is not consulted; it is
+    attached after the freeze, and reconciliation reports a route it refuses.
+
+    :raises CoreException: ``configuration`` (``dependency_requirement_unbound``), naming every
+        unbound frame by key and route, then each remedy once.
+    """
+
+    unbound: set[str] = set()
+    remedies: dict[str, None] = {}
+
+    for key, route, provider in store.providers():
+        if not _declares(provider, DeclaresRequirements):
+            continue
+
+        for requirement in cast(DeclaresRequirements, provider).requirements():
+            if store.exists(requirement.key, route=requirement.route) or store.exists(
+                requirement.key
+            ):
+                continue
+
+            where = f"on route '{route}'" if route is not None else "as a plain registration"
+            unbound.add(
+                f"'{key.name}' {where} resolves '{requirement.key.name}' on route "
+                f"'{requirement.route}', which is not registered and has no plain fallback."
+            )
+            remedies.setdefault(requirement.remedy)
+
+    if unbound:
+        raise exc.configuration(
+            " ".join((*sorted(unbound), *remedies)),
+            code="dependency_requirement_unbound",
+        )
+
+
+# ....................... #
+
+
+def _provider_findings(store: ProviderStore) -> Iterator[WiringFinding]:
+    """The posture findings registered providers report, for wiring passed as built ``Deps``,
+    which no module carries to the freeze."""
+
+    for _, _, provider in store.providers():
+        if _declares(provider, PostureAware):
+            yield from cast(PostureAware, provider).posture_findings()
 
 
 # ....................... #
@@ -316,6 +386,14 @@ class DepsRegistry:
         else:
             store = ProviderStore.merge(*(d.store for d in built))
 
+        _refuse_unbound_requirements(store)
+        # A module and the providers it registered may report one finding; keep the first.
+        unique: dict[tuple[str, str], WiringFinding] = {}
+
+        for finding in (*findings, *_provider_findings(store)):
+            unique.setdefault((finding.target, finding.rule), finding)
+
+        findings = tuple(unique.values())
         _report_fallbacks(store)
 
         return FrozenDepsRegistry(

@@ -134,8 +134,9 @@ from forze.application.execution import Exempt
 Exempt(target="authn_eligibility:main", reason="No authorization plane yet")
 ```
 
-The finding is collected from an `AuthnDepsModule` passed to `build_runtime` as a module. Wiring
-handed over as built `Deps` gets only the warning.
+The finding is collected however the wiring is passed: from an `AuthnDepsModule` given to
+`build_runtime` as a module, and from the gate it registers on each route, so wiring handed over
+as built `Deps`, as the identity presets build it, is covered too.
 
 !!! warning "Adopting a posture can refuse a deployment that boots today"
 
