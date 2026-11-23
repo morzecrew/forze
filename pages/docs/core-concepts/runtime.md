@@ -34,8 +34,8 @@ runtime = ExecutionRuntime(
 ```
 
 Freezing also checks what a provider says it needs. A provider can name the dependencies it
-resolves when called (`DeclaresRequirements`, one `Requirement(key, route, remedy)` each), and
-`freeze()` refuses wiring where one has neither its route nor a plain fallback registered
+resolves when called (`DeclaresRequirements`, one `Requirement(key=..., route=..., remedy=...)`
+each), and `freeze()` refuses wiring where one has neither its route nor a plain fallback registered
 (`dependency_requirement_unbound`). The refusal names each missing key and route and what to wire
 instead. A dependency that could never be built then stops the boot, instead of failing on
 every call. The authn module's default
