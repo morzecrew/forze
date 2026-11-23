@@ -625,6 +625,19 @@ def _token(_scrape: int) -> httpx.Response:
     return httpx.Response(200, text="forze_x secret-token-123\n")
 
 
+async def _loop_lag(done: asyncio.Event) -> float:
+    """The latest the event loop woke a 10 ms sleep until *done*: the stall every timer shares."""
+
+    worst = 0.0
+
+    while not done.is_set():
+        before = time.perf_counter()
+        await asyncio.sleep(0.01)
+        worst = max(worst, time.perf_counter() - before - 0.01)
+
+    return worst
+
+
 _SOAK = Soak(duration_s=0.3, window_s=0.05, workers=1)
 
 
@@ -885,14 +898,22 @@ class TestSoakRun:
             return httpx.Response(200)
 
         soak = Soak(duration_s=1.2, window_s=0.2, workers=1)
+        done = asyncio.Event()
+        lag = asyncio.create_task(_loop_lag(done))
 
         result = await run(_plan(), soak, transport=httpx.MockTransport(handler))
+        done.set()
+        # A stalled loop (a runner's pause, a full GC) moves a boundary by the stall, which
+        # no schedule can prevent; a window waiting for its scrape moves it with none.
+        stall = await lag
 
         # Each 0.3 s scrape overlaps the next one, and no window waits for it.
         assert [row["window"] for row in result.rows] == [1, 2, 3, 4, 5, 6]
-        assert [row["duration_s"] for row in result.rows] == pytest.approx([0.2] * 6, abs=0.07)
+        assert [row["duration_s"] for row in result.rows] == pytest.approx(
+            [0.2] * 6, abs=0.07 + stall
+        )
         assert [row["t_s"] for row in result.rows] == pytest.approx(
-            [0.2 * n for n in range(1, 7)], abs=0.1
+            [0.2 * n for n in range(1, 7)], abs=0.1 + stall
         )
         # Each row has its own scrape, recorded in window order.
         leaks = [row["server"]["series"]["forze_leak"] for row in result.rows]
