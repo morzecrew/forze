@@ -26,7 +26,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.72">
+      <meta name="generator" content="zensical-0.1.1">
     
     
       
@@ -37,7 +37,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.4ab2de0c.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.ebb7f775.min.css">
       
         
           
@@ -117,7 +117,7 @@
   </span>
 
             </div>
-            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../..",location),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
           </aside>
         
       </div>
@@ -4981,6 +4981,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#principal-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Principal eligibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#at-the-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6565,6 +6576,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#principal-eligibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Principal eligibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#at-the-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6724,7 +6746,9 @@ enables <code>api_key</code>, <code>tenant_resolvers</code> to one in <code>tena
 override is refused when the module is built:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnDepsModule</span><span class="p">,</span> <span class="n">AuthnKernelConfig</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.builtin.local</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">ConfigurableLocalApiKeyVerifier</span><span class="p">,</span> <span class="n">ConfigurableLocalTenantResolver</span><span class="p">,</span>
+    <span class="n">ConfigurableLocalApiKeyVerifier</span><span class="p">,</span>
+    <span class="n">ConfigurableLocalPrincipalEligibility</span><span class="p">,</span>
+    <span class="n">ConfigurableLocalTenantResolver</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.tenancy</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenancyDepsModule</span>
 
@@ -6732,6 +6756,7 @@ override is refused when the module is built:</p>
     <span class="n">kernel</span><span class="o">=</span><span class="n">AuthnKernelConfig</span><span class="p">(),</span>
     <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"api_key"</span><span class="p">})},</span>
     <span class="n">api_key_verifiers</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">ConfigurableLocalApiKeyVerifier</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">)},</span>
+    <span class="n">eligibility</span><span class="o">=</span><span class="n">ConfigurableLocalPrincipalEligibility</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="n">tenancy</span> <span class="o">=</span> <span class="n">TenancyDepsModule</span><span class="p">(</span>
     <span class="n">tenant_resolver</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">},</span>
@@ -6739,6 +6764,26 @@ override is refused when the module is built:</p>
 <span class="p">)</span>
 </code></pre></div>
 </details>
+<h2 id="principal-eligibility">Principal eligibility<a class="headerlink" href="#principal-eligibility" title="Permanent link">&para;</a></h2>
+<p>Every authentication also checks that the principal may still authenticate (see
+<a href="../../integrations/authn/#principal-eligibility">principal eligibility</a>). The preset chooses
+that check by what is wired when the check is first built:</p>
+<ul>
+<li><strong>The authz plane's policy-principal document resolves</strong> (its route is registered, or a
+  plain document fallback is, as on the mock): the preset keeps authn's default gate. A key's
+  principal then needs an active <code>policy_principal</code> document, and deactivating it there stops
+  its authentication.</li>
+<li><strong>It does not resolve:</strong> the key file is the registry. A principal named on an API key is
+  eligible, and any other is refused with <code>Principal not found</code>. A principal listed only in
+  <code>principal_tenants</code> holds no key, so it is not eligible. Remove a principal's last key and
+  restart to deactivate it.</li>
+</ul>
+<p>To insist on the authz gate wherever the preset runs, or to choose another gate, pass it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">local</span> <span class="o">=</span> <span class="n">local_identity_deps</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">eligibility</span><span class="o">=</span><span class="s2">"policy_principal"</span><span class="p">)</span>
+</code></pre></div>
+<p><code>eligibility=</code> takes anything
+<a href="../../integrations/authn/#principal-eligibility"><code>AuthnDepsModule.eligibility</code></a> takes, and
+skips the detection.</p>
 <h2 id="at-the-boundary">At the boundary<a class="headerlink" href="#at-the-boundary" title="Permanent link">&para;</a></h2>
 <p>Local identity uses <strong>API keys</strong>, so the middleware ingress is <code>HeaderApiKeyAuthn</code>
 (see <a href="../authn-authz-tenancy-fastapi/">Authn, authz &amp; tenancy</a> for the full
@@ -6872,10 +6917,10 @@ Move to <a href="../external-bootstrap-forze-jwt/">first-party tokens</a> or an
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.719e0d91.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.10ee5ab6.min.js"></script>
+      <script src="../../assets/javascripts/bundle.3cb411a8.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

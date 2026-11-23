@@ -26,7 +26,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.72">
+      <meta name="generator" content="zensical-0.1.1">
     
     
       
@@ -37,7 +37,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.4ab2de0c.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.ebb7f775.min.css">
       
         
           
@@ -117,7 +117,7 @@
   </span>
 
             </div>
-            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../..",location),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
           </aside>
         
       </div>
@@ -11258,7 +11258,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.24.1...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Python 3.15 is supported.</strong> On 3.15, PyYAML builds from source (pure Python without a C compiler), and so do zstandard for the <code>zstd</code> extra and grpcio-tools for <code>kms-yc</code>, which need a C and a C++ toolchain until they publish 3.15 wheels.</li>
+<li>
+<p><strong>Python 3.15 is supported.</strong> On 3.15, PyYAML builds from source (pure Python without a C compiler), and so do zstandard for the <code>zstd</code> extra and grpcio-tools for <code>kms-yc</code>, which need a C and a C++ toolchain until they publish 3.15 wheels.</p>
+</li>
+<li>
+<p><strong><code>AuthnDepsModule(eligibility=...)</code> takes a gate factory.</strong> A deployment checks its own principal registry with a <code>(ctx, spec) -&gt; PrincipalEligibilityPort</code> factory (<code>EligibilityChoice</code>). An invalid value is refused at construction (<code>authn_eligibility_invalid</code>).</p>
+</li>
+<li>
+<p><strong><code>local_identity_deps</code> authenticates without an authz plane.</strong> Where no <code>authz_policy_principals</code> store is wired, it admits exactly the principals its key file names (<code>ConfigurableLocalPrincipalEligibility</code>, <code>LocalPrincipalEligibility</code>), and keeps the default gate where one is. It takes <code>eligibility=</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -15672,10 +15680,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.719e0d91.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.10ee5ab6.min.js"></script>
+      <script src="../../assets/javascripts/bundle.3cb411a8.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
