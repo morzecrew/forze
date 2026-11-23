@@ -28,11 +28,13 @@ from forze.application.contracts.authn import (
     TokenVerifierDepPort,
 )
 from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.execution import WiringFinding
 from forze.application.integrations.authn import LOCKOUT_COUNTER_ROUTE, LockoutConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 from forze_identity._routes import refuse_undeclared_overrides
+from forze_identity.authn._logger import logger
 
 from .configs import (
     AuthnKernelConfig,
@@ -62,6 +64,9 @@ type EligibilityChoice = Literal["policy_principal", "allow_all"] | PrincipalEli
 a gate factory over the principal registry the deployment has."""
 
 _ELIGIBILITY_NAMES = frozenset({"policy_principal", "allow_all"})
+
+ALLOW_ALL_RULE = "admits every principal: deactivating one does not stop its authentication"
+"""The rule an ``eligibility="allow_all"`` finding reports, for every route it covers."""
 
 # ....................... #
 
@@ -169,7 +174,9 @@ class AuthnDepsModule(DepsModule):
     the registry the deployment names, such as the application's own user table, and must
     refuse a principal it does not know. ``"allow_all"``: nobody is checked, every principal
     is eligible; revocation then rests on credential lifecycle (session and API-key revoke)
-    alone, and a deactivated principal no longer blocks token issuance.
+    alone, and a deactivated principal no longer blocks token issuance. ``"allow_all"`` logs
+    a warning when the module is constructed and is a production posture finding
+    (:meth:`posture_findings`).
 
     Only the policy-principal gate skips its read after a fast-path admission; every other
     gate reads on every check. Any other string, or a value that is not callable, is refused
@@ -214,6 +221,18 @@ class AuthnDepsModule(DepsModule):
                 code="authn_eligibility_invalid",
             )
 
+        # However the module is passed, it is constructed, so built ``Deps`` warn too.
+        if self.eligibility == "allow_all":
+            logger.warning(
+                "authn.eligibility.allow_all",
+                routes=sorted(str(route) for route in self._eligibility_routes()),
+                detail=(
+                    "eligibility='allow_all' checks nobody, so deactivating a principal does "
+                    "not stop its authentication; a production posture refuses it unless an "
+                    "Exempt names authn_eligibility:<route>"
+                ),
+            )
+
         # Every method resolves its principal through the route's one resolver, so a
         # resolver override needs only the route; a verifier override needs its method too.
         refuse_undeclared_overrides(
@@ -234,6 +253,43 @@ class AuthnDepsModule(DepsModule):
                     f"{field} overrides routes {unused!r} whose authn methods do not include "
                     f"{method!r}; add {method!r} there or the override is never registered.",
                 )
+
+    # ....................... #
+
+    def _eligibility_routes(self) -> frozenset[StrKey]:
+        """Every route the module registers a principal-eligibility gate for."""
+
+        return frozenset(
+            (self.authn or {}).keys()
+            | _normalize_route_set(self.token_lifecycle)
+            | _normalize_route_set(self.password_lifecycle)
+            | _normalize_route_set(self.api_key_lifecycle)
+            | _normalize_route_set(self.password_account_provisioning)
+            | _normalize_route_set(self.password_reset)
+            | _normalize_route_set(self.principal_deactivation)
+        )
+
+    # ....................... #
+
+    def posture_findings(self) -> tuple[WiringFinding, ...]:
+        """One finding per route whose gate is ``eligibility="allow_all"``.
+
+        The same condition the module warns about when constructed, reported so a production
+        posture can refuse it. Exempt a route by its target, ``authn_eligibility:<route>``,
+        with the reason the deployment checks nobody.
+        """
+
+        if self.eligibility != "allow_all":
+            return ()
+
+        return tuple(
+            WiringFinding(
+                source="forze_identity",
+                target=f"authn_eligibility:{route}",
+                rule=ALLOW_ALL_RULE,
+            )
+            for route in sorted(str(route) for route in self._eligibility_routes())
+        )
 
     # ....................... #
 
@@ -290,7 +346,7 @@ class AuthnDepsModule(DepsModule):
 
         merged: Deps = Deps()
 
-        eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pr | pd
+        eligibility_routes = self._eligibility_routes()
         if eligibility_routes:
             # The field is the only way to choose the gate: the routed registration here
             # conflicts with any later one for the same route, so the default is

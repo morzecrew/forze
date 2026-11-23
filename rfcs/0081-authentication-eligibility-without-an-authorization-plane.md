@@ -4,8 +4,8 @@
   - **P1 shipped**: the gate seam and the local preset's gate, recorded in
     [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 25 (D-286). It has no core change and changes no
     deployment that works today.
-  - P2 makes `allow_all` a posture finding, also with no core change. It is **breaking** under
-    a production posture (row 9).
+  - **P2 shipped**: `allow_all` is a posture finding, also with no core change, recorded in
+    Unit 26 (D-287, D-288). It is **breaking** under a production posture (row 9).
   - P3 adds a requirement check to `DepsRegistry.freeze()`, a core change. It is **breaking**
     for wiring that can never authenticate (row 7).
 - **Scope:** How an application authenticates without wiring the authz plane, and stays fail

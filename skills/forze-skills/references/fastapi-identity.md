@@ -58,7 +58,7 @@ Every wired route checks the authenticating principal before it authenticates, i
 
 - `"policy_principal"` (default): an active `policy_principal` document, the authz plane's registry.
 - A gate factory `(ctx, spec) -> PrincipalEligibilityPort` over your own registry, such as a users table. It must refuse a principal it does not know with `authentication`, read state that is not tenant-aware, and lock the row when asked `for_update` inside a transaction. It reads on every check; only the default gate skips after a fast-path admission.
-- `"allow_all"`: nobody is checked. Revocation then rests on credential lifecycle alone: deactivating a principal no longer blocks token issuance.
+- `"allow_all"`: nobody is checked. Revocation then rests on credential lifecycle alone: deactivating a principal no longer blocks token issuance. It warns when constructed, and under a `ProductionPosture` each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it.
 
 Any other value is refused at construction (`authn_eligibility_invalid`). `local_identity_deps` keeps the default gate where the policy-principal document resolves (the mock's plain fallback counts), and otherwise admits exactly the principals its key file names; pass `eligibility=` to choose.
 

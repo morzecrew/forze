@@ -7745,3 +7745,50 @@ warm API key still reads, and a logout still locks the principal. The W2 tests a
     `TestDetection::test_without_a_policy_principal_store_the_config_is_the_registry` and
     `TestThePreset::test_it_authenticates_its_own_keys_without_an_authz_plane`.
 - **Action:** decided.
+
+---
+
+# Unit 26 · RFC 0081 P2 — `allow_all` is a posture finding
+
+Branch `feat/authn-allow-all-posture`, cut from Unit 25's branch at `f303416e5`. RFC 0081 P2
+per §12: W4 at module level (§5.4), the §6 W4 tests, the §7 pages it touches, and the
+changelog's **Changed** entry, marked **Breaking**. Not built: P3's provider walk, which covers
+wiring passed as built `Deps` (row 15). Rows 1 to 6, 10, 11, 14 and 15 hold as written. The
+`LOCKED` row 9 holds, and D-287 closes it out. Rows 7, 8, 12 and 13 belong to P3.
+
+**Drift count: 0.** Two entries, D-287 and D-288: one close-out and one `spec-gap`.
+
+**Where each item lives.** `AuthnDepsModule.posture_findings` and the construction warning are in
+[`authn/execution/deps/module.py`](../src/forze_identity/authn/execution/deps/module.py). The
+tests are in
+[`test_allow_all_posture.py`](../tests/unit/test_forze_identity/authn/test_allow_all_posture.py).
+
+## D-287 — Close-out: `allow_all` refuses under a production posture
+
+- **Touches:** row 9 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:** `AuthnDepsModule` reports one `authn_eligibility:<route>` finding per route whose
+  eligibility it registers, with `eligibility="allow_all"` and with no other value. Under a
+  production posture, an unset environment included, `build_runtime` refuses the boot unless an
+  `Exempt` names the target. Outside production the construction warning
+  (`authn.eligibility.allow_all`) is all there is. Construction runs however the module is
+  passed, so wiring passed as built `Deps` gets the warning and, until P3, no finding.
+- **Evidence:** `test_allow_all_posture.py`. Under `ProductionPosture` with `env` unset and with
+  `env="production"`, `build_runtime` raises `production_posture_refused` naming each route. An
+  `Exempt` for every route lets it build, and one for a single route still refuses the other.
+  Under `env="dev"`, and with no posture, it builds and warns once. Built `Deps` warn too.
+  Renaming `posture_findings` away failed four of the file's tests; it was restored.
+- **Action:** decided.
+
+## D-288 — The one-line `Exempt` is named in the changelog, not the consumer
+
+- **Touches:** §12 P2 ("the release notes name bi-backend's one-line `Exempt`"), §5.7.
+- **RFC said:** the release notes name the consumer's `Exempt`.
+- **Found:** `CHANGELOG.md` is what a release is cut from, and its readers are every
+  application on forze. An entry naming one private consumer tells the rest nothing they need.
+- **Built:** the **Breaking** entry gives the line every affected deployment adds:
+  `Exempt(target="authn_eligibility:<route>", reason=...)`. The PR description names the known
+  consumer and its reason (D6).
+- **Class:** `spec-gap`. §12 did not say which release notes it meant.
+- **Proposed row (RFC 0081):** `ASSUMED`. The P2 changelog entry shows the `Exempt` line, and the
+  consumers it affects are named in the PR only.
