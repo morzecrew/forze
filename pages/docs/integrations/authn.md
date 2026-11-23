@@ -101,7 +101,8 @@ a plain document fallback, the boot is refused (`dependency_requirement_unbound`
 route and the three ways out: wire the document, pass a gate, or declare `allow_all`. A plain
 fallback, as on the mock, satisfies the check even when it holds no policy principals, so there
 an unseeded principal still gets `Principal not found`. `principal_deactivation` routes are
-checked the same way: they need the authz principal registry on `authz_route`.
+checked the same way: each needs the authz principal registry on `authz_route` and a token
+lifecycle on its own route, and a plain registration of either counts.
 
 `allow_all` is a declared decision, never a fallback. With it, deactivating a principal no
 longer blocks token issuance, so revocation rests on credential lifecycle alone: session revoke

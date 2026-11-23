@@ -7921,3 +7921,31 @@ are recorded.
   - `test_a_provider_needing_an_unregistered_route_refuses_the_freeze` pins the refusal's full
     text, which carries no value.
 - **Action:** decided.
+
+# Unit 28 · RFC 0081 P3 review — deactivation also declares its token lifecycle
+
+Branch `feat/deps-requirement-check` (#945): Unit 27's work rebased onto `main` after #944, plus
+the fixes from #945's review. One of them extends D-290; the others change docs only.
+
+**Drift count: 0.** One entry, D-295, a `spec-gap`.
+
+## D-295 — Principal deactivation also declares its route's token lifecycle
+
+- **Touches:** row 13 (`OPEN`), as D-290 decided it.
+- **Found:** in review on #945. `ConfigurablePrincipalDeactivation` resolves `TokenLifecycleDepKey`
+  on its own authn route as well as the authz registry, and `AuthnDepsModule` does not require a
+  `principal_deactivation` route to be a `token_lifecycle` one. D-290 declared only the registry,
+  so that wiring still booted and failed on the first deactivation.
+- **Evidence:** `src/forze_identity/authn/execution/deps/deps.py:772` resolves the token
+  lifecycle; `tests/unit/test_forze_identity/authn/test_eligibility_requirement.py:111` failed
+  before the declaration (`DID NOT RAISE`).
+- **Built:** the factory takes the `route` it is registered for and declares
+  `(TokenLifecycleDepKey, route)` next to `(PrincipalRegistryDepKey, authz_route)`
+  (`deps.py:757`). The remedy names the two ways out: add the route to `token_lifecycle`, or drop
+  it from `principal_deactivation`.
+- **Class:** `spec-gap`. What deactivation resolves was readable in its code before P3, and D-290
+  looked only at the registry.
+- **Proposed row (RFC 0081):** `ASSUMED`. `ConfigurablePrincipalDeactivation` declares
+  `(PrincipalRegistryDepKey, authz_route)` and `(TokenLifecycleDepKey, <its route>)`. This
+  replaces D-290's proposed row.
+- **Action:** decided.

@@ -412,6 +412,7 @@ class AuthnDepsModule(DepsModule):
                     {
                         PrincipalDeactivationDepKey: {
                             name: ConfigurablePrincipalDeactivation(
+                                route=name,
                                 authz_route=self.authz_route,
                                 shared=shared,
                             )

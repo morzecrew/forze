@@ -108,6 +108,20 @@ class TestPrincipalDeactivation:
 
         self._registry(authz).freeze()
 
+    def test_without_a_token_lifecycle_on_its_route_the_boot_is_refused(self) -> None:
+        # Deactivation revokes the principal's tokens on its own route, so that route needs
+        # a token lifecycle as well as the authz registry.
+        authz = AuthzDepsModule(kernel=AuthzKernelConfig(), principal_registry={"a"})()
+        module = _module(principal_deactivation={"main"}, authz_route="a")
+
+        summary = _refusal(DepsRegistry.from_deps(module(), _STORE, authz))
+
+        assert summary.startswith(
+            "'authn_principal_deactivation' on route 'main' resolves 'authn_token_lifecycle' "
+            "on route 'main', which is not registered and has no plain fallback."
+        )
+        assert "AuthnDepsModule(token_lifecycle=...)" in summary
+
 
 class _Settings(BaseModel):
     env: str | None = None

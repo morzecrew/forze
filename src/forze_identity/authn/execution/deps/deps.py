@@ -728,6 +728,9 @@ def _credential_store[R: BaseModel, D: Document, C: BaseDTO, U: BaseDTO](
 class ConfigurablePrincipalDeactivation:
     """Build :class:`PrincipalDeactivationAdapter` for cascaded offboarding."""
 
+    route: StrKey
+    """The authn route this deactivation is registered for; it revokes tokens there."""
+
     authz_route: StrKey
     """Authz route name used to resolve :class:`PrincipalRegistryPort`."""
 
@@ -736,8 +739,9 @@ class ConfigurablePrincipalDeactivation:
     transaction."""
 
     def requirements(self) -> tuple[Requirement, ...]:
-        """The authz principal registry deactivation writes first, so wiring without it is
-        refused when the registry is frozen instead of on the first deactivation."""
+        """The authz principal registry deactivation writes first, and the token lifecycle on
+        its own route that it revokes through, so wiring without either is refused when the
+        registry is frozen instead of on the first deactivation."""
 
         return (
             Requirement(
@@ -746,6 +750,14 @@ class ConfigurablePrincipalDeactivation:
                 remedy=(
                     "Wire the authz plane's principal registry on that route "
                     "(AuthzDepsModule(principal_registry=...)), or drop the route from "
+                    "AuthnDepsModule(principal_deactivation=...)."
+                ),
+            ),
+            Requirement(
+                key=TokenLifecycleDepKey,
+                route=self.route,
+                remedy=(
+                    "Add the route to AuthnDepsModule(token_lifecycle=...), or drop it from "
                     "AuthnDepsModule(principal_deactivation=...)."
                 ),
             ),
