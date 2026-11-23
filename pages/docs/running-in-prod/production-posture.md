@@ -122,6 +122,21 @@ posture = ProductionPosture(
 An exemption needs a non-blank reason, so it reads as a reviewed line. It matches a rule's
 settings path as well as an integration's target; a path that does not resolve cannot be exempted.
 
+An authn module whose [eligibility gate](../integrations/authn.md#principal-eligibility) is
+`eligibility="allow_all"` is the other: it checks nobody, so deactivating a principal does not
+stop its authentication. It warns when constructed, and under a production posture every route it
+wires refuses the boot, named `authn_eligibility:<route>`. A deployment that has no principal
+registry to check yet writes that down:
+
+```python
+from forze.application.execution import Exempt
+
+Exempt(target="authn_eligibility:main", reason="No authorization plane yet")
+```
+
+The finding is collected from an `AuthnDepsModule` passed to `build_runtime` as a module. Wiring
+handed over as built `Deps` gets only the warning.
+
 !!! warning "Adopting a posture can refuse a deployment that boots today"
 
     That is the point, and it is still a break. Run `check_wiring` with the posture in CI first,
