@@ -119,23 +119,43 @@ class AuthnDepsModule(DepsModule):
     )
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 
-    token_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    # Route sets are copied at construction: freezing reads posture_findings() before it
+    # builds the Deps, and a caller's set changed in between must move neither.
+    token_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party token lifecycle management."""
 
-    password_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    password_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party password lifecycle management."""
 
-    api_key_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
+    api_key_lifecycle: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party API key lifecycle management."""
 
-    password_account_provisioning: Collection[StrKey] | None = attrs.field(default=None)
+    password_account_provisioning: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that should use first-party password account provisioning."""
 
-    password_reset: Collection[StrKey] | None = attrs.field(default=None)
+    password_reset: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that expose self-service password reset (requires
     ``kernel.password`` and ``kernel.reset_token_pepper``)."""
 
-    principal_deactivation: Collection[StrKey] | None = attrs.field(default=None)
+    principal_deactivation: Collection[StrKey] | None = attrs.field(
+        default=None,
+        converter=_normalize_route_set,
+    )
     """Authn routes that expose cascaded principal deactivation."""
 
     authz_route: StrKey | None = attrs.field(default=None)

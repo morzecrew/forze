@@ -70,6 +70,24 @@ class TestTheFinding:
         assert _module("policy_principal").posture_findings() == ()
         assert _module(lambda ctx, spec: None).posture_findings() == ()
 
+    def test_the_routes_are_the_ones_given_at_construction(self) -> None:
+        # Freezing reads the findings before it builds the module's Deps; a caller's set
+        # changed in between moves neither.
+        routes = {"admin"}
+        module = AuthnDepsModule(
+            kernel=AuthnKernelConfig(access_token_secret=b"k" * 32, refresh_token_pepper=b"p" * 32),
+            authn={"main": frozenset({"token"})},
+            token_lifecycle=routes,
+            eligibility="allow_all",
+        )
+        routes.add("late")
+
+        assert [f.target for f in module.posture_findings()] == [
+            "authn_eligibility:admin",
+            "authn_eligibility:main",
+        ]
+        assert all("late" not in registered for registered in module().routed_deps.values())
+
     def test_an_enum_route_is_named_by_its_value(self, warnings: MagicMock) -> None:
         # str() of a (str, Enum) member is "_Routes.MAIN"; the Exempt a deployment writes
         # names the route it registered, "main".
