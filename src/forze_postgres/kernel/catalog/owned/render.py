@@ -5,6 +5,7 @@ Every identifier goes through :func:`.quoting.quote_ident` and every comment thr
 declarations, never read from a catalog.
 """
 
+import hashlib
 from collections.abc import Iterable, Sequence
 from typing import Final, final
 
@@ -103,21 +104,24 @@ _IDENTIFIER_BYTES: Final = 63
 """Postgres's longest identifier (``NAMEDATALEN - 1``); a longer one is truncated."""
 
 
-def _fit(name: str, suffix: str) -> str:
-    """*name* cut on a character boundary so that it and *suffix* fit one identifier."""
-
-    room = _IDENTIFIER_BYTES - len(suffix.encode())
-
-    return name.encode()[:room].decode(errors="ignore") + suffix
-
-
 def default_partition_name(parent: str) -> str:
-    """``<parent>_default``, shortened to fit an identifier, and never *parent* itself, which
-    a long name ending in ``_default`` would otherwise come back as."""
+    """``<parent>_default`` when it fits one identifier.
 
-    name = _fit(parent, "_default")
+    A longer name is cut on a character boundary and keeps eight hex digits of the full
+    name's hash before ``_default``. So two long names that share a prefix still get two
+    partitions, and none gets its parent's own name back.
+    """
 
-    return name if name != parent else _fit(parent, "_default1")
+    name = f"{parent}_default"
+
+    if len(name.encode()) <= _IDENTIFIER_BYTES:
+        return name
+
+    digest = hashlib.sha256(parent.encode()).hexdigest()[:8]
+    suffix = f"_{digest}_default"
+    room = _IDENTIFIER_BYTES - len(suffix)
+
+    return parent.encode()[:room].decode(errors="ignore") + suffix
 
 
 def default_partition(relation: BoundOwnedRelation) -> Block:

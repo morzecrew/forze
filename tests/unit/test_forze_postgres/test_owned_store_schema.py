@@ -54,6 +54,7 @@ from forze_postgres.kernel.catalog.owned import (
     render_sql,
 )
 from forze_postgres.kernel.catalog.owned.matching import normalize_expression
+from forze_postgres.kernel.catalog.owned.render import default_partition_name
 from tests.support.sql_statements import split_sql
 
 pytestmark = pytest.mark.unit
@@ -490,9 +491,17 @@ class TestDeliveryLog:
         partition = statement.removeprefix("CREATE TABLE app.").split(" PARTITION OF ")[0]
         bare = partition.strip('"')
 
+        assert bare == default_partition_name(name)
         assert len(bare.encode()) <= 63
         assert bare != name
-        assert bare.removesuffix("_default").removesuffix("_default1") in name
+        assert bare.endswith("_default")
+
+    def test_a_short_name_keeps_its_plain_default_partition_name(self) -> None:
+        assert default_partition_name("outbox_delivered") == "outbox_delivered_default"
+
+    def test_two_long_names_sharing_a_prefix_get_two_partitions(self) -> None:
+        # Cutting both to the same prefix would make the second CREATE TABLE fail.
+        assert default_partition_name("a" * 55 + "x") != default_partition_name("a" * 55 + "y")
 
     def test_a_partitioned_log_with_no_partition_gets_a_warning(self) -> None:
         catalog = attrs.evolve(

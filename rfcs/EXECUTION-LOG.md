@@ -9112,3 +9112,22 @@ The rest change no decision:
 - **Action:** decided.
 
 **Drift count: 0.** Unit 34 holds four entries, D-342 to D-345, all `spec-gap`.
+
+## D-346 — A shortened partition name keeps a hash of its table's full name
+
+- **Touches:** D-342 (proposed).
+- **Found:** in review on #951. D-342 cut a long name to the room `_default` leaves. Two logs
+  in one schema whose names share their first 55 bytes then got one partition name, so the
+  second `CREATE TABLE` failed.
+- **Built:** a name that fits keeps `<name>_default`. A longer one is cut on a character
+  boundary and keeps eight hex digits of the full name's SHA-256 before `_default`
+  (`src/forze_postgres/kernel/catalog/owned/render.py:107`). It replaces D-342's
+  `_default1` fallback, since a hashed name cannot come back as its parent's.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:502`; D-342's
+  cut gives both names `aaa…a_default`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-342's row, narrowed: a shortened name keeps a hash of the
+  full one.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds five entries, D-342 to D-346, all `spec-gap`.
