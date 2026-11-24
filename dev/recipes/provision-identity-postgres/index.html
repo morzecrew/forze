@@ -6842,6 +6842,47 @@ deployment needs for the default eligibility gate
 <span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
 <span class="p">);</span>
 </code></pre></div>
+<p>Principal-role bindings (<code>principal_role_binding_spec</code>) carry the tenant a binding
+holds in, <code>scope_tenant_id</code>; <code>NULL</code> means every tenant
+(<a href="../../identity-tenancy-enc/identity/#roles-in-one-tenant">roles in one tenant</a>). The
+unique index is required: role assignment checks for an existing row and then inserts,
+and the index is what stops two concurrent assigns leaving two rows, one of which a revoke
+would miss.</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">role_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span>
+<span class="p">);</span>
+<span class="c1">-- one row per principal, role and tenant, NULL (every tenant) counting as one value</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="w">    </span><span class="p">(</span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="p">,</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="p">)</span><span class="w"> </span><span class="n">NULLS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">DISTINCT</span><span class="p">;</span>
+</code></pre></div>
+<p><code>NULLS NOT DISTINCT</code> needs Postgres 15 or later. An existing table gains the column
+and the index in one migration, after refusing to run over duplicate rows, which the
+check-then-insert assign could leave behind. Drop a <code>UNIQUE (principal_id, role_id)</code>
+constraint in the same migration, or a role held in every tenant can never also be
+bound in one:</p>
+<div class="highlight"><pre><span></span><code><span class="k">DO</span><span class="w"> </span><span class="err">$$</span><span class="w"> </span><span class="k">BEGIN</span>
+<span class="w">  </span><span class="k">IF</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="w">             </span><span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="w"> </span><span class="k">HAVING</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">THEN</span>
+<span class="w">    </span><span class="n">RAISE</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="s1">'duplicate principal-role bindings: keep one row per pair before migrating'</span><span class="p">;</span>
+<span class="w">  </span><span class="k">END</span><span class="w"> </span><span class="k">IF</span><span class="p">;</span>
+<span class="k">END</span><span class="w"> </span><span class="err">$$</span><span class="p">;</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
+<span class="c1">-- Postgres's default name for UNIQUE (principal_id, role_id), drop one named otherwise by its name</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="w">    </span><span class="k">DROP</span><span class="w"> </span><span class="k">CONSTRAINT</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">authz_principal_role_bindings_principal_id_role_id_key</span><span class="p">;</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="w">    </span><span class="p">(</span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="p">,</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="p">)</span><span class="w"> </span><span class="n">NULLS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">DISTINCT</span><span class="p">;</span>
+</code></pre></div>
+<p>SQL that reads or writes this table directly must follow the same rule once tenant rows
+exist. A reader keeps a row when <code>scope_tenant_id IS NULL OR scope_tenant_id = &lt;bound
+tenant&gt;</code>, and only <code>IS NULL</code> with no tenant bound. A writer sets <code>scope_tenant_id</code> on
+purpose, since leaving it out binds the role in every tenant.</p>
 <p>The remaining identity specs (identity mappings, invites, authz bindings and
 grants) follow the same mapping rule — apply the table above to their model
 fields, and startup validation will tell you, field by field, if a column

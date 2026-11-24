@@ -7003,6 +7003,7 @@ it down. <code>TenantProvisionerPort</code> is that seam, wired through the tena
 
 <span class="n">TenancyDepsModule</span><span class="p">(</span>
     <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">},</span>
+    <span class="n">authz_route</span><span class="o">=</span><span class="s2">"main"</span><span class="p">,</span>  <span class="c1"># detach revokes the roles held in the tenant</span>
     <span class="n">tenant_provisioner</span><span class="o">=</span><span class="n">ObjectStorageTenantProvisioner</span><span class="p">(</span>
         <span class="n">client</span><span class="o">=</span><span class="n">s3_client</span><span class="p">,</span>
         <span class="n">bucket</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"tenant-</span><span class="si">{</span><span class="n">tid</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>

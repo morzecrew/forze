@@ -4949,6 +4949,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Tenant administration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-members-role-in-the-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A member's role in the tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6573,6 +6590,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Tenant administration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-members-role-in-the-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A member's role in the tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6792,6 +6826,24 @@ an <code>AuthzBeforeAuthorize</code> on each operation before exposing the route
 </code></pre></div>
 <p><code>list_members</code> returns principal ids only (<code>TenantManagementPort.list_tenant_principals</code>); join
 them with identity-plane details out of band.</p>
+<h3 id="a-members-role-in-the-tenant">A member's role in the tenant<a class="headerlink" href="#a-members-role-in-the-tenant" title="Permanent link">&para;</a></h3>
+<p>A member's role in one tenant is a <a href="../../identity-tenancy-enc/identity/#roles-in-one-tenant">tenant-held role
+binding</a>, written through the authz
+plane:</p>
+<ul>
+<li><strong>Adding a member:</strong> <code>attach_principal(principal, tenant)</code>, then <code>assign_role</code> inside the
+  tenant. The tenant comes from the bound invocation; an operator with no tenant bound passes
+  <code>scope=AuthzScope(tenant_id=tenant)</code>. A role may be assigned before the principal joins, as an
+  invite does, and it applies only once they enter the tenant.</li>
+<li><strong>Changing it:</strong> <code>revoke_role</code>, then <code>assign_role</code>, inside the tenant.</li>
+<li><strong>Removing a member:</strong> <code>detach_principal(principal, tenant)</code>, which <code>DELETE /memberships</code>
+  calls. It revokes the roles the principal holds in that tenant first, then removes the
+  membership, so someone attached again starts with none there. That needs
+  <code>TenancyDepsModule(tenant_management=..., authz_route=...)</code> naming the authz route whose role
+  assignment does the revoking.</li>
+</ul>
+<p>A pre-staged role whose invite is declined stays until it is revoked, so revoke it when an
+invite is declined.</p>
 <h2 id="enumerating-every-tenant">Enumerating every tenant<a class="headerlink" href="#enumerating-every-tenant" title="Permanent link">&para;</a></h2>
 <p>The selector's <code>list_principal_tenants</code> answers <em>"which tenants may this principal see"</em>, so
 anything driven from it visits only the tenants somebody happens to be a member of. To drive

@@ -7240,6 +7240,7 @@ directory and creates its Transit key on onboarding (teardown opt-in via
 
 <span class="n">TenancyDepsModule</span><span class="p">(</span>
     <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">},</span>
+    <span class="n">authz_route</span><span class="o">=</span><span class="s2">"main"</span><span class="p">,</span>  <span class="c1"># detach revokes the roles held in the tenant</span>
     <span class="n">tenant_provisioner</span><span class="o">=</span><span class="n">VaultTransitTenantProvisioner</span><span class="p">(</span>
         <span class="n">client</span><span class="o">=</span><span class="n">vault</span><span class="p">,</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span>  <span class="c1"># same directory the keyring resolves with</span>
     <span class="p">),</span>

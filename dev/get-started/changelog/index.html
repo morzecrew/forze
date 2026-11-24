@@ -11268,6 +11268,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>local_identity_deps</code> authenticates without an authz plane.</strong> Where no <code>authz_policy_principals</code> store is wired, it admits exactly the principals its key file names (<code>ConfigurableLocalPrincipalEligibility</code>, <code>LocalPrincipalEligibility</code>), and keeps the default gate where one is. It takes <code>eligibility=</code>.</p>
 </li>
 <li>
+<p><strong>A principal can hold a role in one tenant only.</strong> A principal-role binding may name the tenant it holds in (<code>scope_tenant_id</code>), under one role catalog shared by every tenant. It grants only while that tenant is bound, and a binding naming none still holds everywhere.</p>
+</li>
+<li>
 <p><strong>Providers can declare what they resolve.</strong> <code>Requirement(key, route, remedy)</code> and <code>DeclaresRequirements</code> in <code>forze.application.contracts.deps</code>, and <code>ProviderStore.providers()</code> to walk a store's registrations.</p>
 </li>
 </ul>
@@ -11279,10 +11282,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An unregistered dependency a provider declares refuses the boot</strong> (<strong>Breaking</strong>): <code>DepsRegistry.freeze()</code> raises <code>dependency_requirement_unbound</code>. The default eligibility gate needs <code>authz_policy_principals</code> (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle.</p>
 </li>
+<li>
+<p><strong>Inside a tenant, <code>assign_role</code> and <code>revoke_role</code> act in that tenant</strong> (<strong>Breaking</strong>): an unscoped <code>assign_role</code> in a tenant-bound invocation binds the role there, not in every tenant. <code>revoke_role</code> there refuses a role held in every tenant (<code>authz.role_held_globally</code>); revoke it with no tenant bound.</p>
+</li>
+<li>
+<p><strong>The principal-role binding table gains <code>scope_tenant_id</code></strong> (<strong>Breaking</strong>): add the nullable column and a unique index on <code>(principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT</code> (Postgres 15+) before booting, dropping any <code>(principal_id, role_id)</code> pair constraint. The Postgres identity recipe has the migration.</p>
+</li>
+<li>
+<p><strong>Leaving a tenant drops the roles held in it</strong> (<strong>Breaking</strong>): <code>detach_principal</code> first calls the new <code>RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)</code>, which a custom port must add. <code>TenancyDepsModule(tenant_management=...)</code> must name <code>authz_route=...</code> or pass <code>detach_keeps_roles=True</code>.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong><code>detach_principal</code> removes every membership row of the pair.</strong> It read only the first page of them.</li>
 </ul>
 <h2 id="0241-2026-11-10"><a href="https://github.com/morzecrew/forze/compare/v0.24.0...v0.24.1">0.24.1</a> - 2026-11-10<a class="headerlink" href="#0241-2026-11-10" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>

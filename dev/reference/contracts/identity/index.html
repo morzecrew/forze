@@ -7189,7 +7189,7 @@ Redis</a>.</p>
 <td><code>tenancy_mode</code></td>
 <td><code>"global" \| "require_invocation_tenant"</code></td>
 <td><code>"global"</code></td>
-<td>whether grant resolution is partitioned by the invocation tenant — set <code>require_invocation_tenant</code> in a multi-tenant deployment; it refuses a call with no tenant bound as <code>tenant_required</code> (401), which asks the client to select a tenant, not to refresh its token</td>
+<td><code>global</code> is one catalog for every tenant, where a principal-role binding holds in every tenant unless it names one (<code>scope_tenant_id</code>); use it over documents that are not tenant-aware. <code>require_invocation_tenant</code> is a catalog per tenant over tenant-aware documents; it refuses a call with no tenant bound as <code>tenant_required</code> (401), which asks the client to select a tenant, not to refresh its token</td>
 </tr>
 <tr>
 <td><code>enforce_principal_active</code></td>
@@ -7294,12 +7294,17 @@ Redis</a>.</p>
 <tr>
 <td><code>RoleAssignmentPort</code></td>
 <td><code>assign_role(subject, role_key, *, scope=None)</code> · <code>revoke_role(…)</code></td>
-<td><code>role_key</code> names a catalog role</td>
+<td><code>role_key</code> names a catalog role. The binding is held in the bound tenant, else in <code>scope</code>'s tenant, else in every tenant (<a href="../../../identity-tenancy-enc/identity/#roles-in-one-tenant">roles in one tenant</a>). A revoke inside a tenant of a role held in every tenant is refused with <code>conflict</code>, <code>authz.role_held_globally</code> (409)</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke_tenant_roles(subject, *, tenant_id)</code></td>
+<td>removes the subject's bindings in that tenant and keeps global ones; what <code>detach_principal</code> calls, from whichever tenant is bound; it runs with <code>tenant_id</code> bound, so storage that follows the bound tenant reaches its rows</td>
 </tr>
 <tr>
 <td></td>
 <td><code>list_roles(subject, *, scope=None)</code></td>
-<td><code>frozenset[RoleRef]</code></td>
+<td><code>frozenset[RoleRef]</code>: global roles plus the bound tenant's</td>
 </tr>
 <tr>
 <td><code>PrincipalRegistryPort</code></td>

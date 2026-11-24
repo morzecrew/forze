@@ -1964,6 +1964,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#roles-in-one-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Roles in one tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#remembering-grants-between-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6744,6 +6755,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#roles-in-one-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Roles in one tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#remembering-grants-between-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7168,6 +7190,70 @@ guarding one row by its owner needs an operation and the hook's <code>resource_f
 <a href="../../reference/errors/#non-disclosing-denials">non-disclosing posture</a> renders a refused
 permission as that type's not-found; a missing <code>may_act</code> grant, like any refusal without a type,
 stays a 403.</p>
+<h3 id="roles-in-one-tenant">Roles in one tenant<a class="headerlink" href="#roles-in-one-tenant" title="Permanent link">&para;</a></h3>
+<p>A principal-role binding may name the one tenant it holds in. A member can then be <code>analyst</code> in
+one workspace and <code>viewer</code> in another under one role catalog. The catalog (roles, permissions,
+and which permissions a role carries) stays shared by every tenant; only the binding is held per
+tenant. <strong>A role bound in a tenant never grants outside it.</strong></p>
+<p>A binding holds when it names no tenant, or names the tenant bound on the invocation. With
+nothing bound, only bindings that name no tenant hold, whatever <code>AuthzScope</code> the call passes.</p>
+<p>The tenant a write binds in comes from the invocation too:</p>
+<table>
+<thead>
+<tr>
+<th>Invocation</th>
+<th><code>scope</code></th>
+<th><code>assign_role</code></th>
+<th><code>revoke_role</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tenant T bound</td>
+<td>none or T</td>
+<td>binds in T</td>
+<td>refused with <code>authz.role_held_globally</code> when the role is held in every tenant; otherwise removes T's binding</td>
+</tr>
+<tr>
+<td>tenant T bound</td>
+<td>U</td>
+<td>refused (<code>authz.scope_tenant_mismatch</code>)</td>
+<td>refused (<code>authz.scope_tenant_mismatch</code>)</td>
+</tr>
+<tr>
+<td>nothing bound</td>
+<td>T</td>
+<td>binds in T</td>
+<td>as with T bound</td>
+</tr>
+<tr>
+<td>nothing bound</td>
+<td>none</td>
+<td>binds in every tenant</td>
+<td>removes the role everywhere, every tenant's binding included</td>
+</tr>
+</tbody>
+</table>
+<p>A forgotten scope inside a tenant therefore narrows a grant to that tenant and never widens it.
+A binding for every tenant is written only with nothing bound: a migration, a seed, or a
+platform operator's operation behind a global permission.</p>
+<div class="highlight"><pre><span></span><code><span class="n">role_assignment</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">authz</span><span class="o">.</span><span class="n">role_assignment</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+
+<span class="c1"># Inside a request bound to the workspace:</span>
+<span class="k">await</span> <span class="n">role_assignment</span><span class="o">.</span><span class="n">assign_role</span><span class="p">(</span><span class="n">principal_id</span><span class="p">,</span> <span class="s2">"analyst"</span><span class="p">)</span>
+<span class="n">roles</span> <span class="o">=</span> <span class="k">await</span> <span class="n">role_assignment</span><span class="o">.</span><span class="n">list_roles</span><span class="p">(</span><span class="n">principal_id</span><span class="p">)</span>  <span class="c1"># global roles plus this workspace's</span>
+</code></pre></div>
+<p>Leaving a tenant drops the roles held in it. With <code>TenancyDepsModule(authz_route=...)</code>,
+<code>detach_principal(principal, tenant)</code> calls <code>revoke_tenant_roles</code> before it removes the
+membership, from whichever tenant the caller is bound to. A principal attached again starts with
+no roles in that tenant, and its global roles stay. A tenancy module with <code>tenant_management</code>
+must name <code>authz_route</code> or pass <code>detach_keeps_roles=True</code>.</p>
+<p>A role does not imply membership. Whether a principal may enter a tenant stays the
+<a href="../multi-tenancy/">tenancy plane</a>'s question, and a role can be assigned before the principal
+joins, as an invite does. Tenant-held bindings belong to <code>tenancy_mode="global"</code> over documents
+that are not tenant-aware; <code>require_invocation_tenant</code> stays a catalog per tenant. On Postgres
+the binding table needs one column and a unique index:
+<a href="../../recipes/provision-identity-postgres/">Provision identity on Postgres</a>.</p>
 <h3 id="remembering-grants-between-decisions">Remembering grants between decisions<a class="headerlink" href="#remembering-grants-between-decisions" title="Permanent link">&para;</a></h3>
 <p>Every decision reads the principal's role, group and permission bindings. A busy service can
 remember them, per process, for a fixed time:</p>
