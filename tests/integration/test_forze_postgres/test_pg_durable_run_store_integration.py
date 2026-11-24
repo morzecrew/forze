@@ -49,11 +49,7 @@ from tests.support.durable_conformance import (
     run_unreadable_listing_scenario,
     tenant_provider_for,
 )
-from tests.support.durable_schema import (
-    DURABLE_RUN_COLUMNS,
-    DURABLE_STEP_COLUMNS,
-    create_durable_table,
-)
+from tests.support.durable_schema import create_durable_table
 
 # ----------------------- #
 
@@ -61,7 +57,7 @@ from tests.support.durable_schema import (
 @pytest.fixture
 async def durable_run_table(pg_client: PostgresClient) -> str:
     table = f"durable_run_{uuid4().hex[:8]}"
-    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
+    await create_durable_table(pg_client, "run", "public", table)
     return table
 
 
@@ -516,9 +512,7 @@ class TestPostgresDurableRunStore:
         """
 
         step_table = f"durable_step_{uuid4().hex[:8]}"
-        await create_durable_table(
-            pg_client, DURABLE_STEP_COLUMNS, sql.Identifier("public", step_table)
-        )
+        await create_durable_table(pg_client, "step", "public", step_table)
         store = PostgresDurableRunStore(
             client=pg_client,
             config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
@@ -574,9 +568,9 @@ class TestPostgresDurableRunStore:
         """Only ``enqueue(coalesce_key=...)`` names the column, so an unmigrated table works."""
 
         table = f"durable_run_{uuid4().hex[:8]}"
-        old_columns = DURABLE_RUN_COLUMNS.replace("    coalesce_key        text,\n", "")
-        assert "coalesce_key" not in old_columns
-        await create_durable_table(pg_client, old_columns, sql.Identifier("public", table))
+        await create_durable_table(
+            pg_client, "run", "public", table, omit=frozenset({"coalesce_key"})
+        )
         store = PostgresDurableRunStore(
             client=pg_client,
             config=PostgresDurableRunConfig(relation=("public", table)),

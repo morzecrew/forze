@@ -56,17 +56,11 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     JSON projection on replay (e.g. a tuple returns as a list). A configured keyring seals
     the journaled result at rest.
 
-    The table is provided by the application (see
-    ``pages/docs/reference/durable-schema.md``); expected schema::
-
-        CREATE TABLE <relation> (
-            run_id     text        NOT NULL,
-            step_id    text        NOT NULL,
-            result     jsonb       NOT NULL,
-            tenant_id  uuid,
-            created_at timestamptz NOT NULL,
-            PRIMARY KEY (run_id, step_id)
-        );
+    The table is provided by the application. Its shape is declared once, by
+    :func:`~forze_postgres.adapters.durable.schema.durable_step_shape`. ``forze schema sql``
+    prints its DDL, ``forze schema diff`` prints what an existing table is missing,
+    and ``pages/docs/reference/durable-schema.md`` shows the render with the reason
+    for each index.
     """
 
     client: PostgresClientPort

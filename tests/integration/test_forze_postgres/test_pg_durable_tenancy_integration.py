@@ -40,11 +40,7 @@ from forze_postgres.execution.deps.configs import (
     PostgresDurableScheduleConfig,
 )
 from forze_postgres.kernel.client import PostgresClient
-from tests.support.durable_schema import (
-    DURABLE_RUN_COLUMNS,
-    DURABLE_SCHEDULE_COLUMNS,
-    create_durable_table,
-)
+from tests.support.durable_schema import create_durable_table
 
 # ----------------------- #
 
@@ -63,9 +59,7 @@ async def namespaced_tenants(pg_client: PostgresClient) -> tuple[str, UUID, UUID
                 schema=sql.Identifier(schema)
             )
         )
-        await create_durable_table(
-            pg_client, DURABLE_RUN_COLUMNS, sql.Identifier(schema, table)
-        )
+        await create_durable_table(pg_client, "run", schema, table)
 
     return table, tenant_a, tenant_b
 
@@ -129,9 +123,7 @@ async def namespaced_schedule_tenants(pg_client: PostgresClient) -> tuple[str, U
         await pg_client.execute(
             sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(schema=sql.Identifier(schema))
         )
-        await create_durable_table(
-            pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier(schema, table)
-        )
+        await create_durable_table(pg_client, "schedule", schema, table)
 
     return table, tenant_a, tenant_b
 
@@ -302,7 +294,7 @@ async def tagged_table(pg_client: PostgresClient) -> str:
     """One shared ``durable_run`` relation — the tier where the tenant predicate is load-bearing."""
 
     table = f"durable_run_tagged_{uuid4().hex[:8]}"
-    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
+    await create_durable_table(pg_client, "run", "public", table)
     return table
 
 

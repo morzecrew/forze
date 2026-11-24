@@ -23,6 +23,11 @@ class PostgresType:
     not_null: bool
     """Whether the column carries a ``NOT NULL`` constraint."""
 
+    formatted: str = ""
+    """``format_type()`` as the catalog spells it, modifier included (``character
+    varying(36)``), which :attr:`base` normalizes away for some types. Empty when the type was
+    not read from a catalog."""
+
 
 # ....................... #
 
@@ -125,6 +130,78 @@ class UniqueIndexInfo:
 
     primary: bool = False
     """Whether the index backs the primary key, which no guarantee needs to declare."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class IndexShapeInfo:
+    """One index on a relation, valid or not, in the terms a declared index shape is matched
+    against.
+
+    Unlike :class:`UniqueIndexInfo`, it lists every index, failed builds included, because a
+    schema diff has to find an invalid one to rebuild it and a retired one to drop it.
+    """
+
+    name: str
+    """The index's own name, unqualified and unquoted, as the catalog holds it."""
+
+    schema: str
+    """The schema the index lives in, which is always its table's."""
+
+    keys: tuple[str, ...]
+    """Each key column or expression, as ``pg_get_indexdef(index, n, true)`` deparses it."""
+
+    descending: tuple[bool, ...]
+    """Per key, whether it sorts ``DESC`` (``indoption`` bit 0)."""
+
+    nulls_first: tuple[bool, ...]
+    """Per key, whether nulls sort first (``indoption`` bit 1)."""
+
+    included: int
+    """How many ``INCLUDE`` columns follow the keys."""
+
+    method: str
+    """The access method (``btree``, ``gin``, …)."""
+
+    unique: bool
+    """Whether the index is ``UNIQUE``."""
+
+    primary: bool
+    """Whether the index backs the primary key."""
+
+    nulls_not_distinct: bool
+    """Whether a unique index was built ``NULLS NOT DISTINCT``."""
+
+    predicate: str | None
+    """``pg_get_expr(indpred, …)`` for a partial index, ``None`` for a full one."""
+
+    valid: bool
+    """``indisvalid``: ``False`` for a failed or still-running ``CONCURRENTLY`` build."""
+
+    backs_constraint: bool
+    """Whether any ``pg_constraint`` row names the index in ``conindid``: a unique or primary
+    key constraint on its table, an exclusion constraint, or a foreign key elsewhere that
+    references it."""
+
+    owns_constraint: bool = False
+    """Whether a unique, primary-key or exclusion constraint *on the index's own table* is built
+    on it, so ``ALTER TABLE … DROP CONSTRAINT <index name>`` is what removes it."""
+
+    referenced_by_foreign_key: bool = False
+    """Whether a foreign key, in another table or this one, references the index, so it cannot
+    be dropped until that key is."""
+
+    default_opclasses: bool
+    """Whether every key uses its type's default operator class."""
+
+    default_collations: bool
+    """Whether every column key sorts under its column's own collation, with no ``COLLATE``.
+
+    ``pg_get_indexdef`` leaves a key's collation out when asked for one column, so it is read
+    from ``indcollation`` instead."""
+
+    immediate: bool
+    """``indimmediate``: ``False`` for the index of a ``DEFERRABLE`` constraint, ``INITIALLY
+    IMMEDIATE`` included. ``ON CONFLICT`` never takes such an index as its arbiter."""
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)

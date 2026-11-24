@@ -47,6 +47,26 @@ def require_load() -> None:
 # ....................... #
 
 
+def require_postgres() -> None:
+    """Exit with a clear message when the ``postgres`` extra (needed by ``forze schema``) is
+    missing.
+
+    Exits 78, the configuration code: ``forze schema diff --check`` exits 10 and 11 for a
+    migration gap, so a CI job without the extra must read as neither.
+    """
+
+    if find_spec("psycopg") is None or find_spec("psycopg_pool") is None:
+        typer.echo(
+            "The 'forze schema' commands require the postgres extra. "
+            "Install it with:  pip install 'forze[cli,postgres]'",
+            err=True,
+        )
+        raise typer.Exit(code=78)
+
+
+# ....................... #
+
+
 def require_mock_server() -> None:
     """Exit with a clear message when the ``mock-server`` extra is missing.
 

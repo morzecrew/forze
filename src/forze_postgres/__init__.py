@@ -43,6 +43,14 @@ from .execution import (
     validate_postgres_document_schemas,
     warm_postgres_catalog,
 )
+from .execution.deps.owned import OwnedRelations, owned_relations
+from .kernel.catalog.owned import (
+    BoundOwnedRelation,
+    OwnedColumn,
+    OwnedIndex,
+    OwnedRelationShape,
+    Retired,
+)
 from .kernel.client import (
     PostgresClient,
     PostgresClientPort,
@@ -100,4 +108,11 @@ __all__ = [
     "RelationSpec",
     "coerce_relation_spec",
     "require_static_relation",
+    "BoundOwnedRelation",
+    "OwnedColumn",
+    "OwnedIndex",
+    "OwnedRelationShape",
+    "OwnedRelations",
+    "Retired",
+    "owned_relations",
 ]

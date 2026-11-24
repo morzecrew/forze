@@ -90,12 +90,7 @@ from tests.support.durable_conformance import (
     run_tenancy_scenario,
     tenant_provider_for,
 )
-from tests.support.durable_schema import (
-    DURABLE_RUN_COLUMNS,
-    DURABLE_SCHEDULE_COLUMNS,
-    DURABLE_STEP_COLUMNS,
-    create_durable_table,
-)
+from tests.support.durable_schema import create_durable_table
 
 # ----------------------- #
 
@@ -103,23 +98,21 @@ from tests.support.durable_schema import (
 @pytest.fixture
 async def run_table(pg_client: PostgresClient) -> str:
     table = f"durable_run_{uuid4().hex[:8]}"
-    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
+    await create_durable_table(pg_client, "run", "public", table)
     return table
 
 
 @pytest.fixture
 async def schedule_table(pg_client: PostgresClient) -> str:
     table = f"durable_schedule_{uuid4().hex[:8]}"
-    await create_durable_table(
-        pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier("public", table)
-    )
+    await create_durable_table(pg_client, "schedule", "public", table)
     return table
 
 
 @pytest.fixture
 async def step_table(pg_client: PostgresClient) -> str:
     table = f"durable_step_{uuid4().hex[:8]}"
-    await create_durable_table(pg_client, DURABLE_STEP_COLUMNS, sql.Identifier("public", table))
+    await create_durable_table(pg_client, "step", "public", table)
     return table
 
 

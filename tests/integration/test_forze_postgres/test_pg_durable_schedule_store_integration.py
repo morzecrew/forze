@@ -12,7 +12,6 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from psycopg import sql
 
 from forze.application.contracts.durable.function import DurableScheduleRecord
 from forze.application.contracts.tenancy import TenantIdentity
@@ -20,7 +19,7 @@ from forze.base.primitives import utcnow
 from forze_postgres.adapters.durable import PostgresDurableScheduleStore
 from forze_postgres.execution.deps.configs import PostgresDurableScheduleConfig
 from forze_postgres.kernel.client import PostgresClient
-from tests.support.durable_schema import DURABLE_SCHEDULE_COLUMNS, create_durable_table
+from tests.support.durable_schema import create_durable_table
 
 # ----------------------- #
 
@@ -28,9 +27,7 @@ from tests.support.durable_schema import DURABLE_SCHEDULE_COLUMNS, create_durabl
 @pytest.fixture
 async def schedule_table(pg_client: PostgresClient) -> str:
     table = f"durable_schedule_{uuid4().hex[:8]}"
-    await create_durable_table(
-        pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier("public", table)
-    )
+    await create_durable_table(pg_client, "schedule", "public", table)
     return table
 
 

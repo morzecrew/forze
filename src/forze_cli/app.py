@@ -16,6 +16,7 @@ from forze_cli.dst import dst_app
 from forze_cli.load import load_app
 from forze_cli.mock import mock_app_cli
 from forze_cli.ops.commands import ops_cli
+from forze_cli.schema import schema_app
 
 # ----------------------- #
 
@@ -34,7 +35,8 @@ app = typer.Typer(
         "'ops' (call operations, governed as over HTTP), a Simulation for 'dst' (hunt "
         "concurrency and consistency bugs; needs the 'dst' extra), a MockApp for 'mock' "
         "(serve on in-memory backends; needs the 'mock-server' extra), a LoadPlan for 'load' "
-        "(load-test a running app; needs the 'load' extra)."
+        "(load-test a running app; needs the 'load' extra), a PostgresDepsModule for "
+        "'schema' (print the SQL for the tables forze owns; needs the 'postgres' extra)."
     ),
 )
 
@@ -64,3 +66,4 @@ app.add_typer(ops_cli, name="ops")
 app.add_typer(dst_app, name="dst")
 app.add_typer(mock_app_cli, name="mock")
 app.add_typer(load_app, name="load")
+app.add_typer(schema_app, name="schema")

@@ -1,7 +1,10 @@
 # RFC 0080 — Shipped schema migrations for forze-owned tables
 
-- **Status:** 📝 Draft. Proposes an amendment to the beta rule that breaking changes ship
-  without migration code (row 2), which the maintainer accepted on 2026-11-04 (§10 Q1).
+- **Status:** 🚧 In progress — **P1 is built**: `forze schema sql` and `forze schema diff`
+  over the three durable tables, with `--check`. Where building settled or departed from §11,
+  the entries are [EXECUTION-LOG](EXECUTION-LOG.md) Units 31 and 32 (D-307 to D-331), and their
+  proposed rows await the maintainer. **P2 is gated on P1; P3 is demand-gated.** Row 2's
+  amendment to the beta rule was accepted on 2026-11-04 (§10 Q1).
 - **Scope:** Moves the DDL for the Postgres tables forze owns out of docstrings and markdown
   into one declaration per table, kept in code. Adds a `forze schema` CLI group:
   - `sql` prints the `CREATE` statements a fresh install needs;
