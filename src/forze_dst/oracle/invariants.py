@@ -875,7 +875,9 @@ def no_permission_outside_its_tenant(outside: Iterable[str]) -> Invariant:
                 events=(event,),
             )
             for event in history.of_kind("operation")
-            if event.fields.get("op") in wanted and event.fields.get("outcome") == "ok"
+            # No outcome is a success: ``record_operation`` records an operation only when it
+            # returns, and stamps none.
+            if event.fields.get("op") in wanted and event.fields.get("outcome", "ok") == "ok"
         ]
 
     return named("no_permission_outside_its_tenant", _check)
