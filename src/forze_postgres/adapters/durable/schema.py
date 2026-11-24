@@ -70,7 +70,7 @@ _RUN_COLUMNS: Final = (
 _RECOVERY_SCAN: Final = OwnedIndex(
     keys=("status", "name", "created_at"),
     since="0.18.0",
-    comment="the recovery scan (claim_abandoned) filters on status and name",
+    comment="the recovery scan (claim_abandoned) filters on status, and on name for some functions",
 )
 
 _TENANT_RECOVERY_SCAN: Final = OwnedIndex(

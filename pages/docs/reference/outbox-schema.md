@@ -143,9 +143,9 @@ updated, so nothing published is left for a retention job to prune. Postgres onl
 keeps `retain`.
 
 - **The indexes stay three:** the primary key, the unique index on `(outbox_route,
-  event_id)`, which staging deduplicates on, and the claim index. A retry changes
-  `attempts`, `available_at` and `last_error`, none of which an index covers, so it can be
-  a HOT update. Retries are rare, and a row that publishes first time never updates.
+  event_id)`, which staging deduplicates on, and the claim index, with its `tenant_id`-led
+  twin on a tagged table. A retry changes `attempts`, `available_at` and `last_error`, none
+  of which an index covers, so it can be a HOT update. Retries are rare, and a row that publishes first time never updates.
 - **The dedup window narrows.** Staging an event id again is deduplicated only while its
   row is still in the table, pending or parked as `failed`. Once the row is relayed and
   deleted, the same event id publishes again.

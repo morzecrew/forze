@@ -33,11 +33,13 @@ from forze_postgres.kernel.catalog.owned import (
 
 _CLAIM: Final = OwnedIndex(
     keys=("outbox_route", "status", "created_at"),
+    since="0.5.0",
     comment="the claim filters a route's pending rows and takes the oldest first",
 )
 
 _TENANT_CLAIM: Final = OwnedIndex(
     keys=("tenant_id", "outbox_route", "status", "created_at"),
+    since="0.5.0",
     comment="on a shared tagged table a bound claim also filters tenant_id",
 )
 
