@@ -520,8 +520,10 @@ every framework spec and runs the validator's column, type and nullability check
 catalog built from the render, so the derivation cannot drift from what validation accepts.
 
 **Which routes.** `owned_relations` takes the spec registry as well as the deps module. A
-route of `rw_documents` is owned when the registry catalogues its spec as `FRAMEWORK` or
-`KIT`. Today:
+route of `rw_documents` is owned when the registry catalogues its spec as `FRAMEWORK`: forze
+ships the spec and its models, so the application cannot change its table. `KIT` is not
+enough, since `AggregateKit` registers the application's own spec as `KIT`
+(`forze_kits/aggregates/kit.py:668`). Today:
 
 - only identity registers as `FRAMEWORK` (`forze_identity/inventory.py:251`);
 - progress registers as `KIT` (`forze_kits/integrations/progress/inventory.py:63`);
@@ -529,10 +531,14 @@ route of `rw_documents` is owned when the registry catalogues its spec as `FRAME
   (`realtime/specs.py:141-150`);
 - audit and stored files register nothing.
 
-P2c gives each of the last two groups a contributions helper in `forze_kits` that registers
-it as `KIT`. An application's own specs stay out (§4). A read-only route, and a read
-relation other than the write relation, are not rendered, since forze writes no table there.
-The CLI takes the registry as `--specs MODULE:ATTR`.
+P2c registers every one of them as `FRAMEWORK`: progress moves from `KIT`, and the mailbox
+and cursor, audit and stored-file specs each get a contributions helper in `forze_kits`.
+`KIT` stays for specs a kit derives from the application's, which are the application's
+tables (§4). The move also turns off, for these specs, document validation's warning about
+unique indexes they do not declare (`document_schema.py:212`), as it is off for identity's:
+the application cannot change them. A read-only route, and a read relation other than the
+write relation, are not rendered, since forze writes no table there. The CLI takes the
+registry as `--specs MODULE:ATTR`.
 
 **The table.**
 
@@ -555,19 +561,22 @@ The CLI takes the registry as `--specs MODULE:ATTR`.
 
 Each annotation emits one type. Where the published mapping rule
 (`provision-identity-postgres.md:18-28`) allows several, the table picks one. On a list of
-scalars, where the rule says `jsonb` and the validator requires an array, the validator wins:
+scalars the rule says `jsonb`, which the validator refuses there. The validator accepts the
+element type's array, or a bare scalar column it does not tell apart from one
+(`validate_schema_types.py:154-172`). The render emits the array, and its unit test checks
+array-ness itself, since the validator's checks alone would pass a scalar:
 
 | Annotation | Column type |
 | --- | --- |
 | `UUID` | `uuid` |
 | `str`, a `str` enum, a `Literal` of strings, `EmailStr` | `text` |
 | `bool` | `boolean` |
-| `int` | `integer` (row 32) |
+| `int` | `integer`; `bigint` for the width marker `Int64` (row 32) |
 | `float` | `double precision` |
 | `Decimal` | `numeric` |
 | `datetime`, `date`, `time` | `timestamptz`, `date`, `time` |
 | `bytes` | `bytea` |
-| a `list` or `tuple` of one of the above | that type's array, as the validator requires (`validate_schema_types.py:154-172`) |
+| a `list` or `tuple` of one of the above | that type's array |
 | a nested model, a `dict`, a list of anything else, `Any` | `jsonb` |
 
 **Indexes.** Each `UniqueTogether` guarantee, declared or implied by the domain model,
@@ -575,9 +584,14 @@ renders as a required unique index, led by `tenant_id` on a tenant-aware route. 
 statement the validator's suggestion prints today (`validate_schema.py:1036-1069`), now
 quoted (row 16), and with nullability read from the model rather than the catalog. A spec
 that declares `NonOverlapping` or `Reference` is refused at render in P2c, since no
-framework spec does. Some specs rely on an index they do not declare, such as the identity
-recipe's unique `username` (`provision-identity-postgres.md:50-56`); row 34 leaves open how
-that index reaches the render.
+framework spec does. Some specs rely on an index they do not declare as a guarantee, such as
+the identity recipe's unique `username` (`provision-identity-postgres.md:50-56`). Such a spec
+declares it on `DocumentSpec` in a backend-neutral form, apart from its guarantees, and the
+render prints it as a required index (row 34).
+
+**Two contract additions.** P1 and P2a change no contract; P2c adds two. Rows 32 and 34 add a
+width marker to `forze.base.primitives` and a field to `DocumentSpec`. Both are
+backend-neutral, and a store that has no use for them ignores them.
 
 **Out of P2c.**
 
@@ -593,7 +607,7 @@ recipe prints six `CREATE TABLE` blocks, not five. Its `authn_sessions` table is
 no spec: the session spec is `authn_token_sessions`, so the recipe's binding comprehension
 would not bind it. P2c's page tests fix the recipe.
 
-P2c is ready to execute once §10 Q6 and Q7 are answered.
+§10 Q6 and Q7 were answered on 2026-11-25 (rows 32 and 34), so P2c is ready to execute.
 
 ## 6. Tests
 
@@ -745,6 +759,8 @@ P2c is ready to execute once §10 Q6 and Q7 are answered.
      require it of every field holding a packed HLC.
    - **A per-field override table in `forze_postgres`, keyed by spec name.** It keeps the
      models untouched, but it is a second copy that drifts from them.
+
+   *Settled 2026-11-25:* the maintainer accepted the width marker (row 32).
 7. **Required but undeclared indexes (P2c, row 34).** The identity recipe requires a unique
    index on `username` that the spec does not declare as a guarantee, because not every
    document store can keep one.
@@ -754,6 +770,8 @@ P2c is ready to execute once §10 Q6 and Q7 are answered.
      depends on.
    - **Leave such indexes on the pages as the application's own.** The diff then never
      checks them.
+
+   *Settled 2026-11-25:* the maintainer accepted the declaration on the spec (row 34).
 
 ## 11. Decisions
 
@@ -786,13 +804,13 @@ P2c is ready to execute once §10 Q6 and Q7 are answered.
 | 25 | `ASSUMED` | A column declared nullable and found `NOT NULL` is refused, since the adapter writes `NULL` to it. Accepted by the maintainer on 2026-11-24. (D-320) |
 | 26 | `ASSUMED` | Every conflict target the adapter writes to, each declared unique index and the primary key, is checked for a unique index that breaks it. A deferrable one the target infers is refused. A `NULLS NOT DISTINCT` one on the target's nullable keys is refused whether or not it is inferred, unless its predicate has `<key> IS NOT NULL` for every nullable key. The refusal comments `DROP CONSTRAINT` for an owning constraint and `DROP INDEX` otherwise, and suggests no drop when a foreign key depends on the index. Accepted by the maintainer on 2026-11-24. (D-324, D-325, D-329, D-331) |
 | 27 | `ASSUMED` | Framework-owned document tables are derived from their `DocumentSpec` and the route's `PostgresDocumentConfig` by one renderer in `forze_postgres`, over core contracts only. They are not declared by hand, since `forze_postgres` may import neither `forze_identity` nor `forze_kits`. A unit test runs the startup validator's column, type and nullability checks over every rendered framework spec. Amendment of 2026-11-24 (§5.7). |
-| 28 | `ASSUMED` | A document route is owned when it is bound read-write and the spec registry catalogues its spec as `FRAMEWORK` or `KIT`. `forze_kits` registers its audit, realtime mailbox and cursor, and stored-file specs as `KIT`. Read-only routes, and a read relation other than the write relation, are not rendered. Amendment of 2026-11-24 (§5.7). |
+| 28 | `ASSUMED` | A document route is owned when it is bound read-write and the spec registry catalogues its spec as `FRAMEWORK`. `KIT` is not enough, since `AggregateKit` registers the application's spec as `KIT`. `forze_kits` registers its progress, audit, realtime mailbox and cursor, and stored-file specs as `FRAMEWORK`, progress moving from `KIT`. Read-only routes, and a read relation other than the write relation, are not rendered. Amendment of 2026-11-24 (§5.7). |
 | 29 | `ASSUMED` | The CLI takes the registry as `--specs MODULE:ATTR`, naming a `SpecRegistry` or a `FrozenSpecRegistry`. Without it both commands cover the store tables only. Row 7's refusal of `OpsApp` stands. Amendment of 2026-11-24 (§5.7). |
 | 30 | `ASSUMED` | Every document table has the base columns `id uuid`, `rev integer`, `created_at timestamptz` and `last_update_at timestamptz`, all `NOT NULL`, keyed on `(id)`. A tenant-aware route adds `tenant_id uuid NOT NULL`, and the key stays `(id)`. Amendment of 2026-11-24 (§5.7). |
 | 31 | `ASSUMED` | Each annotation emits one type, per §5.7's table. `T \| None` is nullable and anything else `NOT NULL`. A literal default or an empty collection factory renders as `DEFAULT`, an encrypted field is `text`, and an annotation outside the table is refused at render. Amendment of 2026-11-24 (§5.7). |
-| 32 | `OPEN` | The width of `int`. `integer` matches every published page, but the mailbox's packed HLC overflows it, and a column found `integer` where forze declares `bigint` is refused as narrower (row 23). Settle by §10 Q6 before P2c is built. Amendment of 2026-11-24. |
+| 32 | `ASSUMED` | `int` emits `integer`, as every published page prints it. A field that may hold a 64-bit value is annotated with a backend-neutral width marker in `forze.base.primitives`, `Int64`, an `Annotated[int, …]` alias, and emits `bigint`. The realtime mailbox's packed HLC adopts it, and a test requires it of every field holding a packed HLC. Accepted by the maintainer on 2026-11-25 (§10 Q6). |
 | 33 | `ASSUMED` | Each `UniqueTogether` guarantee, declared or implied, renders as a required unique index, led by `tenant_id` on a tenant-aware route. A spec that declares `NonOverlapping` or `Reference` is refused at render in P2c. Amendment of 2026-11-24 (§5.7). |
-| 34 | `OPEN` | How a required index that a framework spec relies on but does not declare, such as the identity recipe's unique `username`, reaches the render. Settle by §10 Q7 before P2c is built. Amendment of 2026-11-24. |
+| 34 | `ASSUMED` | A spec declares the indexes its correctness relies on but that are not storage guarantees, such as identity's unique `username`, in a backend-neutral field on `DocumentSpec`. A store that can keep such an index keeps it, and one that cannot ignores it. The renderer prints each as a required index, and the validator may report one missing. Accepted by the maintainer on 2026-11-25 (§10 Q7). |
 | 35 | `ASSUMED` | P2c renders no triggers, functions or history tables. A route with `bookkeeping_strategy="database"` gets a note that its trigger is the application's. Amendment of 2026-11-24 (§5.7). |
 | 36 | `ASSUMED` | The P2b startup step covers the store tables only; document tables stay with the existing document schema step. Amendment of 2026-11-24 (§5.7). |
 | 37 | `ASSUMED` | The published DDL of framework specs (the identity recipe's tables, the audit and progress pages) is checked against the render, and the recipe names the session table for its spec. Amendment of 2026-11-24 (§5.7). |
@@ -821,6 +839,7 @@ P2c is ready to execute once §10 Q6 and Q7 are answered.
   - *Amended 2026-11-24:* three PRs (row 38).
     - P2a: the store tables.
     - P2b: repeated `--tenant` and the startup step.
-    - P2c: the §5.7 document tables, once §10 Q6 and Q7 are answered.
+    - P2c: the §5.7 document tables, including the width marker (row 32) and the index
+      declaration on `DocumentSpec` (row 34).
 - **P3:** demand-gated. §5.5 data steps, a Mongo renderer, and provisioner-run DDL for
   schema-per-tenant store tables.
