@@ -8463,3 +8463,98 @@ close-out.
   - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:184`: an index named by
     hand is dropped under that name.
 - **Action:** decided.
+
+# Unit 32 · RFC 0080 P1 review — what the catalog distinguishes, and what the exit codes say
+
+Branch `feat/postgres-owned-schema` (#949): fixes from the PR's review. Two of them revise Unit
+31's proposals: D-319 tightens D-307's and D-315's matching, and D-321 revises D-308's exit codes.
+D-320 fills a §5.3 case the table leaves out. D-322 records what the tenant switch stands for and
+keeps D-311. The rest change no decision:
+
+- The CLI's docstring, the reference page and the how-to now say the exit codes describe what
+  the diff found, whether or not `--check` printed it.
+- The durable skill passes `--deps` to every `forze schema diff` it names.
+- `owned_relations` binds each config through a typed helper, not an `Any` tuple.
+
+**Drift count: 0.** Four entries, D-319 to D-322: three `spec-gap` and one `discovery`.
+
+## D-319 — A cast on a column, a collation and a deferrable arbiter tell an index apart
+
+- **Touches:** row 4 (`ASSUMED`, departed from by D-315), row 10 (`OPEN`, decided by D-307), and
+  D-317's primary-key comparison.
+- **Found:** in review on #949. Three index states read as forze's own:
+  - normalizing dropped every cast, so `((status::varchar(1)), created_at)`, which truncates,
+    matched the retired `(status, created_at)` and was dropped;
+  - `pg_get_indexdef` leaves a key's collation out when asked for one column, so
+    `(status COLLATE "C", created_at)` matched it too;
+  - a `DEFERRABLE` unique constraint or primary key passed, though Postgres refuses it as an
+    `ON CONFLICT` arbiter ("ON CONFLICT does not support deferrable unique constraints/exclusion
+    constraints as arbiters"), `INITIALLY IMMEDIATE` included.
+- **Built:**
+  - A cast is dropped only when it follows a literal, where Postgres adds it to a stored
+    constant (`src/forze_postgres/kernel/catalog/owned/matching.py:52`).
+  - The index listing reads each column key's collation against its column's, and
+    `indimmediate` (`src/forze_postgres/kernel/catalog/introspect/introspector.py:765`).
+  - A declared index matches only with default collations, and a unique one only when
+    immediate (`matching.py:284`). A retired match needs default collations (`:306`).
+  - A deferrable primary key is refused (`src/forze_postgres/kernel/catalog/owned/diff.py:341`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:211`, `:229`,
+  `:245`, `:279`, all red before the change; `tests/unit/test_forze_postgres/test_owned_schema.py:310`,
+  `:564`, `:580`, `:602`, `:683`.
+- **Class:** `spec-gap`. Each catalog column was readable before code.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-315's row, plus: a match also needs default
+  collations, a declared unique index matches only when immediate, and a deferrable primary key
+  is refused. D-307's row, plus: only casts on literals are dropped.
+- **Action:** departed.
+
+## D-320 — A column forze declares nullable and finds `NOT NULL` is refused
+
+- **Touches:** §5.3 (its table checks nullability one way only); unlisted.
+- **Found:** in review on #949. A run table with `input jsonb NOT NULL` read as in sync, though
+  `enqueue(input_json=None)` inserts `NULL` there. Every nullable durable column takes `NULL` on
+  some ordinary write.
+- **Built:** a refusal with the `DROP NOT NULL` commented
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:195`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:495`, red before the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. A declared nullable column found `NOT NULL` is refused,
+  since the adapter writes `NULL` to it.
+- **Action:** decided.
+
+## D-321 — The exit code follows what failed, and a skipped relation is never in sync
+
+- **Touches:** row 12 (decided by D-308), row 11 ("P1 skips such relations with a warning").
+- **Found:** in review on #949.
+  - A login the server refused exited `75`, retryable, though retrying cannot fix it.
+  - A missing grant on the catalog exited `1`: the client maps SQLSTATE 42501 to `internal`.
+  - A deps module refusing its configuration while it imports exited `1` with a traceback.
+  - A relation skipped as tenant-scoped let `--check` exit `0` though it was never compared.
+  - On Windows, `asyncio.run` gives a proactor loop, which psycopg refuses.
+- **Built:**
+  - A refused login exits `78`. psycopg gives a failed connection no SQLSTATE, so it is told
+    from an unreachable server by the server's message (`src/forze_cli/schema.py:184`). A
+    localized server's refusals stay `75`, and the reference says so.
+  - A missing grant and a configuration error at import exit `78` (`:243`, `:94`).
+  - A skipped relation makes `diff` exit `11` (`:303`).
+  - The diff runs on a selector loop on Windows (`:226`).
+- **Evidence:** `tests/unit/test_forze_cli/test_schema_command.py:160`, `:199`, `:215`, `:232`,
+  `:242`, eight of them red before the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-308's row, plus: a refused login, a missing grant
+  and a configuration error at import exit `78`, and a skipped relation makes `diff` exit `11`.
+- **Action:** decided.
+
+## D-322 — The tenant switch stands for "scans here run bound"
+
+- **Touches:** D-311 (proposed), §5.1.
+- **Found:** in review on #949. The stores filter a bound scan by tenant whatever `tenant_aware`
+  says (`src/forze_postgres/adapters/durable/run_store.py:401`), so a deployment that binds
+  tenants without the flag also reads the `tenant_id` variants.
+- **Built:** no change to the shapes. Declaring the variants on every static table would make
+  `--check` fail for each single-tenant deployment until it built indexes nothing reads. The
+  declaration and the durable page now say what the switch stands for, and that such a
+  deployment creates the variants itself, which the diff leaves alone
+  (`src/forze_postgres/adapters/durable/schema.py:12`).
+- **Class:** `discovery`.
+- **Proposed row (RFC 0080):** D-311's row stands.
+- **Action:** decided.
