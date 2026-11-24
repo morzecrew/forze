@@ -6340,7 +6340,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6370,6 +6370,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -7110,13 +7139,10 @@ is skipped when the authz kernel carries the same configuration
 breaker, so a Redis outage stops costing every verification its <code>timeout</code> (50 ms by
 default). Bind it to the reads only: an open breaker on the writes would fail every attempt
 of a revocation's write-through at once. The states route is resolved by <code>RevocationStatesSpec</code>
-under <code>RevocationStatesDepKey</code>, and the epochs under <code>PrincipalEpochDepKey</code>. Create the epochs
-table yourself and never delete its rows:</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_principal_epochs</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w">   </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">epoch</span><span class="w">        </span><span class="nb">bigint</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
-<span class="p">);</span>
-</code></pre></div>
+under <code>RevocationStatesDepKey</code>, and the epochs under <code>PrincipalEpochDepKey</code>. Apply the epochs
+table yourself, as <code>forze schema sql</code> prints it or as
+<a href="../../reference/store-schema/#principal-epochs">Store table schema</a> shows it, and never
+delete its rows.</p>
 <ul>
 <li><strong>Without <code>key_mac</code>, Redis is trusted for sessions.</strong> The session states and epochs then
   carry no MAC, so whoever can write the states' namespace can restore a <code>live</code> state or an

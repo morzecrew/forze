@@ -6161,7 +6161,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6191,6 +6191,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -6754,20 +6783,28 @@
 page is the contract CI relies on. Forze prints SQL and never runs it.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>forze schema sql   --deps MODULE:ATTR
-forze schema diff  --deps MODULE:ATTR [--check]
+forze schema diff  --deps MODULE:ATTR [--check] [--keep-retired]
 </code></pre></div>
 <p><code>--deps</code> names a <code>PostgresDepsModule</code>, or a sequence holding exactly one. Both commands
-cover the owned tables it configures: <code>durable_run</code>, <code>durable_step</code> and <code>durable_schedule</code>.
+cover the store tables it configures: <code>durable_run</code>, <code>durable_step</code> and <code>durable_schedule</code>;
+each route of <code>outboxes</code>, with its <code>delivery_log</code>; <code>hlc_checkpoint</code>; each route of
+<code>inboxes</code>, <code>idempotencies</code> and <code>counters</code>; <code>principal_epochs</code>; and <code>rotating_credentials</code>.
+Routes that name one table are one table, with every column and index any of their configs
+declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 <code>diff</code> then exits <code>11</code>: a relation it never compared cannot be reported in sync.</p>
 <p><code>sql</code> reads no database. It prints each table, then its required indexes, then its
 recommended ones, under a header naming the forze version, the table and its adapter. A
-tenant-aware table also gets the <code>tenant_id</code>-leading variant of each scan index.</p>
+tenant-aware table also gets the <code>tenant_id</code>-leading variant of each scan index. A
+partitioned table, the delivery log, also gets its <code>DEFAULT</code> partition; the other
+partitions are yours.</p>
 <p><code>diff</code> reads its DSN from <code>FORZE_SCHEMA_DSN</code> and refuses <code>--dsn</code>. It reads every relation
 in one <code>READ ONLY</code>, <code>REPEATABLE READ</code> transaction, so its output describes one moment. The
 role the DSN names must have <code>USAGE</code> on the schemas and no write privilege: that role, not
 the transaction, keeps the diff from writing.</p>
-<p><code>--check</code> prints nothing and only sets the exit code.</p>
+<p><code>--check</code> prints no SQL and only sets the exit code; warnings still go to stderr.
+<code>--keep-retired</code> leaves out every index with a retired shape's keys: no drop, no refusal and
+no warning for it. A retired column's note still prints.</p>
 <h2 id="what-the-diff-prints">What the diff prints<a class="headerlink" href="#what-the-diff-prints" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6782,12 +6819,20 @@ the transaction, keeps the diff from writing.</p>
 <td><code>CREATE TABLE</code>, then every declared index, without <code>CONCURRENTLY</code></td>
 </tr>
 <tr>
-<td>A view, a partitioned table or another non-plain table under the name</td>
+<td>A view, a partitioned table forze declares plain, or another non-plain table under the name</td>
 <td>A refusal; a partitioned table takes no <code>CREATE INDEX CONCURRENTLY</code></td>
+</tr>
+<tr>
+<td>A partitioned table where forze declares one (the delivery log), or a plain table</td>
+<td>The comparison below. On a partitioned table, a declared index that is missing or invalid is a warning with its <code>CREATE INDEX</code> commented, since building it locks every partition</td>
 </tr>
 <tr>
 <td>Primary key on other columns than declared</td>
 <td>A refusal naming both key lists</td>
+</tr>
+<tr>
+<td>A primary key on a table forze declares none on</td>
+<td>Nothing: it is the application's</td>
 </tr>
 <tr>
 <td>Primary key on the declared columns in another order</td>
@@ -6834,6 +6879,18 @@ the transaction, keeps the diff from writing.</p>
 <td>A warning, and no drop</td>
 </tr>
 <tr>
+<td>A retired match while a declared index on the table is still being built</td>
+<td>A warning with the drop commented: the retired index may still serve the scan</td>
+</tr>
+<tr>
+<td>A partitioned table forze declares, with no partition at all</td>
+<td>A warning with its <code>DEFAULT</code> partition's <code>CREATE TABLE</code> commented: every insert fails</td>
+</tr>
+<tr>
+<td>A partitioned table whose partitions are all yours, none <code>DEFAULT</code></td>
+<td>A note with the same statement commented</td>
+</tr>
+<tr>
 <td>An index with a retired shape's keys that is not a retired match</td>
 <td>A refusal naming the index and the condition it failed</td>
 </tr>
@@ -6866,7 +6923,9 @@ unless its predicate keeps those rows out with <code>&lt;key&gt; IS NOT NULL</co
 it says to drop that key first. The diff still prints forze's own index when it is missing.</p>
 <p>Keys and predicates are compared after normalizing: casts on literals and whitespace dropped,
 keywords and bare names case-insensitive, <code>AND</code> and <code>OR</code> compared as a tree. A cast on a
-column is kept, since it can change the value. In a predicate, a cast to plain <code>text</code> on a
+column is kept, since it can change the value, and so is a cast on a literal whose type
+carries a modifier: Postgres stores <code>'pendingX'::character(7)</code> unfolded, and it truncates.
+Forze writes its own literals bare. In a predicate, a cast to plain <code>text</code> on a
 <code>text</code> or <code>varchar</code> column is dropped, with the parentheses around the column: there
 Postgres stores <code>status = 'pending'</code> as <code>((status)::text = 'pending'::text)</code>. On any other
 column the cast is kept, since it changes how values compare. A <code>citext</code> column compared
@@ -6886,8 +6945,10 @@ another role's build.</p>
 <li>Every comment is one line. Line breaks and control characters in a catalog name become
   spaces.</li>
 <li>Indexes are created unnamed, as the reference pages print them.</li>
-<li>A non-empty diff opens with two lines: the output covers shape only, and <code>CONCURRENTLY</code>
-  cannot run in a transaction.</li>
+<li>A non-empty diff opens with three lines: the output covers shape only, <code>CONCURRENTLY</code>
+  cannot run in a transaction, and the file must be applied by a tool that stops at its first
+  error. Retired drops come after the creates that replace them, so a runner that carried on
+  past a failed create would drop the index the create was to replace.</li>
 </ul>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>

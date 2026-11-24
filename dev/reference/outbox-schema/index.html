@@ -30,7 +30,7 @@
     
     
       
-        <title>Outbox table schema - Forze</title>
+        <title>Outbox and inbox table schema - Forze</title>
       
     
     
@@ -147,7 +147,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Outbox table schema
+              Outbox and inbox table schema
             
           </span>
         </div>
@@ -6168,7 +6168,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6187,7 +6187,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6289,6 +6289,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#inbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inbox
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6348,6 +6359,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -6756,6 +6796,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#inbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inbox
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6884,55 +6935,88 @@
   
 
 
-  <h1>Outbox table schema</h1>
+  <h1>Outbox and inbox table schema</h1>
 
-<p>The outbox table is application-owned: you create and migrate it. This is the
-schema the relay claims from and the columns it reads. The wiring that stages and
-relays events is in the <a href="../../recipes/transactional-outbox/">Transactional outbox recipe</a>.</p>
+<p>The outbox and inbox tables are application-owned: you apply their DDL with your
+migration tool. This is the schema the relay claims from, the columns it reads, and the
+ledger a consumer deduplicates on. The wiring that stages and relays events is in the
+<a href="../../recipes/transactional-outbox/">Transactional outbox recipe</a>.</p>
 <h2 id="postgres">Postgres<a class="headerlink" href="#postgres" title="Permanent link">&para;</a></h2>
-<p>For Postgres (<code>PostgresOutboxConfig(relation=("app", "outbox"))</code>):</p>
+<p>Forze declares each Postgres table once, in code. <code>forze schema sql</code> prints the statements
+below for the relations your <code>PostgresDepsModule</code> names and the switches their configs set,
+and <code>forze schema diff</code> prints what an existing database is missing.
+<a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a> walks through both.
+The SQL on this page is that render, for tables in the <code>app</code> schema, and a test keeps it so.</p>
+<p>For <code>PostgresOutboxConfig(relation=("app", "outbox"))</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">outbox_route</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">event_id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">event_type</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
-<span class="w">    </span><span class="n">execution_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
-<span class="w">    </span><span class="n">correlation_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
-<span class="w">    </span><span class="n">causation_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
-<span class="w">    </span><span class="n">occurred_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">payload</span><span class="w"> </span><span class="n">JSONB</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">status</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">published_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
-<span class="w">    </span><span class="n">processing_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
-<span class="w">    </span><span class="n">last_error</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
-<span class="w">    </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="n">available_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
-<span class="w">    </span><span class="n">ordering_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
-<span class="w">    </span><span class="k">UNIQUE</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">event_id</span><span class="p">)</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">outbox_route</span><span class="w">   </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_id</span><span class="w">       </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_type</span><span class="w">     </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w">      </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">execution_id</span><span class="w">   </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">correlation_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">causation_id</span><span class="w">   </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">occurred_at</span><span class="w">    </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">payload</span><span class="w">        </span><span class="n">jsonb</span><span class="w">       </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">status</span><span class="w">         </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">published_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">processing_at</span><span class="w">  </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_error</span><span class="w">     </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">attempts</span><span class="w">       </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="n">available_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ordering_key</span><span class="w">   </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
 
-<span class="c1">-- covers the claim predicate (route + pending + ripe, oldest first)</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_claim_idx</span>
-<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span>
+<span class="c1">-- staging an event twice keeps one row (ON CONFLICT (outbox_route, event_id))</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">event_id</span><span class="p">);</span>
+
+<span class="c1">-- the claim filters a route's pending, ripe rows and takes the oldest first</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span>
 </code></pre></div>
 <p><code>attempts</code> is the durable retry counter; <code>available_at</code> schedules the next
 retry (<code>NULL</code> = claimable now); <code>ordering_key</code> is the optional delivery
-partition key (<code>NULL</code> = no partitioning, key falls back to the event id).
-Existing tables migrate with:</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span>
-<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">available_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
-<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">ordering_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">;</span>
-</code></pre></div>
+partition key (<code>NULL</code> = no partitioning, key falls back to the event id).</p>
+<p>The claim index leaves <code>available_at</code> out on purpose. The claim orders by <code>created_at</code>, and
+an index whose third key is <code>available_at</code> cannot return rows in that order for
+<code>available_at IS NULL OR available_at &lt;= now()</code>, so Postgres sorts every pending row of the
+route before it takes a batch. <code>forze schema diff</code> drops the earlier
+<code>(outbox_route, status, available_at, created_at)</code> index once it has built this one.</p>
+<p>The config's switches change the table:</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th>Table</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>propagate_trace=True</code></td>
+<td>Adds <code>traceparent text</code></td>
+</tr>
+<tr>
+<td><code>hlc_ordering=True</code></td>
+<td>Adds <code>hlc bigint</code>, and claims by <code>(outbox_route, status, hlc, created_at, id)</code> instead</td>
+</tr>
+<tr>
+<td><code>storage="consume"</code></td>
+<td>Leaves out <code>published_at</code>, which it never writes</td>
+</tr>
+<tr>
+<td><code>tenant_aware=True</code> on a <code>(schema, table)</code> relation</td>
+<td>Adds the claim index led by <code>tenant_id</code></td>
+</tr>
+</tbody>
+</table>
+<p>Routes that name one table get one table, with every column and index any of them needs.</p>
 <h3 id="trace-propagation-optional-column">Trace propagation (optional column)<a class="headerlink" href="#trace-propagation-optional-column" title="Permanent link">&para;</a></h3>
 <p><code>PostgresOutboxConfig(propagate_trace=True)</code> persists each event's W3C <code>traceparent</code> so
 the relay forwards it as the <code>traceparent</code> header and the consume side links its span to
-the publish span. Opt in <strong>after</strong> adding the nullable column (legacy / <code>NULL</code> rows simply
-carry no parent); independent of <code>hlc_ordering</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">traceparent</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">;</span>
-</code></pre></div>
+the publish span. Opt in <strong>after</strong> <code>forze schema diff</code> has added the nullable column
+(legacy / <code>NULL</code> rows simply carry no parent); independent of <code>hlc_ordering</code>.</p>
 <h3 id="causal-ordering-hybrid-logical-clock">Causal ordering (Hybrid Logical Clock)<a class="headerlink" href="#causal-ordering-hybrid-logical-clock" title="Permanent link">&para;</a></h3>
 <p>By default claims are ordered by <code>created_at</code> — assigned per flush batch, so
 rows staged together share a timestamp and tie arbitrarily, and clocks on
@@ -6942,13 +7026,11 @@ Clock stamp that stays close to wall time yet always exceeds any timestamp the
 process has observed (including one merged from a consumed event's <code>forze_hlc</code>
 header), so a reaction sorts after its cause across replicas, and the
 time-ordered <code>id</code> breaks any remaining tie. Add the column first, then opt in
-(legacy <code>NULL</code>-<code>hlc</code> rows fall back to <code>created_at</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">hlc</span><span class="w"> </span><span class="nb">BIGINT</span><span class="p">;</span>
-
-<span class="c1">-- claim order becomes (hlc NULLS LAST, created_at, id); index to match</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_claim_hlc_idx</span>
-<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="p">(</span><span class="n">outbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">hlc</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">);</span>
-</code></pre></div>
+(legacy <code>NULL</code>-<code>hlc</code> rows fall back to <code>created_at</code>): <code>forze schema diff</code> adds <code>hlc bigint</code>
+and the index <code>(outbox_route, status, hlc, created_at, id)</code>, which returns rows in the claim's
+order, <code>(hlc NULLS LAST, created_at, id)</code>. It drops the earlier
+<code>(outbox_route, status, available_at, hlc, created_at, id)</code> and
+<code>(outbox_route, status, hlc, created_at)</code> indexes once it has built that one.</p>
 <h4 id="restart-monotonicity-clock-high-water-mark">Restart monotonicity (clock high-water mark)<a class="headerlink" href="#restart-monotonicity-clock-high-water-mark" title="Permanent link">&para;</a></h4>
 <p>The <code>hlc</code> column keeps causal order <em>within</em> a run, but a runtime's clock lives
 in memory: a restart resets it to <code>(0, 0)</code>, after which it can re-issue a stamp
@@ -6958,11 +7040,12 @@ restart resumes above its prior emissions. The table is optional and
 node-global — one clock per runtime, spanning every tenant, so it is <em>not</em>
 tenant-partitioned:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">hlc_checkpoint</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">node_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="w">   </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">hlc</span><span class="w">      </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">   </span><span class="c1">-- packed HlcTimestamp: physical_ms &lt;&lt; 16 | logical</span>
+<span class="w">    </span><span class="n">node_key</span><span class="w"> </span><span class="nb">text</span><span class="w">   </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">hlc</span><span class="w">      </span><span class="nb">bigint</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">node_key</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
+<p><code>hlc</code> is the packed <code>HlcTimestamp</code>, <code>physical_ms &lt;&lt; 16 | logical</code>.</p>
 <p>Wire it with <code>PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc_checkpoint")))</code>
 and add <code>hlc_checkpoint_recovery_lifecycle_step()</code> to the runtime's lifecycle.
 For an outbox route that flushes inside a transaction
@@ -7013,10 +7096,10 @@ pass runs in one transaction, and the table holds <code>pending</code> and <code
 updated, so nothing published is left for a retention job to prune. Postgres only: Mongo
 keeps <code>retain</code>.</p>
 <ul>
-<li><strong>The indexes stay three:</strong> the primary key, <code>UNIQUE (outbox_route, event_id)</code>, which
-  staging deduplicates on, and the claim index. A retry changes <code>available_at</code>, which the
-  claim index above includes, so a retry is not a HOT update under it. Retries are rare,
-  and a row that publishes first time never updates.</li>
+<li><strong>The indexes stay three:</strong> the primary key, the unique index on <code>(outbox_route,
+  event_id)</code>, which staging deduplicates on, and the claim index, with its <code>tenant_id</code>-led
+  twin on a tagged table. A retry changes <code>attempts</code>, <code>available_at</code> and <code>last_error</code>, none
+  of which an index covers, so it can be a HOT update. Retries are rare, and a row that publishes first time never updates.</li>
 <li><strong>The dedup window narrows.</strong> Staging an event id again is deduplicated only while its
   row is still in the table, pending or parked as <code>failed</code>. Once the row is relayed and
   deleted, the same event id publishes again.</li>
@@ -7069,14 +7152,16 @@ keeps <code>retain</code>.</p>
    claims take <code>pending</code> rows, and reclaim still returns the <code>processing</code> rows <code>retain</code>
    left behind for the next pass to relay.</li>
 <li>Leave the <code>published</code> rows to your existing retention job.</li>
-<li>Once no <code>processing</code> row is left, set <code>reclaim_stale_after=None</code>. Once the retention job
-   has removed every <code>published</code> row, retire it. Only then drop the two columns, and any
-   index that exists only for them:</li>
+<li>Once no <code>processing</code> row is left, you may set <code>reclaim_stale_after=None</code>. Once the
+   retention job has removed every <code>published</code> row, retire it. Only then drop
+   <code>published_at</code>, and any index that exists only for it:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">DROP</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">processing_at</span><span class="p">,</span><span class="w"> </span><span class="k">DROP</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">published_at</span><span class="p">;</span>
+<div class="highlight"><span class="filename">Your migration</span><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">DROP</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">published_at</span><span class="p">;</span>
 </code></pre></div>
-<p>Reclaim reads <code>processing_at</code>, so dropping it while reclaim is on fails every pass, and
-the retention job reads <code>published_at</code>. Relays in both modes on one route stay
+<p>The retention job reads <code>published_at</code>. Keep <code>processing_at</code>: reclaim reads it in either
+mode, so dropping it while reclaim is on fails every pass. Whether reclaim runs is the
+relay's setting, which the declaration cannot see, so the declaration keeps the column and
+<code>forze schema diff</code> would add it back. Relays in both modes on one route stay
 at-least-once: a row a <code>retain</code> relay claimed is <code>processing</code>, which a <code>consume</code> claim never
 matches, until it is marked or reclaimed.</p>
 <h4 id="delivery-log">Delivery log<a class="headerlink" href="#delivery-log" title="Permanent link">&para;</a></h4>
@@ -7094,25 +7179,30 @@ pass publishes anything. A single log table holds every tenant's records, so a p
 outbox beside one is only as isolated as the log's <code>tenant_id</code> filtering: a module that
 declares <code>required_tenant_isolation="namespace"</code> refuses it, and needs a per-tenant
 resolver for the log too. <code>storage="retain"</code> refuses the log.</p>
-<p>The table is yours: forze only inserts into it, and never creates, drops or prunes its
-partitions. Dropping a day's partition is its whole retention. Nothing updates or deletes
-a committed row; the only dead rows are the inserts of passes that rolled back after a
-mark, which vacuum clears as usual. Partition it by day on <code>published_at</code>:</p>
+<p>The table is yours: forze only inserts into it. It declares the table and its <code>DEFAULT</code>
+partition, and never creates, drops or prunes the partitions beside it. Dropping a day's
+partition is its whole retention. Nothing updates or deletes a committed row; the only dead
+rows are the inserts of passes that rolled back after a mark, which vacuum clears as usual.
+It is partitioned on <code>published_at</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">              </span><span class="c1">-- the outbox row's id</span>
-<span class="w">    </span><span class="n">outbox_route</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">event_id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
-<span class="w">    </span><span class="n">published_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="w">    </span><span class="n">id</span><span class="w">           </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">outbox_route</span><span class="w"> </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_id</span><span class="w">     </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w">    </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">published_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
 <span class="p">)</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">RANGE</span><span class="w"> </span><span class="p">(</span><span class="n">published_at</span><span class="p">);</span>
-
-<span class="c1">-- no unique key: an event staged again after delivery is delivered again</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_delivered_event_idx</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="p">(</span><span class="n">event_id</span><span class="p">);</span>
 
 <span class="c1">-- the net for a day nobody added</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_default</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="k">DEFAULT</span><span class="p">;</span>
 
-<span class="c1">-- a partition per day, added days ahead: built apart, then attached</span>
+<span class="c1">-- no unique key: an event staged again after delivery is delivered again</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="p">(</span><span class="n">event_id</span><span class="p">);</span>
+</code></pre></div>
+<p><code>id</code> is the outbox row's id. <code>forze schema diff</code> accepts the log as a partitioned or a plain
+table. Postgres builds no index <code>CONCURRENTLY</code> on a partitioned table, so the diff prints a
+missing index there as a warning, its statement commented, for you to schedule. Partition
+it by day:</p>
+<div class="highlight"><span class="filename">Your partitions</span><pre><span></span><code><span class="c1">-- a partition per day, added days ahead: built apart, then attached</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_20261018</span><span class="w"> </span><span class="p">(</span><span class="k">LIKE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="p">);</span>
 <span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="n">ATTACH</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_20261018</span>
 <span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="s1">'2026-10-18 00:00+00'</span><span class="p">)</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="p">(</span><span class="s1">'2026-10-19 00:00+00'</span><span class="p">);</span>
@@ -7126,7 +7216,7 @@ mark, which vacuum clears as usual. Partition it by day on <code>published_at</c
   committed. An event can have several rows, one per delivery, when it was staged again
   after its row was consumed. When you answer a tenant, filter on its <code>tenant_id</code>, the
   tenant of the outbox row:</p>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">published_at</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">1</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">tenant_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">2</span><span class="p">;</span>
+<div class="highlight"><span class="filename">Your query</span><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">published_at</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">1</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">tenant_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">2</span><span class="p">;</span>
 </code></pre></div>
 </li>
 <li>
@@ -7153,6 +7243,19 @@ mark, which vacuum clears as usual. Partition it by day on <code>published_at</c
   behind that lock longer than <code>pass_statement_timeout</code> fails and backs off, so drop old
   days with a short <code>lock_timeout</code>, well under <code>pass_statement_timeout</code>, and retry.</li>
 </ul>
+<h3 id="inbox">Inbox<a class="headerlink" href="#inbox" title="Permanent link">&para;</a></h3>
+<p>For <code>PostgresInboxConfig(relation=("app", "inbox"))</code>, the ledger a consumer marks each
+message processed in, inside the handler's transaction:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">inbox</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">inbox_route</span><span class="w">  </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">message_id</span><span class="w">   </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">processed_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">inbox_route</span><span class="p">,</span><span class="w"> </span><span class="n">message_id</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>A tenant-aware inbox stores <code>inbox_route</code> as <code>t:&lt;tenant_id&gt;:&lt;inbox_route&gt;</code>, so tenants that
+share the table never deduplicate each other's messages, and the table needs no tenant
+column.</p>
 <h2 id="mongo">Mongo<a class="headerlink" href="#mongo" title="Permanent link">&para;</a></h2>
 <p>For Mongo (<code>MongoOutboxConfig</code>), documents mirror these fields; recommended
 indexes:</p>

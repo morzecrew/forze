@@ -6327,7 +6327,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6357,6 +6357,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -6919,20 +6948,10 @@ Postgres store, writes the exchanger, and shows the call pattern.</p>
 <h2 id="the-table">The table<a class="headerlink" href="#the-table" title="Permanent link">&para;</a></h2>
 <p>Provisioning is yours, and the store is deliberately narrow about what it needs — every
 access the <em>store</em> makes is a point lookup on the primary key. The second index serves the
-control-plane idleness scan (see <a href="#keeping-idle-grants-alive">keeping idle grants alive</a>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">rotating_credentials</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">tenant_id</span><span class="w">    </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="k">ref</span><span class="w">          </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">payload</span><span class="w">      </span><span class="n">jsonb</span><span class="w">       </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">expires_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="k">version</span><span class="w">      </span><span class="nb">bigint</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">burnt_reason</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">updated_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="k">ref</span><span class="p">)</span>
-<span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">rotating_credentials</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">updated_at</span><span class="p">);</span>
-</code></pre></div>
+control-plane idleness scan (see <a href="#keeping-idle-grants-alive">keeping idle grants alive</a>).
+<code>forze schema sql --deps &lt;your module&gt;</code> prints the table and its index for the relation your
+<code>PostgresRotatingCredentialsConfig</code> names, and
+<a href="../../reference/store-schema/#rotating-credentials">Store table schema</a> shows them.</p>
 <p><code>tenant_id</code> is part of the key rather than a filter beside it — a table keyed on <code>ref</code>
 alone hands one tenant another tenant's grant. An unbound tenant stores as the empty
 string. <code>payload</code> holds both tokens and the provider metadata; <code>expires_at</code> is lifted out

@@ -6272,7 +6272,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6302,6 +6302,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -6872,9 +6901,9 @@ its key already reclaimed by a duplicate. The claim records which invocation too
 it, and a store refuses to complete or release a claim that now belongs to someone
 else — otherwise the slow operation would overwrite the live one's claim, and a
 third duplicate would replay a result for work that never finished.</p>
-<p>On <strong>Postgres</strong> this needs one column on your table:</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">your</span><span class="w"> </span><span class="n">idempotency</span><span class="w"> </span><span class="k">table</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="k">owner</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
-</code></pre></div>
+<p>On <strong>Postgres</strong> this needs one column on your table, <code>owner uuid</code>. Forze declares it, and
+<code>forze schema diff</code> prints the <code>ADD COLUMN</code> for a table that lacks it
+(<a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>).</p>
 <p>It is nullable and additive, so nothing breaks before you run it and existing rows
 need no backfill, and you can apply it to a running deployment — the store notices
 the column within a minute and starts fencing, no restart required. Until you run

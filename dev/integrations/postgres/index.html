@@ -6301,7 +6301,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6331,6 +6331,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -7010,8 +7039,9 @@ search added later is warmed too:</p>
 <ul>
 <li><strong>You own the schema.</strong> Forze <em>introspects</em> existing relations; it never
   creates application tables. Provision read / write / history / search relations
-  (and extensions) with your migration tool first. For the durable tables, <code>forze schema</code>
-  prints the SQL and you apply it
+  (and extensions) with your migration tool first. For forze's store tables (durable
+  execution, outbox and inbox, idempotency, counters, principal epochs, rotating
+  credentials), <code>forze schema</code> prints the SQL and you apply it
   (<a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>).</li>
 <li>
 <p><strong>Values a column rounds or pads.</strong> An update compares a value as its column stores it, so
@@ -7026,10 +7056,9 @@ search added later is warmed too:</p>
   tests run on Postgres 18.</li>
 <li><code>interval(p)</code> is compared as sent.</li>
 <li><strong>Counter lifetimes need one column.</strong> A counter written with a <code>ttl</code> stores its lapse
-  instant in an optional <code>expires_at timestamptz</code> column:</li>
+  instant in an optional <code>expires_at timestamptz</code> column, which forze declares and
+  <code>forze schema diff</code> adds to a table that lacks it.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">counters</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">;</span>
-</code></pre></div>
 <p>A table without it keeps working for every call that does not pass a <code>ttl</code>; a call
 that does is refused with <code>configuration</code> (<code>counter_ttl_unsupported</code>) until the column
 exists. The login lockout is the exception: it writes without a <code>ttl</code> instead and warns

@@ -8537,7 +8537,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -8567,6 +8567,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -11332,11 +11361,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Providers can declare what they resolve.</strong> <code>Requirement(key, route, remedy)</code> and <code>DeclaresRequirements</code> in <code>forze.application.contracts.deps</code>, and <code>ProviderStore.providers()</code> to walk a store's registrations.</p>
 </li>
 <li>
-<p><strong><code>forze schema</code> prints the SQL for the durable tables.</strong> <code>sql</code> prints the <code>CREATE</code> statements and <code>diff</code> what a database lacks, read via a role in <code>FORZE_SCHEMA_DSN</code>, exiting 0, 10 or 11 (<code>--check</code> for CI); forze never runs it. New: <code>owned_relations</code>, <code>OwnedRelationShape</code>.</p>
+<p><strong><code>forze schema</code> prints the SQL for forze's store tables</strong>, from durable runs to outboxes, delivery logs, inboxes and counters. <code>sql</code> prints the <code>CREATE</code> statements and <code>diff</code> what a database lacks, read via a role in <code>FORZE_SCHEMA_DSN</code>, exiting 0, 10 or 11 (<code>--check</code>, <code>--keep-retired</code>); forze never runs it.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>The Postgres outbox claim index is <code>(outbox_route, status, created_at)</code></strong>, or <code>(outbox_route, status, hlc, created_at, id)</code> with <code>hlc_ordering</code>. Run <code>forze schema diff</code>: it builds the new index and drops the one the docs printed.</p>
+</li>
 <li>
 <p><strong><code>eligibility="allow_all"</code> is a production posture finding</strong> (<strong>Breaking</strong>): under a <code>ProductionPosture</code>, an unset environment included, each route refuses the boot unless <code>Exempt(target="authn_eligibility:&lt;route&gt;", reason=...)</code> covers it. Constructing the module logs a warning.</p>
 </li>

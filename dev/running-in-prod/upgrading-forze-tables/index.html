@@ -6272,7 +6272,7 @@
   <span class="md-ellipsis">
     
   
-  Outbox table schema
+  Outbox and inbox table schema
 
     
   </span>
@@ -6302,6 +6302,35 @@
     
   
   Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/store-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Store table schema
 
     
   </span>
@@ -6791,9 +6820,10 @@
 
   <h1>Upgrading forze's tables</h1>
 
-<p>Some Postgres tables belong to forze rather than to your domain. Today these are the
-durable run, step and schedule tables. Your migration tool creates and changes them, as it
-does every other table. <code>forze schema</code> writes the SQL so you stop transcribing it from the
+<p>Some Postgres tables belong to forze rather than to your domain: its store tables, for
+durable execution, the outbox and its delivery log, the <abbr title="Hybrid Logical Clock">HLC</abbr> checkpoint, the inbox,
+idempotency claims, counters, principal epochs and rotating credentials. Your migration
+tool creates and changes them, as it does every other table. <code>forze schema</code> writes the SQL so you stop transcribing it from the
 docs on each upgrade. <strong>Forze prints the SQL and never runs it</strong>: not at startup, not from
 the CLI. You review the file and apply it with Flyway or your own runner.</p>
 <p>Two commands do the work:</p>
@@ -6829,8 +6859,9 @@ for each.</p>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>forze<span class="w"> </span>schema<span class="w"> </span>sql<span class="w"> </span>--deps<span class="w"> </span>app.wire:postgres<span class="w"> </span>&gt;<span class="w"> </span>migrations/V1__forze_tables.sql
 </code></pre></div>
 <p>The file holds each table, then its indexes, each with a one-line comment saying why it
-exists. The same SQL, for the default relation names, is on the
-<a href="../../reference/durable-schema/">durable execution schema</a> page.</p>
+exists. The same SQL, for example relation names, is on the
+<a href="../../reference/durable-schema/">durable execution</a>, <a href="../../reference/outbox-schema/">outbox and inbox</a>
+and <a href="../../reference/store-schema/">store</a> schema pages.</p>
 <h2 id="upgrade-forze">Upgrade forze<a class="headerlink" href="#upgrade-forze" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Bump forze in your lock file.</li>
@@ -6847,17 +6878,20 @@ history and in <code>ps</code>, so <code>--dsn</code> is refused.</p>
 <p>Review the file. For the 0.18 index change on a database at 0.17, it reads:</p>
 <div class="highlight"><pre><span></span><code><span class="c1">-- Shape only: data rewrites are announced as **Migration:** SQL in CHANGELOG.md.</span>
 <span class="c1">-- CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).</span>
+<span class="c1">-- Stop at the first error (psql: -v ON_ERROR_STOP=1): a drop below a failed create removes the index it replaces.</span>
 
 <span class="c1">-- forze 0.18.0 · app.durable_run (PostgresDurableRunStore)</span>
 
-<span class="c1">-- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status and name</span>
+<span class="c1">-- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status, and on name for some functions</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span>
 
-<span class="c1">-- retired in 0.18.0, replaced by (status, name, created_at)</span>
+<span class="c1">-- retired in 0.18.0: replaced by (status, name, created_at)</span>
 <span class="k">DROP</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">idx_durable_run_status</span><span class="p">;</span>
 </code></pre></div>
 <p>The drop names the index your database holds, here one a migration named by hand.
-New indexes come first and drops last.</p>
+New indexes come first and drops last. To keep retired indexes for now, pass
+<code>--keep-retired</code>: the diff then says nothing about any index with a retired shape's
+keys.</p>
 </li>
 <li>
 <p>Read every <code>REFUSED</code> and <code>WARNING</code> comment. The diff never prints a statement that
@@ -6874,11 +6908,16 @@ New indexes come first and drops last.</p>
 <p>Columns and indexes forze does not declare are never touched.</p>
 </li>
 <li>
-<p>Apply the file outside a transaction. <code>CREATE INDEX CONCURRENTLY</code> cannot run in one.
-   With Flyway, add a script config file beside the migration:</p>
+<p>Apply the file outside a transaction, <code>CREATE INDEX CONCURRENTLY</code> cannot run in one, and
+   with a tool that stops at the first error. A retired drop comes after the create that
+   replaces it, so a runner that carried on past a failed create would drop the index the
+   create was to replace. Flyway stops by default; add a script config file beside the
+   migration:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># migrations/V42__forze_upgrade.sql.conf</span>
 <span class="na">executeInTransaction</span><span class="o">=</span><span class="s">false</span>
 </code></pre></div>
+<p>With <code>psql</code>, pass <code>-v ON_ERROR_STOP=1</code>. The next diff reads a failed create's invalid
+index and prints its drop and recreate.</p>
 </li>
 <li>
 <p>Deploy the new forze version after the migration has run.</p>
@@ -6922,8 +6961,8 @@ exits by what it found:</p>
 <code>78</code>) mean the check did not run, so the job fails with those too.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Durable tables only.</strong> The outbox, inbox, idempotency, counter and identity tables
-  still take their DDL from their pages.</li>
+<li><strong>Store tables only.</strong> The identity, audit and other document tables still take their DDL
+  from their pages.</li>
 <li><strong>One table per relation.</strong> A relation given as a tenant-scoped resolver names no single
   table, so both commands skip it with a warning on stderr, and <code>diff</code> exits <code>11</code>. Diff each
   tenant's schema through a deps module that names it.</li>
