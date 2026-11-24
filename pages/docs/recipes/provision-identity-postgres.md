@@ -164,6 +164,9 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE authz_principal_role_bindings ADD COLUMN scope_tenant_id uuid;
+-- Postgres's default name for UNIQUE (principal_id, role_id), drop one named otherwise by its name
+ALTER TABLE authz_principal_role_bindings
+    DROP CONSTRAINT IF EXISTS authz_principal_role_bindings_principal_id_role_id_key;
 CREATE UNIQUE INDEX ON authz_principal_role_bindings
     (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT;
 ```
