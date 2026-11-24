@@ -450,6 +450,9 @@ publishes, their guarantee indexes by the existing suggestion builder
 (`validate_schema.py:1036-1063`), and their history relation from the `DocumentHistory`
 model (`src/forze/domain/models/document.py:612`). Their verify half already exists.
 
+*Amended 2026-11-24: §5.7 sets the rules this paragraph sketched, and leaves the history
+relation out (rows 27 to 38).*
+
 ### 5.5 Data steps (P3, demand-gated)
 
 A stored-format change, such as 0.17's `:{key}` rewrite, changes no shape, so the diff cannot
@@ -499,6 +502,98 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
   - For: no code.
   - Against: this is what exists now. Three copies, one of which has drifted, and every
     consumer still transcribes by hand.
+
+### 5.7 Framework-owned document tables (P2c, amended 2026-11-24)
+
+The identity, audit, progress, realtime mailbox and cursor, and stored-file tables hold
+documents whose specs forze ships. Consumers transcribe them as they do the store tables:
+eis-backend and hh-backend-v2 wrote 18 and 19 identity tables by hand (§2). P2c prints
+them too.
+
+**Derived, not declared.** A store table has a hand-written shape beside its adapter. A
+document table cannot. `forze_postgres` may not import `forze_identity` or `forze_kits`
+(`pyproject.toml`, the contracts "Nothing imports forze_identity" and "Only sanctioned
+consumers may import forze_kits"), and neither of those may import an integration. So
+`forze_postgres` derives each table from the core `DocumentSpec` and the route's
+`PostgresDocumentConfig`, the same copy the startup validator reads. A unit test renders
+every framework spec and runs the validator's column, type and nullability checks over a
+catalog built from the render, so the derivation cannot drift from what validation accepts.
+
+**Which routes.** `owned_relations` takes the spec registry as well as the deps module. A
+route of `rw_documents` is owned when the registry catalogues its spec as `FRAMEWORK` or
+`KIT`. Today:
+
+- only identity registers as `FRAMEWORK` (`forze_identity/inventory.py:251`);
+- progress registers as `KIT` (`forze_kits/integrations/progress/inventory.py:63`);
+- the realtime transport leaves the mailbox and cursor specs to the application
+  (`realtime/specs.py:141-150`);
+- audit and stored files register nothing.
+
+P2c gives each of the last two groups a contributions helper in `forze_kits` that registers
+it as `KIT`. An application's own specs stay out (§4). A read-only route, and a read
+relation other than the write relation, are not rendered, since forze writes no table there.
+The CLI takes the registry as `--specs MODULE:ATTR`.
+
+**The table.**
+
+- **Base columns** come from `Document`: `id uuid`, `rev integer`, `created_at timestamptz`
+  and `last_update_at timestamptz`, all `NOT NULL`, keyed on `(id)`, as every published page
+  prints them.
+- **A tenant-aware route** adds `tenant_id uuid NOT NULL`, which the validator requires
+  (`validate_schema.py:232-268`). The key stays `(id)`, since ids are unique across tenants;
+  the cursor id derives the tenant into itself (`realtime/mailbox.py:78-90`).
+- **The other columns** are the fields the validator requires on the write relation
+  (`validate_schema.py:1579-1597`), in model order.
+- **Nullability.** `T | None` is nullable, anything else `NOT NULL`.
+- **Defaults.** A literal default (a boolean, a number, a string, an enum member) or an
+  empty `list` or `dict` factory renders as `DEFAULT`, as the pages print `DEFAULT true`
+  and `DEFAULT '{}'`.
+- **Encrypted fields** are `text`, since ciphertext is stored as base64 text
+  (`application/integrations/crypto/codec.py:20-22`).
+- **Any other annotation**, such as a union of scalars or a type variable, is refused at
+  render, naming the field.
+
+Each annotation emits one type. Where the published mapping rule
+(`provision-identity-postgres.md:18-28`) allows several, the table picks one. On a list of
+scalars, where the rule says `jsonb` and the validator requires an array, the validator wins:
+
+| Annotation | Column type |
+| --- | --- |
+| `UUID` | `uuid` |
+| `str`, a `str` enum, a `Literal` of strings, `EmailStr` | `text` |
+| `bool` | `boolean` |
+| `int` | `integer` (row 32) |
+| `float` | `double precision` |
+| `Decimal` | `numeric` |
+| `datetime`, `date`, `time` | `timestamptz`, `date`, `time` |
+| `bytes` | `bytea` |
+| a `list` or `tuple` of one of the above | that type's array, as the validator requires (`validate_schema_types.py:154-172`) |
+| a nested model, a `dict`, a list of anything else, `Any` | `jsonb` |
+
+**Indexes.** Each `UniqueTogether` guarantee, declared or implied by the domain model,
+renders as a required unique index, led by `tenant_id` on a tenant-aware route. That is the
+statement the validator's suggestion prints today (`validate_schema.py:1036-1069`), now
+quoted (row 16), and with nullability read from the model rather than the catalog. A spec
+that declares `NonOverlapping` or `Reference` is refused at render in P2c, since no
+framework spec does. Some specs rely on an index they do not declare, such as the identity
+recipe's unique `username` (`provision-identity-postgres.md:50-56`); row 34 leaves open how
+that index reaches the render.
+
+**Out of P2c.**
+
+- **No triggers, functions or history tables.** No framework spec enables history, and
+  `bookkeeping_strategy="database"` is the application's choice. Such a route gets a note
+  that its trigger is the application's, and the startup bookkeeping check already refuses
+  a missing one (`validate_bookkeeping.py:35-110`).
+- **Startup stays the document step.** P2b's startup step covers the store tables only, and
+  document tables keep the existing document step, so a missing column is reported once.
+
+**Corrections to §3.** `DocumentHistory` is at `document.py:739`, not `:612`. The identity
+recipe prints six `CREATE TABLE` blocks, not five. Its `authn_sessions` table is named for
+no spec: the session spec is `authn_token_sessions`, so the recipe's binding comprehension
+would not bind it. P2c's page tests fix the recipe.
+
+P2c is ready to execute once §10 Q6 and Q7 are answered.
 
 ## 6. Tests
 
@@ -641,6 +736,24 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
    reads. P1 skips such relations with a warning. Implementation decides in P2, with
    `--tenant` as the minimum (row 11).
 5. **Naming the P2 switch** on `PostgresLifecycleModule`. Implementation decides (row 13).
+6. **The width of `int` (P2c, row 32).** `integer` is what every published page prints, such
+   as progress's `event_seq`, but the mailbox's packed HLC (`realtime/mailbox.py:142`)
+   overflows it.
+   - **A backend-neutral width marker in `forze.base.primitives`.** The mailbox model adopts
+     it, and the renderer emits `bigint` for a field that carries it and `integer`
+     elsewhere. Recommended: the width is stated where the value is defined, and a test can
+     require it of every field holding a packed HLC.
+   - **A per-field override table in `forze_postgres`, keyed by spec name.** It keeps the
+     models untouched, but it is a second copy that drifts from them.
+7. **Required but undeclared indexes (P2c, row 34).** The identity recipe requires a unique
+   index on `username` that the spec does not declare as a guarantee, because not every
+   document store can keep one.
+   - **A backend-neutral declaration on the spec.** Stores that support it keep it, those
+     that cannot ignore it, the renderer prints it, and the validator may report it.
+     Recommended: without it, the render omits an index that a registration's correctness
+     depends on.
+   - **Leave such indexes on the pages as the application's own.** The diff then never
+     checks them.
 
 ## 11. Decisions
 
@@ -672,6 +785,18 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
 | 24 | `ASSUMED` | The primary key compares as a set of columns. In another order it is a note suggesting an index on the declared leading column, unless a valid, full b-tree already leads with it. A deferrable primary key is refused. A relation that is not a plain table is refused. A new table's indexes are built without `CONCURRENTLY`, and one diff reads one snapshot. Accepted by the maintainer on 2026-11-24. (D-317, D-319, D-330, D-331) |
 | 25 | `ASSUMED` | A column declared nullable and found `NOT NULL` is refused, since the adapter writes `NULL` to it. Accepted by the maintainer on 2026-11-24. (D-320) |
 | 26 | `ASSUMED` | Every conflict target the adapter writes to, each declared unique index and the primary key, is checked for a unique index that breaks it. A deferrable one the target infers is refused. A `NULLS NOT DISTINCT` one on the target's nullable keys is refused whether or not it is inferred, unless its predicate has `<key> IS NOT NULL` for every nullable key. The refusal comments `DROP CONSTRAINT` for an owning constraint and `DROP INDEX` otherwise, and suggests no drop when a foreign key depends on the index. Accepted by the maintainer on 2026-11-24. (D-324, D-325, D-329, D-331) |
+| 27 | `ASSUMED` | Framework-owned document tables are derived from their `DocumentSpec` and the route's `PostgresDocumentConfig` by one renderer in `forze_postgres`, over core contracts only. They are not declared by hand, since `forze_postgres` may import neither `forze_identity` nor `forze_kits`. A unit test runs the startup validator's column, type and nullability checks over every rendered framework spec. Amendment of 2026-11-24 (§5.7). |
+| 28 | `ASSUMED` | A document route is owned when it is bound read-write and the spec registry catalogues its spec as `FRAMEWORK` or `KIT`. `forze_kits` registers its audit, realtime mailbox and cursor, and stored-file specs as `KIT`. Read-only routes, and a read relation other than the write relation, are not rendered. Amendment of 2026-11-24 (§5.7). |
+| 29 | `ASSUMED` | The CLI takes the registry as `--specs MODULE:ATTR`, naming a `SpecRegistry` or a `FrozenSpecRegistry`. Without it both commands cover the store tables only. Row 7's refusal of `OpsApp` stands. Amendment of 2026-11-24 (§5.7). |
+| 30 | `ASSUMED` | Every document table has the base columns `id uuid`, `rev integer`, `created_at timestamptz` and `last_update_at timestamptz`, all `NOT NULL`, keyed on `(id)`. A tenant-aware route adds `tenant_id uuid NOT NULL`, and the key stays `(id)`. Amendment of 2026-11-24 (§5.7). |
+| 31 | `ASSUMED` | Each annotation emits one type, per §5.7's table. `T \| None` is nullable and anything else `NOT NULL`. A literal default or an empty collection factory renders as `DEFAULT`, an encrypted field is `text`, and an annotation outside the table is refused at render. Amendment of 2026-11-24 (§5.7). |
+| 32 | `OPEN` | The width of `int`. `integer` matches every published page, but the mailbox's packed HLC overflows it, and a column found `integer` where forze declares `bigint` is refused as narrower (row 23). Settle by §10 Q6 before P2c is built. Amendment of 2026-11-24. |
+| 33 | `ASSUMED` | Each `UniqueTogether` guarantee, declared or implied, renders as a required unique index, led by `tenant_id` on a tenant-aware route. A spec that declares `NonOverlapping` or `Reference` is refused at render in P2c. Amendment of 2026-11-24 (§5.7). |
+| 34 | `OPEN` | How a required index that a framework spec relies on but does not declare, such as the identity recipe's unique `username`, reaches the render. Settle by §10 Q7 before P2c is built. Amendment of 2026-11-24. |
+| 35 | `ASSUMED` | P2c renders no triggers, functions or history tables. A route with `bookkeeping_strategy="database"` gets a note that its trigger is the application's. Amendment of 2026-11-24 (§5.7). |
+| 36 | `ASSUMED` | The P2b startup step covers the store tables only; document tables stay with the existing document schema step. Amendment of 2026-11-24 (§5.7). |
+| 37 | `ASSUMED` | The published DDL of framework specs (the identity recipe's tables, the audit and progress pages) is checked against the render, and the recipe names the session table for its spec. Amendment of 2026-11-24 (§5.7). |
+| 38 | `ASSUMED` | P2 ships as three PRs: P2a the store tables, P2b repeated `--tenant` and the startup step, and P2c the framework-owned document tables. Accepted by the maintainer on 2026-11-24, with the P2 plan. |
 
 ## 12. Phasing
 
@@ -693,5 +818,9 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
   - `--keep-retired`, and repeated `--tenant` (row 11).
   - The §5.4 startup step.
   - `sql`/`diff` over framework-owned document specs.
+  - *Amended 2026-11-24:* three PRs (row 38).
+    - P2a: the store tables.
+    - P2b: repeated `--tenant` and the startup step.
+    - P2c: the §5.7 document tables, once §10 Q6 and Q7 are answered.
 - **P3:** demand-gated. §5.5 data steps, a Mongo renderer, and provisioner-run DDL for
   schema-per-tenant store tables.
