@@ -22,10 +22,12 @@ from forze_identity.authz.domain.models.bindings import (
     ReadRolePermissionBinding,
 )
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
+from forze_identity.authz import GrantsCache
 from forze_identity.authz.services.grants import AuthzGrantResolver
 from forze_mock import MockDepsModule
 from tests.support.authz_grants import seeded_role_assignment, tenant_held_roles
 from tests.support.execution_context import context_from_modules
+from tests.unit.test_forze_authz.test_grants_cache import _cache, _world
 from tests.unit.test_forze_authz.test_grant_resolver_service import (
     FakeDocQuery,
     _doc_kwargs,
@@ -478,3 +480,41 @@ class TestOverAPartitionedStore:
             assert ctx.inv_ctx.get_tenant().tenant_id == U  # the caller's tenant is back
 
         assert [store.partition[r.id] for r in store.rows] == [U]
+
+
+class TestLeavingInsideATransaction:
+    """Another tenant's own client can commit the kills outside the caller's transaction, so
+    the cache must not wait for that transaction alone: it may roll back."""
+
+    async def _forgotten_before_commit(
+        self, monkeypatch: pytest.MonkeyPatch, bound: UUID
+    ) -> list[UUID]:
+        world = await _world(_cache(), strict_tx=True)
+        seen: list[UUID] = []
+        forget = GrantsCache.forget
+
+        def spy(cache: GrantsCache, principal_id: UUID) -> None:
+            seen.append(principal_id)
+            forget(cache, principal_id)
+
+        monkeypatch.setattr(GrantsCache, "forget", spy)
+
+        with world.ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=bound)):
+            async with world.ctx.tx_ctx.scope("mock"):
+                await world.roles.revoke_tenant_roles(world.principal, tenant_id=T)
+                before_commit = list(seen)
+
+        assert seen.count(world.principal) >= 1  # and at the commit
+
+        return [p for p in before_commit if p == world.principal]
+
+    async def test_leaving_from_another_tenant_forgets_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert len(await self._forgotten_before_commit(monkeypatch, U)) == 1
+
+    async def test_leaving_from_the_tenant_itself_waits_for_the_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Its kills commit with the caller's transaction, as every other revoke's do.
+        assert await self._forgotten_before_commit(monkeypatch, T) == []

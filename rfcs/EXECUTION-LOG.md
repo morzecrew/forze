@@ -8168,3 +8168,29 @@ revoke and its membership removal leaves a role pre-staged for a non-member. Row
 - **Proposed row (RFC 0082):** `ASSUMED`. `revoke_tenant_roles(subject, tenant_id=T)` runs with
   T bound, from wherever the caller is bound. This replaces D-299's proposed row for that call.
 - **Action:** decided.
+
+## D-305 — Leaving from another tenant forgets the principal at once
+
+- **Touches:** D-304, row 13 (`ASSUMED`; the grants cache and the RFC 0068 broadcast do not
+  change), §5.5.
+- **Found:** in review on #947. With a client per tenant (the `dedicated` tier), D-304's
+  rebinding sends T's kills to T's own client, outside the caller's transaction, while `forget`
+  waits for that transaction to commit. If the caller's transaction rolls back, the kills stay
+  committed and the forget never runs, so the cache keeps serving the removed roles until its TTL.
+- **Built:** when `revoke_tenant_roles` rebinds to another tenant, it also forgets the
+  principal at once, here and through the broadcast, with the new
+  `AuthzGrantResolver.forget_now` (`src/forze_identity/authz/services/grants.py:316`,
+  `src/forze_identity/authz/adapters/role_assignment.py:180`). The deferred forget still runs at
+  commit, for kills that do commit with the caller's transaction, so there the early forget
+  costs one miss. Without a rebinding nothing changes. If the caller's transaction rolls back,
+  the membership stays and the roles are gone: §5.4's order, a member without roles.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:485`. Leaving from U
+  forgets before the commit, and leaving from T waits for it. Dropping the early forget fails
+  the first test.
+- **Class:** `spec-gap`. Row 13 holds for every write that commits with the caller's
+  transaction; this one may not.
+- **Proposed row (RFC 0082):** `ASSUMED`. `revoke_tenant_roles` from another tenant forgets
+  the principal at once as well as at commit.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 30 now holds three entries, D-303 to D-305, all `spec-gap`.

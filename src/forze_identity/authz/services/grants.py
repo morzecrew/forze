@@ -313,6 +313,23 @@ class AuthzGrantResolver:
 
         await invalidate_after_commit(self.ctx, self.cache, self.invalidation, principal_id)
 
+    async def forget_now(self, principal_id: UUID) -> None:
+        """Forget *principal_id* now, here and through :attr:`invalidation`, without waiting
+        for the current transaction.
+
+        For a write that may commit outside that transaction, such as one sent to another
+        tenant's own client: if the transaction then rolls back, a forget deferred to its
+        commit never runs. Call :meth:`forget` too, for the write that does commit with it.
+        """
+
+        if self.cache is None or self.ctx is None:
+            return
+
+        self.cache.forget(principal_id)
+
+        if self.invalidation is not None:
+            await self.invalidation.publish(self.ctx, principal_id)
+
     # ....................... #
 
     async def _catalog_grants(self, principal_id: UUID) -> CatalogGrants:

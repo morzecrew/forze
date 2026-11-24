@@ -155,7 +155,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         # from inside U; an operator removes members of any tenant). So it runs with T bound:
         # a store that follows the bound tenant, by a tenant column or by a relation resolved
         # per tenant, then reaches T's rows rather than the caller's.
-        with self._bound_to(tenant_id):
+        with self._bound_to(tenant_id) as rebound:
             _ = resolve_policy_scope(
                 spec=self.spec,
                 explicit=AuthzScope(tenant_id=tenant_id),
@@ -176,6 +176,12 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
             finally:
                 await self.resolver.forget(pid)
+
+                if rebound:
+                    # Another tenant's own client may commit these kills outside the caller's
+                    # transaction, where a forget deferred to its commit never runs after a
+                    # rollback. Forgetting now as well costs a miss when they do commit with it.
+                    await self.resolver.forget_now(pid)
 
     # ....................... #
 
@@ -287,8 +293,9 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         return row.scope_tenant_id == tenant_id
 
     @contextmanager
-    def _bound_to(self, tenant_id: UUID) -> Iterator[None]:
-        """Bind *tenant_id* for the body, keeping the caller's identity, unless it already is.
+    def _bound_to(self, tenant_id: UUID) -> Iterator[bool]:
+        """Bind *tenant_id* for the body, keeping the caller's identity, unless it already is;
+        yields whether it rebound.
 
         Without a context the resolver's fixed tenant stands in, and nothing can be rebound:
         a partitioned store bound to another tenant would reach none of *tenant_id*'s rows,
@@ -299,7 +306,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         bound = self.resolver.invocation_tenant()
 
         if bound == tenant_id:
-            yield
+            yield False
             return
 
         if ctx is None:
@@ -310,11 +317,11 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
                     code="authz.scope_tenant_mismatch",
                 )
 
-            yield
+            yield False
             return
 
         with ctx.inv_ctx.bind_identity(
             authn=ctx.inv_ctx.get_authn(),
             tenant=TenantIdentity(tenant_id=tenant_id),
         ):
-            yield
+            yield True
