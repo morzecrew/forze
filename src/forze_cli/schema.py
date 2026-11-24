@@ -29,6 +29,7 @@ import os
 import sys
 from collections.abc import Coroutine, Sequence
 from typing import TYPE_CHECKING, Any, Final, NoReturn
+from uuid import UUID
 
 import typer
 
@@ -63,6 +64,11 @@ _ROLE_NOTE: Final = (
 
 _DEPS_HELP: Final = (
     "The PostgresDepsModule, or a sequence holding exactly one, as 'module:attribute'."
+)
+
+_TENANT_HELP: Final = (
+    "Bind each tenant-scoped relation for this tenant id; repeat for several tenants. "
+    "Without it, such a relation is skipped."
 )
 
 schema_app = typer.Typer(
@@ -119,15 +125,32 @@ def _load_deps(ref: str) -> PostgresDepsModule:
     _fail(f"--deps {ref!r} is not a PostgresDepsModule.", EXIT_CONFIG)
 
 
-def _relations(ref: str) -> OwnedRelations:
-    from forze.base.exceptions import CoreException, ExceptionKind
-    from forze_postgres import owned_relations
+def _tenant_ids(values: Sequence[str]) -> tuple[UUID, ...]:
+    tenants: list[UUID] = []
 
+    for value in values:
+        try:
+            tenants.append(UUID(value))
+
+        except ValueError:
+            _fail(f"--tenant {value!r} is not a tenant id (a UUID).", EXIT_USAGE)
+
+    return tuple(dict.fromkeys(tenants))
+
+
+def _relations(ref: str, tenants: Sequence[str] = ()) -> OwnedRelations:
+    from forze.base.exceptions import CoreException, ExceptionKind
+    from forze_postgres import owned_relations, resolve_owned_relations
+
+    ids = _tenant_ids(tenants)
     deps = _load_deps(ref)
 
-    # Routes that cannot share their table are refused as they are bound.
+    # Routes that cannot share their table are refused as they are bound, and a resolver
+    # that refuses a tenant is the deps module's configuration too.
     try:
-        relations = owned_relations(deps)
+        relations = (
+            _run(resolve_owned_relations(deps, tenants=ids)) if ids else owned_relations(deps)
+        )
 
     except CoreException as error:
         if error.kind is not ExceptionKind.CONFIGURATION:
@@ -138,7 +161,7 @@ def _relations(ref: str) -> OwnedRelations:
     for route in relations.skipped:
         typer.echo(
             f"warning: skipped {route}: its relation is a tenant-scoped resolver, so no single "
-            "table is known.",
+            "table is known. Pass --tenant to bind it for a tenant.",
             err=True,
         )
 
@@ -151,6 +174,7 @@ def _relations(ref: str) -> OwnedRelations:
 @schema_app.command("sql")
 def sql_command(
     deps: str = typer.Option(..., "--deps", metavar="MODULE:ATTR", help=_DEPS_HELP),
+    tenant: list[str] = typer.Option([], "--tenant", metavar="UUID", help=_TENANT_HELP),
 ) -> None:
     """Print the CREATE statements for every owned table the deps module binds.
 
@@ -161,7 +185,7 @@ def sql_command(
 
     from forze_postgres.kernel.catalog.owned import render_sql
 
-    relations = _relations(deps)
+    relations = _relations(deps, tenant)
     typer.echo(render_sql(relations.bound, version=__version__), nl=False)
 
 
@@ -289,6 +313,7 @@ def diff_command(
             "person is needed."
         ),
     ),
+    tenant: list[str] = typer.Option([], "--tenant", metavar="UUID", help=_TENANT_HELP),
     keep_retired: bool = typer.Option(
         False,
         "--keep-retired",
@@ -315,7 +340,7 @@ def diff_command(
     if not url:
         _fail(f"{DSN_ENV} is not set. {_ROLE_NOTE}", EXIT_CONFIG)
 
-    relations = _relations(deps)
+    relations = _relations(deps, tenant)
 
     try:
         deltas = _run(_read_deltas(url, relations.bound, keep_retired=keep_retired))

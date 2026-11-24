@@ -9196,3 +9196,120 @@ The rest change no decision:
 - **Action:** decided.
 
 **Drift count: 0.** Unit 34 now holds eight entries, D-342 to D-349, all `spec-gap`.
+
+# Unit 35 · RFC 0080 P2b — `--tenant` and the startup step
+
+Branch `feat/postgres-owned-schema-startup`, cut from `main` after #951. The second slice of
+P2 (row 38), as the maintainer accepted its plan on 2026-11-24: repeated `--tenant` (row 11)
+and the §5.4 startup step (rows 13 and 14).
+
+- Row 11 (`OPEN`) is decided by D-350 and row 13 (`OPEN`) by D-351.
+- Row 14 (`ASSUMED`) is departed from by D-352, a departure the maintainer accepted with the
+  plan.
+- D-353 fills the gap the step's grading leaves.
+- Row 1 (`LOCKED`) holds, and D-354 closes it out for the step.
+
+**Drift count: 0.** Five entries, D-350 to D-354: three `spec-gap` (D-350, D-351 and D-353),
+one departure the plan recorded (D-352, `spec-gap`) and one close-out.
+
+## D-350 — `--tenant` binds a tenant-scoped relation once per tenant
+
+- **Touches:** row 11 (`OPEN`).
+- **RFC said:** a repeated `--tenant`, or a tenant source; `--tenant` is the minimum.
+- **Built:**
+  - `forze schema sql` and `diff` take a repeated `--tenant UUID`
+    (`src/forze_cli/schema.py:69`, `:128`, `:141`).
+  - `resolve_owned_relations(deps, tenants=...)` calls each resolver for each tenant. It
+    awaits a resolver that returns an awaitable, as the adapters do through `resolve_value`
+    (`src/forze_postgres/execution/deps/owned.py:190`).
+  - The route carries the tenant, `counters.orders[<tenant>]`, and tenants whose resolver
+    names one table bind it once.
+  - An id that is not a UUID is a usage error (`2`), a tenant given twice binds once, and a
+    resolver's configuration error exits `78`.
+  - `owned_relations` stays synchronous and still skips a resolver.
+  - No tenant source: the command reads only the deps module, and a source would need the
+    tenancy plane's runtime.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:210`;
+  `tests/unit/test_forze_cli/test_schema_command.py:98`, `:115`.
+- **Class:** `spec-gap`. Row 11 left it to execution.
+- **Proposed row (RFC 0080):** `ASSUMED`. A repeated `--tenant` binds each tenant-scoped
+  relation once per tenant through the resolver, awaited where it returns an awaitable; there
+  is no tenant source.
+- **Action:** decided.
+
+## D-351 — The opt-in is `PostgresLifecycleModule(owned_schema=...)`
+
+- **Touches:** row 13 (`OPEN`).
+- **Built:**
+  - `PostgresLifecycleModule` takes `owned_schema: OwnedRelations | None` and
+    `owned_schema_step_name`, default `postgres_owned_schema_validate`
+    (`src/forze_postgres/execution/lifecycle/module.py:82`, `:85`).
+  - The application passes `owned_relations(deps)` over the deps module it wires, as it
+    passes `schema_specs`.
+  - The step is `postgres_owned_schema_validation_lifecycle_step(name, *, relations)`
+    (`src/forze_postgres/execution/lifecycle/owned_schema.py:156`), requiring the client
+    capability.
+  - With an introspector partition key and no tenant at startup, the step is skipped, as
+    the document step is (`:130`).
+  - A tenant-scoped relation is skipped with a warning.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:171`.
+- **Class:** `spec-gap`. Row 13 left it to execution.
+- **Proposed row (RFC 0080):** `ASSUMED`. The opt-in is
+  `PostgresLifecycleModule(owned_schema=owned_relations(deps))`, mirroring `schema_specs`.
+- **Action:** decided.
+
+## D-352 — The step also refuses whatever makes the adapter's writes fail
+
+- **Touches:** row 14 (`ASSUMED`): refuse a missing table, a missing required column, a type
+  mismatch or a missing required index, and warn on everything else.
+- **Found:** in planning, before code. Under row 14 alone, a table that breaks every write
+  would start, and the application would fail on its first write:
+  - a key on other columns, or a deferrable one;
+  - a unique index that breaks a conflict target;
+  - a column `NOT NULL` where the adapter writes `NULL`;
+  - a relation that is not a table;
+  - a partitioned table with no partition.
+- **Built:** those refuse too, beside row 14's four
+  (`src/forze_postgres/execution/lifecycle/owned_schema.py:30`). A narrower column, a
+  loosened `NOT NULL`, an optional column or a recommended index missing, a running build
+  and a retired index only warn. The maintainer accepted this departure with the P2b plan on
+  2026-11-24.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:104`;
+  `tests/integration/test_forze_postgres/test_pg_owned_schema_startup.py:66`, `:78`, `:91`,
+  `:115` on Postgres 18.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 14, widened: the step refuses whatever makes the adapter's
+  reads or writes fail, and warns about the rest.
+- **Action:** departed.
+
+## D-353 — The step grades the diff's blocks by a finding code
+
+- **Touches:** §5.4 ("runs the §5.3 comparison"); unlisted.
+- **Found:** the diff's output is text for a person. The step has to tell a required index
+  from a recommended one, and a refusal that breaks writes from one that does not, which the
+  printed text does not say reliably.
+- **Built:**
+  - Each block carries a `finding` code (`src/forze_postgres/kernel/catalog/owned/render.py:34`),
+    set where the diff makes it.
+  - The step refuses on the codes in `REFUSED_FINDINGS` and on a missing table, and warns with
+    each other block's first line (`owned_schema.py:76`).
+  - A test keeps every refused code one the diff sets.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:160`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. The startup step and the diff share one comparison;
+  the step grades its blocks by a finding code, not by their text.
+- **Action:** decided.
+
+## D-354 — Close-out: the startup step executes nothing
+
+- **Touches:** row 1 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:** the step reads the catalog through the application's introspector and raises
+  or logs. It executes no statement the diff would print
+  (`src/forze_postgres/execution/lifecycle/owned_schema.py:105`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_startup.py:66`:
+  a missing table is refused, not created.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 35 holds five entries, D-350 to D-354: four `spec-gap` and one
+close-out.

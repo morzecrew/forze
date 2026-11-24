@@ -10,12 +10,13 @@ A relation given as a tenant-scoped resolver names no single table until a tenan
 so it is skipped and reported, as document schema validation skips dynamic routes.
 """
 
-from collections.abc import Callable, Iterable, Mapping
-from typing import Protocol, final
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Protocol, cast, final
+from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.resolution import RelationSpec
+from forze.application.contracts.resolution import RelationSpec, resolve_value
 from forze.base.exceptions import exc
 
 from ...adapters.durable.schema import (
@@ -156,26 +157,63 @@ def _name_default_partition(
     )
 
 
+def _entries(deps: PostgresDepsModule) -> list[_Entry]:
+    return [
+        *_single("durable_run", deps.durable_run, durable_run_shape),
+        *_single("durable_step", deps.durable_step, durable_step_shape),
+        *_single("durable_schedule", deps.durable_schedule, durable_schedule_shape),
+        *_routes("outboxes", deps.outboxes, outbox_shape),
+        *_delivery_logs(deps.outboxes),
+        *_single("hlc_checkpoint", deps.hlc_checkpoint, hlc_checkpoint_shape),
+        *_routes("inboxes", deps.inboxes, inbox_shape),
+        *_routes("idempotencies", deps.idempotencies, idempotency_shape),
+        *_routes("counters", deps.counters, counter_shape),
+        *_single("principal_epochs", deps.principal_epochs, principal_epoch_shape),
+        *_single("rotating_credentials", deps.rotating_credentials, rotating_credentials_shape),
+    ]
+
+
 def owned_relations(deps: PostgresDepsModule) -> OwnedRelations:
     """Pair each owned table *deps* configures with the shape its configs declare.
+
+    A relation given as a tenant-scoped resolver is skipped; :func:`resolve_owned_relations`
+    binds it for the tenants it is given.
 
     :raises CoreException: ``configuration``, code ``postgres_owned_relation_shared``, when
         routes that name one table declare different tables for it, such as an outbox and an
         inbox.
     """
 
-    return _bind(
-        [
-            *_single("durable_run", deps.durable_run, durable_run_shape),
-            *_single("durable_step", deps.durable_step, durable_step_shape),
-            *_single("durable_schedule", deps.durable_schedule, durable_schedule_shape),
-            *_routes("outboxes", deps.outboxes, outbox_shape),
-            *_delivery_logs(deps.outboxes),
-            *_single("hlc_checkpoint", deps.hlc_checkpoint, hlc_checkpoint_shape),
-            *_routes("inboxes", deps.inboxes, inbox_shape),
-            *_routes("idempotencies", deps.idempotencies, idempotency_shape),
-            *_routes("counters", deps.counters, counter_shape),
-            *_single("principal_epochs", deps.principal_epochs, principal_epoch_shape),
-            *_single("rotating_credentials", deps.rotating_credentials, rotating_credentials_shape),
-        ]
-    )
+    return _bind(_entries(deps))
+
+
+async def resolve_owned_relations(
+    deps: PostgresDepsModule,
+    *,
+    tenants: Sequence[UUID],
+) -> OwnedRelations:
+    """:func:`owned_relations`, with each tenant-scoped relation bound once per tenant.
+
+    Each resolver is called for every tenant in *tenants*, and awaited when it returns an
+    awaitable, as the adapters resolve it. The route of each table it names carries the
+    tenant, ``outboxes.orders[<tenant>]``. Tenants whose resolver names one table bind it
+    once. With no tenants, a tenant-scoped relation is skipped, as by
+    :func:`owned_relations`.
+
+    :raises CoreException: as :func:`owned_relations`, and whatever a resolver raises.
+    """
+
+    entries: list[_Entry] = []
+
+    for route, relation, shape in _entries(deps):
+        if not callable(relation) or not tenants:
+            entries.append((route, relation, shape))
+            continue
+
+        for tenant in tenants:
+            # The spec as configured, so the resolver's result types the value.
+            spec = cast(RelationSpec, relation)
+            resolved = await resolve_value(spec, tenant)
+            entries.append((f"{route}[{tenant}]", resolved, shape))
+
+    return _bind(entries)

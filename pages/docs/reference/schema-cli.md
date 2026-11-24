@@ -10,8 +10,8 @@ page is the contract CI relies on. Forze prints SQL and never runs it.
 ## Commands
 
 ```text
-forze schema sql   --deps MODULE:ATTR
-forze schema diff  --deps MODULE:ATTR [--check] [--keep-retired]
+forze schema sql   --deps MODULE:ATTR [--tenant UUID ...]
+forze schema diff  --deps MODULE:ATTR [--tenant UUID ...] [--check] [--keep-retired]
 ```
 
 `--deps` names a `PostgresDepsModule`, or a sequence holding exactly one. Both commands
@@ -22,6 +22,12 @@ Routes that name one table are one table, with every column and index any of the
 declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 `diff` then exits `11`: a relation it never compared cannot be reported in sync.
+
+`--tenant`, repeated, binds each such relation once per tenant id: the resolver is called
+for the tenant, and awaited when it returns an awaitable, as the adapters resolve it. The
+route of each table it names carries the tenant, `outboxes.orders[<tenant>]`, and tenants
+whose resolver names one table bind it once. An id that is not a UUID is a usage error
+(`2`), and a resolver that refuses a tenant with a configuration error exits `78`.
 
 `sql` reads no database. It prints each table, then its required indexes, then its
 recommended ones, under a header naming the forze version, the table and its adapter. A

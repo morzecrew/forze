@@ -164,30 +164,32 @@ class RelationDelta:
 # ....................... #
 
 
-def _refusal(*lines: str, commented: tuple[str, ...] = ()) -> Block:
+def _refusal(*lines: str, commented: tuple[str, ...] = (), finding: str = "") -> Block:
     first, *rest = lines
 
-    return Block(comments=(f"REFUSED: {first}", *rest), commented=commented)
+    return Block(comments=(f"REFUSED: {first}", *rest), commented=commented, finding=finding)
 
 
-def _warning(line: str) -> Block:
-    return Block(comments=(f"WARNING: {line}",))
+def _warning(line: str, *, finding: str = "") -> Block:
+    return Block(comments=(f"WARNING: {line}",), finding=finding)
 
 
 def _add_column(relation: BoundOwnedRelation, column: OwnedColumn) -> Block:
     table = qualified(relation.schema, relation.name)
+    finding = "required_column_missing" if column.required else "column_missing"
 
     if fills_rows(column):
         statement = f"ALTER TABLE {table} ADD COLUMN {column_definition(column)};"
         comments = (column.label,) if column.label else ()
 
-        return Block(comments=comments, statement=statement)
+        return Block(comments=comments, statement=statement, finding=finding)
 
     return _refusal(
         f"column {quote_ident(column.name)} is missing from {table}, and it is NOT NULL "
         "with no literal default.",
         "Adding it rewrites or fails on a table with rows; it needs a data step.",
         commented=(f"ALTER TABLE {table} ADD COLUMN {column_definition(column)};",),
+        finding=finding,
     )
 
 
@@ -206,6 +208,7 @@ def _compare_column(
         return _refusal(
             f"column {name} of {table} is {found_type}, but forze declares {column.type}.",
             "A type change rewrites the table, so the diff never prints one.",
+            finding="type_family",
         )
 
     if narrower(column.type, found):
@@ -214,6 +217,7 @@ def _compare_column(
         return _refusal(
             f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
             "A value the adapter writes may not fit; widen the column.",
+            finding="narrower",
         )
 
     if not column.nullable and not found.not_null:
@@ -221,6 +225,7 @@ def _compare_column(
             f"column {name} of {table} admits NULL, but forze declares it NOT NULL.",
             "Setting it scans the table and fails on any NULL row; clear those first.",
             commented=(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;",),
+            finding="admits_null",
         )
 
     if column.nullable and found.not_null:
@@ -228,6 +233,7 @@ def _compare_column(
             f"column {name} of {table} is NOT NULL, but forze declares it nullable.",
             "The adapter writes NULL to it, and the column refuses those writes.",
             commented=(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL;",),
+            finding="refuses_null",
         )
 
     return None
@@ -247,6 +253,7 @@ def _declared_index(
     create = Block(
         comments=(index.label,),
         statement=create_index(relation, index, concurrently=True),
+        finding="required_index_missing" if index.required else "index_missing",
     )
 
     if not invalid:
@@ -260,7 +267,8 @@ def _declared_index(
             _warning(
                 f"index {names} on {describe_keys(index.keys)} is invalid while an index "
                 f"build may be running on {qualified(relation.schema, relation.name)}, so "
-                "nothing is printed for it. Run the diff again once the build ends."
+                "nothing is printed for it. Run the diff again once the build ends.",
+                finding="index_building",
             )
         ]
 
@@ -305,6 +313,7 @@ def _partitioned_index(
                 index.label,
             ),
             commented=(create_index(relation, index, concurrently=False),),
+            finding="required_index_missing" if index.required else "index_missing",
         )
     ]
 
@@ -334,6 +343,7 @@ def _missing_partitions(relation: BoundOwnedRelation, catalog: CatalogRelation) 
         Block(
             comments=(warning, "Its DEFAULT partition takes every row until yours exist:"),
             commented=(default_partition(relation).statement or "",),
+            finding="no_partition",
         )
     ]
 
@@ -449,6 +459,7 @@ def _conflicting_uniques(
                         headline,
                         "It breaks the adapter's writes, and foreign keys depend on it: drop "
                         "them first, then the index, once forze's index exists.",
+                        finding="conflict_target",
                     )
                 )
                 continue
@@ -463,6 +474,7 @@ def _conflicting_uniques(
                     headline,
                     "It breaks the adapter's writes; drop it once forze's index exists.",
                     commented=(drop,),
+                    finding="conflict_target",
                 )
             )
 
@@ -561,6 +573,7 @@ def diff_relation(
                     f"{table} is {_KIND_NAMES.get(catalog.kind, 'another kind of relation')}, "
                     "not a plain table.",
                     "The diff compares nothing else on it.",
+                    finding="not_a_table",
                 ),
             ),
         )
@@ -584,6 +597,7 @@ def diff_relation(
             _refusal(
                 f"the primary key of {table} is on {found_key}, but forze declares {declared_key}.",
                 f"The adapter writes with ON CONFLICT {declared_key}, which needs that key.",
+                finding="primary_key",
             )
         )
 
@@ -593,6 +607,7 @@ def diff_relation(
                 f"the primary key of {table} is DEFERRABLE.",
                 "ON CONFLICT never takes a deferrable key as its arbiter, so the adapter's "
                 "writes fail; recreate it NOT DEFERRABLE.",
+                finding="primary_key",
             )
         )
 

@@ -5,8 +5,10 @@
   Units 31 and 32 (D-307 to D-331). The maintainer accepted their proposed rows on 2026-11-24
   (rows 4, 10, 12 and 17, and rows 18–26), which settle §10 Q2 and Q3. **P2a is built**: the
   other eight store tables, structured `since`/`retired_in` and `--keep-retired`, recorded in
-  Unit 33 (D-332 to D-341), whose proposed rows await the maintainer. **P2b and P2c are next;
-  P3 is demand-gated.** Row 2's amendment to the beta rule was accepted on 2026-11-04 (§10 Q1).
+  Units 33 and 34 (D-332 to D-349). **P2b is built**: repeated `--tenant` and the §5.4
+  startup step, recorded in Unit 35 (D-350 to D-354). The proposed rows of Units 33 to 35
+  await the maintainer. **P2c is next; P3 is demand-gated.** Row 2's amendment to the beta
+  rule was accepted on 2026-11-04 (§10 Q1).
 - **Scope:** Moves the DDL for the Postgres tables forze owns out of docstrings and markdown
   into one declaration per table, kept in code. Adds a `forze schema` CLI group:
   - `sql` prints the `CREATE` statements a fresh install needs;

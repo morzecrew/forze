@@ -39,11 +39,12 @@ from .execution import (
     postgres_document_schema_specs,
     postgres_document_schema_validation_lifecycle_step,
     postgres_lifecycle_step,
+    postgres_owned_schema_validation_lifecycle_step,
     routed_postgres_lifecycle_step,
     validate_postgres_document_schemas,
     warm_postgres_catalog,
 )
-from .execution.deps.owned import OwnedRelations, owned_relations
+from .execution.deps.owned import OwnedRelations, owned_relations, resolve_owned_relations
 from .kernel.catalog.owned import (
     BoundOwnedRelation,
     OwnedColumn,
@@ -89,6 +90,7 @@ __all__ = [
     "postgres_document_schema_spec_for_binding",
     "postgres_document_schema_specs",
     "postgres_document_schema_validation_lifecycle_step",
+    "postgres_owned_schema_validation_lifecycle_step",
     "warm_postgres_catalog",
     "PostgresDocumentSchemaSpec",
     "validate_postgres_document_schemas",
@@ -115,4 +117,5 @@ __all__ = [
     "OwnedRelations",
     "Retired",
     "owned_relations",
+    "resolve_owned_relations",
 ]

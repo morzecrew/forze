@@ -31,6 +31,10 @@ class Block:
     commented: tuple[str, ...] = ()
     """Statements printed commented out, for a person to decide on."""
 
+    finding: str = ""
+    """What the block reports, for a reader that grades it rather than prints it, such as the
+    startup check. Empty for a block no such reader acts on."""
+
     # ....................... #
 
     def text(self) -> str:
