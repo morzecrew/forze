@@ -200,8 +200,8 @@ class RoleAssignmentPort(Protocol):
         """Revoke every role the subject holds in *tenant_id*, leaving global ones.
 
         What leaving a tenant calls, so *tenant_id* need not be the bound tenant: the call only
-        removes grants. Over a tenant-aware binding store, which reaches only the bound
-        tenant's rows, a different tenant is refused instead.
+        removes grants, and runs with *tenant_id* bound, so storage that follows the bound
+        tenant reaches that tenant's rows.
         """
         ...  # pragma: no cover
 

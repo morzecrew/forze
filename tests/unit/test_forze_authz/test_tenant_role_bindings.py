@@ -426,6 +426,17 @@ class _Partitioned(_Bindings):
         self.partition[self._rows[-1].id] = self._bound()
 
 
+def test_binding_ports_disagreeing_on_tenant_awareness_are_refused() -> None:
+    # A tenant-aware query over a command port that is not would write a binding outside the
+    # tenant's partition, where the reads that select it never look.
+    w = _Wiring(None)
+
+    with pytest.raises(CoreException) as caught:
+        attrs.evolve(w.adapter, pr_binding_qry=_Bindings(tenant_aware=True))
+
+    assert caught.value.code == "authz_binding_ports_tenancy_mismatch"
+
+
 class TestOverAPartitionedStore:
     """A store that confines rows to the bound tenant, holding rows written before
     ``scope_tenant_id`` existed, which read as ``None`` without being held everywhere."""

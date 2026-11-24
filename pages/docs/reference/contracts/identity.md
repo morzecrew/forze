@@ -141,7 +141,7 @@ A *subject* below is any of `PrincipalRef \| UUID \| AuthnIdentity \| AuthzSubje
 | | `authorize_sensitive_resource(request)` | `AuthzSensitiveAccessRequest` → `bool`; a delegated subject passes only when every principal in its chain does |
 | `GrantQueryPort` | `resolve_effective_grants(subject, *, scope=None)` | the subject's `EffectiveGrants` |
 | `RoleAssignmentPort` | `assign_role(subject, role_key, *, scope=None)` · `revoke_role(…)` | `role_key` names a catalog role. The binding is held in the bound tenant, else in `scope`'s tenant, else in every tenant ([roles in one tenant](../../identity-tenancy-enc/identity.md#roles-in-one-tenant)). A revoke inside a tenant of a role held in every tenant is refused with `conflict`, `authz.role_held_globally` (409) |
-| | `revoke_tenant_roles(subject, *, tenant_id)` | removes the subject's bindings in that tenant and keeps global ones; what `detach_principal` calls, from whichever tenant is bound. A tenant-aware binding store needs that tenant bound |
+| | `revoke_tenant_roles(subject, *, tenant_id)` | removes the subject's bindings in that tenant and keeps global ones; what `detach_principal` calls, from whichever tenant is bound; it runs with `tenant_id` bound, so storage that follows the bound tenant reaches its rows |
 | | `list_roles(subject, *, scope=None)` | `frozenset[RoleRef]`: global roles plus the bound tenant's |
 | `PrincipalRegistryPort` | `ensure_principal(principal_id, kind, *, is_active=True)` | idempotent create-or-return; `kind` is `"user"` or `"service"` |
 | | `create_principal(kind)` · `get_principal(principal_id)` | a new `PrincipalRef`; a known one, or `None` |

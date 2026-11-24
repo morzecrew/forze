@@ -8194,3 +8194,21 @@ revoke and its membership removal leaves a role pre-staged for a non-member. Row
 - **Action:** decided.
 
 **Drift count: 0.** Unit 30 now holds three entries, D-303 to D-305, all `spec-gap`.
+
+## D-306 — The binding ports agree on tenant awareness or are refused
+
+- **Touches:** D-303, which reads partitioning off the query port.
+- **Found:** in review on #947. Query and command routes are registered apart. A tenant-aware
+  binding query over a command port that is not would write a binding outside the partition the
+  reads select from, so a role assigned in T would not grant there.
+- **Built:** `RoleAssignmentAdapter` refuses at construction a principal-role binding query and
+  command port that disagree on tenant awareness (`configuration`,
+  `authz_binding_ports_tenancy_mismatch`)
+  (`src/forze_identity/authz/adapters/role_assignment.py:81`).
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:429`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. The principal-role binding query and command ports
+  are both tenant-aware or neither, refused at construction otherwise.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 30 now holds four entries, D-303 to D-306, all `spec-gap`.

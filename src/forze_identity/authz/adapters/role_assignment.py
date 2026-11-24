@@ -76,6 +76,15 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
             ),
         )
 
+        # The two are registered apart. A tenant-aware query over a command port that is not
+        # would write bindings outside the partition the reads that select them look in.
+        if bool(self.pr_binding_qry.tenant_aware) != bool(self.pr_binding_cmd.tenant_aware):
+            raise exc.configuration(
+                "The principal-role binding query and command ports disagree on tenant "
+                "awareness; wire both tenant-aware or neither.",
+                code="authz_binding_ports_tenancy_mismatch",
+            )
+
     # ....................... #
 
     async def assign_role(
