@@ -84,6 +84,7 @@ def _found(
     default_opclasses: bool = True,
     default_collations: bool = True,
     immediate: bool = True,
+    nulls_not_distinct: bool = False,
 ) -> IndexShapeInfo:
     """An index as the catalog reports it: each key deparsed bare, its order in flags."""
 
@@ -105,7 +106,7 @@ def _found(
         method=method,
         unique=unique,
         primary=primary,
-        nulls_not_distinct=False,
+        nulls_not_distinct=nulls_not_distinct,
         predicate=predicate,
         valid=valid,
         backs_constraint=backs_constraint,
@@ -503,6 +504,7 @@ class TestDiff:
             ("attempts", "int2", "smallint"),
             ("run_id", "varchar", "character varying(36)"),
             ("status", "character(8)", "character(8)"),
+            ("idempotency_key", "name", "name"),
         ],
     )
     def test_a_narrower_column_of_the_same_family_is_refused(
@@ -633,6 +635,72 @@ class TestDiff:
 
         assert diff_outcome([delta]) == "refusal"
         assert "deferrable" in _text(delta)
+
+    @pytest.mark.parametrize(
+        ("keys", "name"),
+        [
+            # A full index on a partial conflict target's columns is inferred too.
+            (("coalesce_key",), "deferred_coalesce"),
+            # ON CONFLICT on the primary key's columns infers a second unique index on them.
+            (("run_id",), "deferred_run_id"),
+        ],
+    )
+    def test_any_deferrable_constraint_on_a_conflict_target_is_refused(
+        self, keys: tuple[str, ...], name: str
+    ) -> None:
+        relation = _run()
+        deferred = _found(keys, name=name, unique=True, backs_constraint=True, immediate=False)
+        delta = diff_relation(relation, _with(_in_sync(relation), add=[deferred]))
+
+        assert diff_outcome([delta]) == "refusal"
+        assert f"-- ALTER TABLE bi.durable_run DROP CONSTRAINT {name};" in _text(delta)
+
+    @pytest.mark.parametrize("backs_constraint", [False, True])
+    def test_a_nulls_not_distinct_index_on_a_nullable_conflict_key_is_refused(
+        self, backs_constraint: bool
+    ) -> None:
+        # Two runs without a key would collide on it.
+        relation = _run()
+        nnd = _found(
+            ("idempotency_key",),
+            name="nnd",
+            unique=True,
+            backs_constraint=backs_constraint,
+            nulls_not_distinct=True,
+        )
+        delta = diff_relation(relation, _with(_in_sync(relation), add=[nnd]))
+        drop = (
+            "-- ALTER TABLE bi.durable_run DROP CONSTRAINT nnd;"
+            if backs_constraint
+            else "-- DROP INDEX CONCURRENTLY bi.nnd;"
+        )
+
+        assert diff_outcome([delta]) == "refusal"
+        assert drop in _text(delta)
+
+    def test_a_varchar_columns_predicate_matches_the_declared_one(self) -> None:
+        # On a varchar column Postgres 18 stores ((status)::text = 'pending'::text).
+        relation = _run()
+        keys = ("coalesce_key",)
+        name = _index_named(relation, keys)
+        varchar_form = "(((status)::text = 'pending'::text) AND (attempts = 0))"
+        catalog = _with(
+            _in_sync(relation),
+            drop=[name],
+            add=[_found(keys, name=name, unique=True, predicate=varchar_form)],
+        )
+
+        assert diff_relation(relation, catalog).blocks == ()
+
+    def test_a_retired_index_still_being_built_is_not_dropped(self) -> None:
+        relation = _run()
+        building = _found(("status", "created_at"), name="old_scan", valid=False)
+        catalog = attrs.evolve(_with(_in_sync(relation), add=[building]), building=True)
+
+        delta = diff_relation(relation, catalog)
+
+        assert _statements(delta) == []
+        assert len(delta.warnings) == 1
 
     def test_a_cast_key_is_not_the_retired_column_key(self) -> None:
         relation = _run()

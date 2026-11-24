@@ -46,6 +46,7 @@ the transaction, keeps the diff from writing.
 | Declared index invalid, no build running | `DROP INDEX CONCURRENTLY <found name>`, then the create |
 | Declared index invalid while a build may be running | A warning, and nothing for that index |
 | A retired index that is a retired match | `DROP INDEX CONCURRENTLY <found name>`, after every create |
+| A retired match that is invalid while a build may be running | A warning, and no drop |
 | An index with a retired shape's keys that is not a retired match | A refusal naming the index and the condition it failed |
 | A retired column present | A note with the `DROP COLUMN` commented |
 | A column or index neither declared nor retired | Nothing |
@@ -53,19 +54,27 @@ the transaction, keeps the diff from writing.
 Type families: `text`, `varchar`, `char` and `citext` are one; `smallint`, `integer` and
 `bigint` are one; every other type is its own. Within a family, a narrower column than
 declared is refused, since a value the adapter writes may not fit: a smaller integer, or a
-text type with a length limit (`varchar(36)`, `char(8)`). A wider one is the application's
-call.
+text type with a length limit (`varchar(36)`, `char(8)`, and `name`, which holds 63 bytes). A
+wider one is the application's call.
 
 An index **matches** a declared one when it is a b-tree over the same keys in the same order
 and direction, with the same uniqueness and predicate, and default operator classes and
 collations. `INCLUDE` columns do not count against a match. A unique constraint's index
-matches a declared unique index, unless the constraint is `DEFERRABLE`. `ON CONFLICT` infers
-every unique index on its keys and refuses a deferrable one, even beside a `NOT DEFERRABLE`
-index, so the diff refuses such a constraint with its `DROP CONSTRAINT` commented, prints
-the `NOT DEFERRABLE` index if it is missing, and refuses a deferrable primary key. Keys and
-predicates are compared after normalizing: casts on literals
-and whitespace dropped, keywords and bare names case-insensitive, `AND` and `OR` compared as a
-tree. A cast on a column is kept, since it can change the value.
+matches a declared unique index, unless the constraint is `DEFERRABLE`.
+
+`ON CONFLICT` infers every unique index on its target's columns, a full one for a partial
+target included, and refuses a deferrable one even beside a `NOT DEFERRABLE` index. So the
+diff refuses a deferrable unique index on the columns of any target the adapter writes to:
+each declared unique index's and the primary key's. It also refuses a `NULLS NOT DISTINCT`
+unique index on a nullable key, on which two rows without a key collide. Each refusal carries
+the `DROP CONSTRAINT` or `DROP INDEX` commented, and the diff still prints forze's own index
+when it is missing.
+
+Keys and predicates are compared after normalizing: casts on literals and whitespace dropped,
+keywords and bare names case-insensitive, `AND` and `OR` compared as a tree. A cast on a
+column is kept, since it can change the value. In a predicate, a cast to plain `text` and the
+parentheses around a lone column are dropped: on a `varchar` column Postgres stores
+`status = 'pending'` as `((status)::text = 'pending'::text)`.
 
 A **retired match** has a retired shape's keys and is not unique, backs no constraint, has
 exactly the retired predicate, and has no `INCLUDE` columns, non-default operator classes or

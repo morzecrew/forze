@@ -8606,3 +8606,66 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds six entries, D-319 to D-324: five `spec-gap` and one
 `discovery`.
+
+## D-325 — Every conflict target is checked for a unique index that breaks it
+
+- **Touches:** D-324 (proposed), which checked only full declared unique indexes for a
+  deferrable constraint.
+- **Found:** in review on #949, three more ways one unique index breaks the adapter's writes:
+  - `ON CONFLICT (coalesce_key) WHERE …` also infers a full unique index on `coalesce_key`,
+    so a deferrable one there breaks coalescing;
+  - a deferrable unique constraint on the primary key's columns, separate from the key,
+    breaks the schedule's and the step journal's `ON CONFLICT`;
+  - a `NULLS NOT DISTINCT` unique index on `idempotency_key` makes a second run without a key
+    collide, though forze's own index is printed beside it.
+- **Built:** one check over every conflict target, each declared unique index and the
+  primary key: a unique index on the target's columns, in any order, whose predicate the
+  target implies, is refused when it is deferrable, or `NULLS NOT DISTINCT` on a nullable
+  key. Its `DROP CONSTRAINT` or `DROP INDEX` is commented
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:358`,
+  `src/forze_postgres/kernel/catalog/owned/diff.py:257`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:634`
+  runs the partial and the primary-key target's insert on Postgres 18, which fails as
+  reported, and `:655`; `tests/unit/test_forze_postgres/test_owned_schema.py:648`, `:659`, red
+  before the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-324's row, widened: every conflict target the
+  adapter writes to, partial ones and the primary key's columns included, is checked, and a
+  `NULLS NOT DISTINCT` unique index on a nullable key is refused too.
+- **Action:** departed.
+
+## D-326 — A predicate on a `varchar` column compares through `text`
+
+- **Touches:** D-319 (proposed), which kept every cast on a column.
+- **Found:** in review on #949, and confirmed on Postgres 18: on a `varchar` column the
+  declared `status = 'pending'` is stored as `((status)::text = 'pending'::text)`. The kept
+  cast made the coalesce index never match, so `--check` would exit 10 forever.
+- **Built:** in a predicate only, a cast to plain `text` (no length, no array) is dropped, and
+  a lone column in parentheses is unwrapped. Neither changes a value. A cast that can, such as
+  `::varchar(1)`, is still kept, and keys are compared as before
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:52`, `:67`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:596` alters
+  `status` to `varchar` on Postgres 18 and reads in sync;
+  `tests/unit/test_forze_postgres/test_owned_schema.py:681`, red before the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-319's row, with: in a predicate, a cast to plain
+  `text` and the parentheses around a lone column are dropped.
+- **Action:** departed.
+
+## D-327 — `name` is a narrower text type, and a retired index still building is not dropped
+
+- **Touches:** D-323 and row 17 (`ASSUMED`).
+- **Found:** in review on #949. `name` passed as `text`, though it holds 63 bytes and
+  truncates the rest. And a retired match that was invalid while an index build might be
+  running was still dropped, though that may be another session's build.
+- **Built:** `name` counts as length-limited (`src/forze_postgres/kernel/catalog/owned/matching.py:466`).
+  An invalid retired match under a possible build gets a warning and no drop, as a declared
+  index does (`src/forze_postgres/kernel/catalog/owned/diff.py:324`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:510`, `:695`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-323's row covers `name`; row 17 extends to retired indexes.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 32 now holds nine entries, D-319 to D-327: eight `spec-gap` and one
+`discovery`.

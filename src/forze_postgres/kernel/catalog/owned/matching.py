@@ -49,12 +49,60 @@ type Tree = str | tuple[str, tuple[Tree, ...]]
 # ....................... #
 
 
-def _tokens(text: str) -> list[str]:
+def _is_plain_text_cast(raw: list[tuple[str | None, str]], position: int) -> bool:
+    """Whether the cast whose type starts at *position* is to plain ``text``: no length, no
+    array. Such a cast never changes a value, only which operator compares it."""
+
+    while position < len(raw) and raw[position][0] == "space":
+        position += 1
+
+    if position >= len(raw) or raw[position][0] != "word" or raw[position][1].lower() != "text":
+        return False
+
+    after = position + 1
+
+    return after >= len(raw) or raw[after][1] not in ("(", "[")
+
+
+def _unwrap_columns(tokens: list[str]) -> list[str]:
+    """*tokens* with a lone column in parentheses unwrapped: ``(status)`` reads as ``status``.
+
+    Parentheses that follow a word belong to a call, ``lower(name)``, and are kept.
+    """
+
+    out: list[str] = []
+    position = 0
+
+    while position < len(tokens):
+        lone = (
+            tokens[position] == "("
+            and position + 2 < len(tokens)
+            and tokens[position + 2] == ")"
+            and tokens[position + 1] not in ("(", ")", " ")
+            and not (out and out[-1][:1].isalpha())
+        )
+
+        if lone:
+            out.append(tokens[position + 1])
+            position += 3
+            continue
+
+        out.append(tokens[position])
+        position += 1
+
+    return out
+
+
+def _tokens(text: str, *, predicate: bool = False) -> list[str]:
     """*text* split into tokens, whitespace kept as single spaces.
 
     A cast on a literal is dropped: it is the type Postgres gives the constant when it stores
     the predicate (``'pending'::text``). A cast on a column or an expression is kept, because it
     can change the value: ``status::varchar(1)`` truncates.
+
+    In a *predicate* a cast to plain ``text`` is dropped as well, and a lone column in
+    parentheses is unwrapped: on a ``varchar`` column Postgres stores ``status = 'pending'`` as
+    ``((status)::text = 'pending'::text)``, comparing through ``text``'s operator.
     """
 
     raw = [(match.lastgroup, match.group()) for match in _TOKEN.finditer(text)]
@@ -66,7 +114,9 @@ def _tokens(text: str) -> list[str]:
         kind, value = raw[position]
         position += 1
 
-        if kind == "cast" and last in ("literal", "number"):
+        if kind == "cast" and (
+            last in ("literal", "number") or (predicate and _is_plain_text_cast(raw, position))
+        ):
             position = _skip_type(raw, position)
             continue
 
@@ -86,7 +136,7 @@ def _tokens(text: str) -> list[str]:
         else:
             out.append(value)
 
-    return out
+    return _unwrap_columns(out) if predicate else out
 
 
 def _skip_type(raw: list[tuple[str | None, str]], position: int) -> int:
@@ -213,14 +263,14 @@ def _tree(tokens: list[str]) -> Tree:
     return "".join(piece for piece in tokens if piece != " ")
 
 
-def normalize_expression(text: str | None) -> Tree | None:
+def normalize_expression(text: str | None, *, predicate: bool = False) -> Tree | None:
     """*text* in the normal form two spellings of one expression share, or ``None`` for no
-    expression."""
+    expression. A *predicate* also drops casts to plain ``text`` (see :func:`_tokens`)."""
 
     if text is None:
         return None
 
-    return _tree(_tokens(text))
+    return _tree(_tokens(text, predicate=predicate))
 
 
 # ....................... #
@@ -278,7 +328,9 @@ def same_predicate(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     """Whether *index* restricts to the declared rows: absent on both, or equal when
     normalized."""
 
-    return normalize_expression(declared.where) == normalize_expression(index.predicate)
+    return normalize_expression(declared.where, predicate=True) == normalize_expression(
+        index.predicate, predicate=True
+    )
 
 
 def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
@@ -303,24 +355,37 @@ def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     )
 
 
-def deferrable_arbiter(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
-    """Whether ``ON CONFLICT`` on *declared*'s keys infers *index* and then refuses it.
+def conflicting_unique(
+    target: OwnedIndex,
+    index: IndexShapeInfo,
+    *,
+    nullable: bool,
+) -> str | None:
+    """What makes *index* break writes to the conflict target *target*, or ``None``.
 
-    Postgres infers every unique index over the conflict target's columns, in any order, and
-    rejects the statement when one of them is deferrable, even beside an immediate one. So a
-    deferrable constraint on those keys breaks the adapter's writes until it is dropped.
+    Postgres infers every unique index over the target's columns, in any order, whose
+    predicate the target's implies, a full index included for a partial target. It rejects
+    the statement when one of them is deferrable, even beside an immediate one. A unique index
+    built ``NULLS NOT DISTINCT`` on a *nullable* key also refuses a second row without a key,
+    which the adapter writes. Either one breaks the writes until it is dropped.
     """
 
-    return (
-        declared.unique
-        and declared.where is None
-        and index.unique
-        and not index.immediate
-        and not index.primary
-        and index.predicate is None
-        and {key for key, _, _ in catalog_keys(index)}
-        == {declared_key(key)[0] for key in declared.keys}
-    )
+    if not (target.unique and index.unique and not index.primary):
+        return None
+
+    if {key for key, _, _ in catalog_keys(index)} != {declared_key(key)[0] for key in target.keys}:
+        return None
+
+    if index.predicate is not None and not same_predicate(target, index):
+        return None
+
+    if not index.immediate:
+        return "is DEFERRABLE, and ON CONFLICT infers it and then refuses it"
+
+    if nullable and index.nulls_not_distinct:
+        return "is NULLS NOT DISTINCT, so two rows without a key collide on it"
+
+    return None
 
 
 def retired_mismatch(retired: OwnedIndex, index: IndexShapeInfo) -> str | None:
@@ -398,7 +463,10 @@ def narrower(declared: str, found: PostgresType) -> bool:
         return _INTEGER_BYTES[have] < _INTEGER_BYTES[want]
 
     if type_family(declared) == "text":
-        return have in ("char", "bpchar") or _LENGTH_LIMITED.match(found.formatted) is not None
+        # name holds 63 bytes and truncates the rest.
+        return (
+            have in ("char", "bpchar", "name") or _LENGTH_LIMITED.match(found.formatted) is not None
+        )
 
     return False
 

@@ -18,7 +18,7 @@ import attrs
 from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationKind, PostgresType
 from .matching import (
     catalog_type_family,
-    deferrable_arbiter,
+    conflicting_unique,
     describe_keys,
     narrower,
     retired_mismatch,
@@ -254,14 +254,54 @@ def _declared_index(
     return statements, []
 
 
+def _conflicting_uniques(
+    relation: BoundOwnedRelation,
+    catalog: CatalogRelation,
+) -> list[Block]:
+    """Refusals for every unique index that breaks a conflict target the adapter writes to:
+    each declared unique index, and the primary key."""
+
+    shape = relation.shape
+    table = qualified(relation.schema, relation.name)
+    nullable = {column.name for column in shape.columns if column.nullable}
+    primary = OwnedIndex(keys=shape.primary_key, unique=True, comment="the primary key")
+    refusals: list[Block] = []
+
+    for target in (*shape.indexes, primary):
+        for found in catalog.indexes:
+            reason = conflicting_unique(
+                target, found, nullable=any(key in nullable for key in target.keys)
+            )
+
+            if reason is None:
+                continue
+
+            name = quote_ident(found.name)
+            drop = (
+                f"ALTER TABLE {table} DROP CONSTRAINT {name};"
+                if found.backs_constraint
+                else f"DROP INDEX CONCURRENTLY {qualified(found.schema, found.name)};"
+            )
+            refusals.append(
+                _refusal(
+                    f"the unique index {name} on {describe_keys(target.keys)} of {table} {reason}.",
+                    "It breaks the adapter's writes; drop it once forze's index exists.",
+                    commented=(drop,),
+                )
+            )
+
+    return refusals
+
+
 def _retired_indexes(
     relation: BoundOwnedRelation,
     catalog: CatalogRelation,
-) -> tuple[list[Block], list[Block]]:
-    """Drops and refusals for every index that has a retired shape's keys."""
+) -> tuple[list[Block], list[Block], list[Block]]:
+    """Drops, refusals and warnings for every index that has a retired shape's keys."""
 
     drops: list[Block] = []
     refusals: list[Block] = []
+    warnings: list[Block] = []
     declared = relation.shape.indexes
 
     for retired in relation.shape.retired:
@@ -281,6 +321,17 @@ def _retired_indexes(
             name = qualified(found.schema, found.name)
             mismatch = retired_mismatch(shape, found)
 
+            # An invalid index may be another session's build still running (row 17).
+            if mismatch is None and not found.valid and catalog.building:
+                warnings.append(
+                    _warning(
+                        f"index {name} has a retired shape but is invalid while an index build "
+                        "may be running, so it is not dropped. Run the diff again once the "
+                        "build ends."
+                    )
+                )
+                continue
+
             if mismatch is None:
                 drops.append(
                     Block(
@@ -298,7 +349,7 @@ def _retired_indexes(
                 )
             )
 
-    return drops, refusals
+    return drops, refusals, warnings
 
 
 def diff_relation(
@@ -371,21 +422,13 @@ def diff_relation(
         created, warned = _declared_index(relation, index, catalog)
         statements.extend(created)
         warnings.extend(warned)
-        refusals.extend(
-            _refusal(
-                f"the constraint {quote_ident(found.name)} on {describe_keys(index.keys)} of "
-                f"{table} is DEFERRABLE.",
-                "ON CONFLICT infers it beside any other unique index on those keys and then "
-                "refuses it; drop it once the NOT DEFERRABLE index exists.",
-                commented=(f"ALTER TABLE {table} DROP CONSTRAINT {quote_ident(found.name)};",),
-            )
-            for found in catalog.indexes
-            if deferrable_arbiter(index, found)
-        )
 
-    drops, retired_refusals = _retired_indexes(relation, catalog)
+    refusals.extend(_conflicting_uniques(relation, catalog))
+
+    drops, retired_refusals, retired_warnings = _retired_indexes(relation, catalog)
     statements.extend(drops)
     refusals.extend(retired_refusals)
+    warnings.extend(retired_warnings)
 
     for retired in shape.retired:
         if isinstance(retired.shape, OwnedColumn) and retired.shape.name in catalog.columns:

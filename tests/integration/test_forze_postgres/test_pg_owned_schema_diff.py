@@ -591,3 +591,80 @@ async def test_a_column_narrower_than_declared_is_refused(
 
     assert diff_outcome(deltas) == "refusal"
     assert "narrower than forze's" in render_diff(deltas, version="9.9.9")
+
+
+async def test_a_varchar_status_column_still_matches_the_declared_predicate(
+    dsn: str, admin, schema: str
+) -> None:
+    # Postgres then stores the coalesce predicate as ((status)::text = 'pending'::text).
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    await admin.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN status TYPE varchar").format(
+            sql.Identifier(schema, "durable_run")
+        )
+    )
+
+    deltas = await _diff(dsn, relations)
+
+    assert diff_outcome(deltas) == "in_sync", render_diff(deltas, version="9.9.9")
+
+
+@pytest.mark.parametrize(
+    ("table", "definition", "conflict"),
+    [
+        (
+            "durable_run",
+            "ALTER TABLE {} ADD CONSTRAINT app_unique UNIQUE (coalesce_key) DEFERRABLE",
+            "(run_id, name, status, coalesce_key, created_at, updated_at) "
+            "VALUES (%s, 'fn', 'pending', 'c', now(), now()) "
+            "ON CONFLICT (coalesce_key) WHERE status = 'pending' AND attempts = 0 DO NOTHING",
+        ),
+        (
+            "durable_schedule",
+            "ALTER TABLE {} ADD CONSTRAINT app_unique UNIQUE (schedule_id) DEFERRABLE",
+            "(schedule_id, name, cron, next_fire_at, created_at, updated_at) "
+            "VALUES (%s, 'fn', '* * * * *', now(), now(), now()) "
+            "ON CONFLICT (schedule_id) DO NOTHING",
+        ),
+    ],
+    ids=["partial-target", "primary-key-columns"],
+)
+async def test_a_deferrable_constraint_on_any_conflict_target_is_refused(
+    dsn: str, admin, schema: str, table: str, definition: str, conflict: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    target = sql.Identifier(schema, table)
+    await admin.execute(sql.SQL(cast(LiteralString, definition)).format(target))
+
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="deferrable"):
+        await admin.execute(
+            sql.SQL(cast(LiteralString, "INSERT INTO {} " + conflict)).format(target), ("x",)
+        )
+
+    deltas = await _diff(dsn, relations)
+    text = render_diff(deltas, version="9.9.9")
+
+    assert diff_outcome(deltas) == "refusal"
+    assert f"-- ALTER TABLE {schema}.{table} DROP CONSTRAINT app_unique;" in text
+
+
+async def test_a_nulls_not_distinct_index_on_the_idempotency_key_is_refused(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    await admin.execute(
+        sql.SQL("CREATE UNIQUE INDEX app_nnd ON {} (idempotency_key) NULLS NOT DISTINCT").format(
+            sql.Identifier(schema, "durable_run")
+        )
+    )
+
+    deltas = await _diff(dsn, relations)
+
+    assert diff_outcome(deltas) == "refusal"
+    assert f"-- DROP INDEX CONCURRENTLY {schema}.app_nnd;" in render_diff(deltas, version="9.9.9")
