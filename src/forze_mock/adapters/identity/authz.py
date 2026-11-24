@@ -124,6 +124,14 @@ class MockRoleAssignmentPort(RoleAssignmentPort):
     ) -> None:
         _ = subject, role_key, scope
 
+    async def revoke_tenant_roles(
+        self,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        tenant_id: UUID,
+    ) -> None:
+        _ = subject, tenant_id
+
     async def list_roles(
         self,
         subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,

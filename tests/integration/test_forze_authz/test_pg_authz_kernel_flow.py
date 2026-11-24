@@ -79,7 +79,14 @@ async def _authz_pg_setup(pg_client: PostgresClient, *, suffix: str) -> Executio
         CREATE TABLE {role} ({base}, role_key text NOT NULL, description text);
         CREATE TABLE {grp} ({base}, group_key text NOT NULL, description text);
         CREATE TABLE {rp} ({base}, role_id uuid NOT NULL, permission_id uuid NOT NULL);
-        CREATE TABLE {pr} ({base}, principal_id uuid NOT NULL, role_id uuid NOT NULL);
+        CREATE TABLE {pr} (
+            {base},
+            principal_id uuid NOT NULL,
+            role_id uuid NOT NULL,
+            scope_tenant_id uuid
+        );
+        CREATE UNIQUE INDEX {pr}_uq
+            ON {pr} (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT;
         CREATE TABLE {pp} ({base}, principal_id uuid NOT NULL, permission_id uuid NOT NULL);
         CREATE TABLE {gp} ({base}, group_id uuid NOT NULL, principal_id uuid NOT NULL);
         CREATE TABLE {gr} ({base}, group_id uuid NOT NULL, role_id uuid NOT NULL);

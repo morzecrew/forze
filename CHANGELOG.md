@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`local_identity_deps` authenticates without an authz plane.** Where no `authz_policy_principals` store is wired, it admits exactly the principals its key file names (`ConfigurableLocalPrincipalEligibility`, `LocalPrincipalEligibility`), and keeps the default gate where one is. It takes `eligibility=`.
 
+- **A principal can hold a role in one tenant only.** A principal-role binding may name the tenant it holds in (`scope_tenant_id`), under one role catalog shared by every tenant. It grants only while that tenant is bound, and a binding naming none still holds everywhere.
+
 - **Providers can declare what they resolve.** `Requirement(key, route, remedy)` and `DeclaresRequirements` in `forze.application.contracts.deps`, and `ProviderStore.providers()` to walk a store's registrations.
 
 ### Changed
@@ -23,9 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An unregistered dependency a provider declares refuses the boot** (**Breaking**): `DepsRegistry.freeze()` raises `dependency_requirement_unbound`. The default eligibility gate needs `authz_policy_principals` (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle.
 
+- **Inside a tenant, `assign_role` and `revoke_role` act in that tenant** (**Breaking**): an unscoped `assign_role` in a tenant-bound invocation binds the role there, not in every tenant. `revoke_role` there refuses a role held in every tenant (`authz.role_held_globally`); revoke it with no tenant bound.
+
+- **The principal-role binding table gains `scope_tenant_id`** (**Breaking**): add the nullable column and a unique index on `(principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT` (Postgres 15+) before booting, dropping any `(principal_id, role_id)` pair constraint. The Postgres identity recipe has the migration.
+
+- **Leaving a tenant drops the roles held in it** (**Breaking**): `detach_principal` first calls the new `RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)`, which a custom port must add. `TenancyDepsModule(tenant_management=...)` must name `authz_route=...` or pass `detach_keeps_roles=True`.
+
 ### Fixed
 
-- ...
+- **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
 
 ## [0.24.1] - 2026-11-10
 

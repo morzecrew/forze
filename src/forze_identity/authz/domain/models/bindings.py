@@ -47,12 +47,18 @@ class PrincipalRoleBinding(Document):
     role_id: UUID = Field(frozen=True)
     """Role definition document id."""
 
+    scope_tenant_id: UUID | None = Field(default=None, frozen=True)
+    """The tenant this binding holds in. ``None`` holds in every tenant and in calls with no
+    tenant bound. Not ``tenant_id``: tenant-aware storage reserves that as its partition
+    column."""
+
 
 class CreatePrincipalRoleBindingCmd(CreateDocumentCmd):
     """Create principal-role binding."""
 
     principal_id: UUID = Field(frozen=True)
     role_id: UUID = Field(frozen=True)
+    scope_tenant_id: UUID | None = Field(default=None, frozen=True)
 
 
 class ReadPrincipalRoleBinding(ReadDocument):
@@ -60,6 +66,9 @@ class ReadPrincipalRoleBinding(ReadDocument):
 
     principal_id: UUID
     role_id: UUID
+    scope_tenant_id: UUID | None = None
+    """``None`` for a binding that holds in every tenant; also how a document written before
+    the field existed reads."""
 
 
 # ....................... #

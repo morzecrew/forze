@@ -152,9 +152,8 @@ def _warnings(logs: list[dict[str, object]]) -> list[dict[str, object]]:
 
 
 def test_global_mode_over_tenant_aware_ports_warns() -> None:
-    # Tenant-aware ports signal a multi-tenant deployment; global mode then
-    # shares grants across all tenants — warn (not error: platform-wide roles
-    # over tenant-partitioned stores can be intentional).
+    # Tenant-aware ports in global mode still partition by the bound tenant, which is
+    # rarely what global was chosen for — warn (not error: it works).
     with structlog.testing.capture_logs() as logs:
         GrantQueryAdapter(
             spec=AuthzSpec(name="main"),
@@ -165,7 +164,7 @@ def test_global_mode_over_tenant_aware_ports_warns() -> None:
     warnings = _warnings(logs)
 
     assert len(warnings) == 1
-    assert "shared across all tenants" in str(warnings[0]["event"])
+    assert "storage still partitions those ports" in str(warnings[0]["event"])
     assert "require_invocation_tenant" in str(warnings[0]["event"])
     assert warnings[0]["route"] == "main"
 

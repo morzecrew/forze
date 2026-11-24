@@ -128,6 +128,54 @@ CREATE TABLE authz_policy_principals (
 );
 ```
 
+Principal-role bindings (`principal_role_binding_spec`) carry the tenant a binding
+holds in, `scope_tenant_id`; `NULL` means every tenant
+([roles in one tenant](../identity-tenancy-enc/identity.md#roles-in-one-tenant)). The
+unique index is required: role assignment checks for an existing row and then inserts,
+and the index is what stops two concurrent assigns leaving two rows, one of which a revoke
+would miss.
+
+```sql
+CREATE TABLE authz_principal_role_bindings (
+    id uuid PRIMARY KEY,
+    rev integer NOT NULL,
+    created_at timestamptz NOT NULL,
+    last_update_at timestamptz NOT NULL,
+    principal_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    scope_tenant_id uuid
+);
+-- one row per principal, role and tenant, NULL (every tenant) counting as one value
+CREATE UNIQUE INDEX ON authz_principal_role_bindings
+    (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT;
+```
+
+`NULLS NOT DISTINCT` needs Postgres 15 or later. An existing table gains the column
+and the index in one migration, after refusing to run over duplicate rows, which the
+check-then-insert assign could leave behind. Drop a `UNIQUE (principal_id, role_id)`
+constraint in the same migration, or a role held in every tenant can never also be
+bound in one:
+
+```sql
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM authz_principal_role_bindings
+             GROUP BY principal_id, role_id HAVING count(*) > 1) THEN
+    RAISE EXCEPTION 'duplicate principal-role bindings: keep one row per pair before migrating';
+  END IF;
+END $$;
+ALTER TABLE authz_principal_role_bindings ADD COLUMN scope_tenant_id uuid;
+-- Postgres's default name for UNIQUE (principal_id, role_id), drop one named otherwise by its name
+ALTER TABLE authz_principal_role_bindings
+    DROP CONSTRAINT IF EXISTS authz_principal_role_bindings_principal_id_role_id_key;
+CREATE UNIQUE INDEX ON authz_principal_role_bindings
+    (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT;
+```
+
+SQL that reads or writes this table directly must follow the same rule once tenant rows
+exist. A reader keeps a row when `scope_tenant_id IS NULL OR scope_tenant_id = <bound
+tenant>`, and only `IS NULL` with no tenant bound. A writer sets `scope_tenant_id` on
+purpose, since leaving it out binds the role in every tenant.
+
 The remaining identity specs (identity mappings, invites, authz bindings and
 grants) follow the same mapping rule — apply the table above to their model
 fields, and startup validation will tell you, field by field, if a column

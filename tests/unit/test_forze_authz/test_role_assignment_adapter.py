@@ -63,6 +63,7 @@ def _adapter(**kwargs: object) -> RoleAssignmentAdapter:
     pr_binding_cmd.kill = AsyncMock()
 
     resolver = MagicMock(spec=AuthzGrantResolver)
+    resolver.invocation_tenant = MagicMock(return_value=None)
     for dep_name in (
         "permission_qry",
         "group_qry",

@@ -1,6 +1,13 @@
 # RFC 0082 — Tenant-scoped roles in the authorization plane
 
-- **Status:** 📝 Draft — P1 is one PR; P2 is demand-gated.
+- **Status:** 🚧 In progress — P1 is one PR; P2 is demand-gated.
+  - **P1 shipped**: tenant-held role bindings, the detach cascade and their wiring, recorded in
+    [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Units 29 and 30 (D-296 to D-306). It is
+    **breaking** for an unscoped assign or revoke inside a tenant (rows 6, 7), for every
+    deployment's binding table (row 2), and for tenant management, which must now name
+    `authz_route` or declare `detach_keeps_roles=True` (D-298).
+  - Every scheduled phase is built. The rows Units 29 and 30 propose wait on the maintainer, and
+    the RFC is marked complete once they are settled. P2 stays demand-gated.
 - **Scope:** Adds **tenant-held role bindings**: a principal-role binding may name the one tenant
   it holds in. A principal can then be `analyst` in one tenant and `viewer` in another, under one
   role catalog shared by every tenant, and a binding that names no tenant still holds everywhere.

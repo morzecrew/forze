@@ -207,6 +207,7 @@ from forze_identity.tenancy.execution import TenancyDepsModule
 
 TenancyDepsModule(
     tenant_management={"main"},
+    authz_route="main",  # detach revokes the roles held in the tenant
     tenant_provisioner=ObjectStorageTenantProvisioner(
         client=s3_client,
         bucket=lambda tid: f"tenant-{tid}",

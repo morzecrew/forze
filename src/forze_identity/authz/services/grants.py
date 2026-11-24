@@ -159,7 +159,13 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    def _invocation_tenant(self) -> UUID | None:
+    def invocation_tenant(self) -> UUID | None:
+        """The tenant bound on the invocation, which selects tenant-held role bindings.
+
+        Never a caller's :class:`AuthzScope`: with nothing bound, only bindings that hold in
+        every tenant apply, whatever scope is passed.
+        """
+
         # Read on every call: the runtime caches a built resolver for the whole process, so
         # the tenant bound when it was built is only the first request's.
         if self.ctx is None:
@@ -171,11 +177,13 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    def _require_scope_matches_invocation(self, scope: AuthzScope | None) -> None:
+    def require_scope_matches_invocation(self, scope: AuthzScope | None) -> None:
         """Fail closed when a requested scope tenant disagrees with the invocation tenant.
 
         Tenant isolation of grant resolution is enforced by the storage layer scoping
-        binding queries to the ambient invocation tenant. This adds a second, independent
+        tenant-aware binding queries to the ambient invocation tenant, and for tenant-held
+        role bindings by that tenant selecting them (:meth:`invocation_tenant`). This adds a
+        second, independent
         layer: if the caller passes a scope for a tenant other than the one the queries
         will actually run under, refuse — the grants would otherwise come from the ambient
         tenant while appearing to answer for the requested one. Only fires when both
@@ -185,7 +193,7 @@ class AuthzGrantResolver:
         if scope is None or scope.tenant_id is None:
             return
 
-        invocation_tenant_id = self._invocation_tenant()
+        invocation_tenant_id = self.invocation_tenant()
 
         if invocation_tenant_id is not None and scope.tenant_id != invocation_tenant_id:
             raise exc.internal(
@@ -226,7 +234,7 @@ class AuthzGrantResolver:
     ) -> frozenset[RoleRef]:
         """Roles from principal-role and group-role bindings (no lineage expansion)."""
 
-        self._require_scope_matches_invocation(scope)
+        self.require_scope_matches_invocation(scope)
 
         group_ids = await self._active_member_group_ids(principal_id)
         direct_ids = await self._direct_role_ids(principal_id, group_ids)
@@ -252,7 +260,7 @@ class AuthzGrantResolver:
         transaction; the derived permissions are asked of the providers every time.
         """
 
-        self._require_scope_matches_invocation(scope)
+        self.require_scope_matches_invocation(scope)
 
         cache = self.cache
 
@@ -269,7 +277,7 @@ class AuthzGrantResolver:
 
         else:
             # The tenant is read on every call: one entry never answers for another tenant.
-            key: GrantsCacheKey = (principal_id, self._invocation_tenant(), scope)
+            key: GrantsCacheKey = (principal_id, self.invocation_tenant(), scope)
             cached = cache.get(key)
 
             if cached is None:
@@ -304,6 +312,23 @@ class AuthzGrantResolver:
             return
 
         await invalidate_after_commit(self.ctx, self.cache, self.invalidation, principal_id)
+
+    async def forget_now(self, principal_id: UUID) -> None:
+        """Forget *principal_id* now, here and through :attr:`invalidation`, without waiting
+        for the current transaction.
+
+        For a write that may commit outside that transaction, such as one sent to another
+        tenant's own client: if the transaction then rolls back, a forget deferred to its
+        commit never runs. Call :meth:`forget` too, for the write that does commit with it.
+        """
+
+        if self.cache is None or self.ctx is None:
+            return
+
+        self.cache.forget(principal_id)
+
+        if self.invalidation is not None:
+            await self.invalidation.publish(self.ctx, principal_id)
 
     # ....................... #
 
@@ -349,7 +374,7 @@ class AuthzGrantResolver:
 
     async def _derive(self, principal_id: UUID) -> frozenset[DerivedPermissionRef]:
         if self.providers and self.key_check is not None:
-            await self.key_check.ensure(self.deps, self._invocation_tenant())
+            await self.key_check.ensure(self.deps, self.invocation_tenant())
 
         return await derive_permissions(
             self.providers, principal_id, self.ctx, timeout=self.provider_timeout
@@ -358,9 +383,15 @@ class AuthzGrantResolver:
     # ....................... #
 
     async def _direct_role_ids(self, principal_id: UUID, group_ids: Sequence[UUID]) -> set[UUID]:
-        """Role ids from principal-role bindings plus group-role bindings of *group_ids*."""
+        """Role ids from principal-role bindings plus group-role bindings of *group_ids*.
+
+        A principal-role binding holds when it names no tenant or names the bound one. The
+        tenant is matched here rather than in the query: Firestore refuses the null check the
+        query form needs, and the principal's rows are read whole either way.
+        """
 
         deps = self.deps
+        tenant_id = self.invocation_tenant()
 
         out = {
             row.role_id
@@ -368,6 +399,7 @@ class AuthzGrantResolver:
                 deps.pr_binding_qry,
                 filters={"$values": {"principal_id": principal_id}},
             )
+            if row.scope_tenant_id is None or row.scope_tenant_id == tenant_id
         }
         out.update(
             row.role_id for row in await _fetch_where_in(deps.gr_binding_qry, "group_id", group_ids)

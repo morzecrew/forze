@@ -40,7 +40,14 @@ from forze_identity.tenancy.application.specs import principal_tenant_binding_sp
 from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     CreatePrincipalTenantBindingCmd,
 )
-from tests.support.authz_grants import GRANT_SPECS, resolve_both_ways, wide_catalog
+from tests.support.authz_grants import (
+    GRANT_SPECS,
+    TENANT_ROLE_SPECS,
+    resolve_both_ways,
+    seeded_role_assignment,
+    tenant_held_roles,
+    wide_catalog,
+)
 from tests.support.execution_context import context_from_deps
 from tests.support.tenant_memberships import (
     TENANCY_SPECS,
@@ -124,26 +131,43 @@ async def test_a_tenant_with_more_members_than_one_page_lists_them_all(
     assert set(await adapter.list_tenant_principals(tenant)) == members
 
 
+def _routed_context(client: FirestoreClient, collection: str, specs: tuple[Any, ...]) -> Any:
+    routes = {
+        spec.name: ConfigurableFirestoreDocument(
+            config=FirestoreDocumentConfig(
+                read=("(default)", f"{collection}_{spec.name}"),
+                write=("(default)", f"{collection}_{spec.name}"),
+            ),
+        )
+        for spec in specs
+    }
+
+    return context_from_deps(
+        Deps.plain({FirestoreClientDepKey: client}).merge(
+            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
+        )
+    )
+
+
+async def test_tenant_held_role_bindings(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # Firestore refuses the null check a query on scope_tenant_id would need, so the tenant is
+    # matched over the principal's rows; this runs that path on the emulator.
+    ctx = _routed_context(firestore_client, unique_collection, TENANT_ROLE_SPECS)
+    ra, principal_id = await seeded_role_assignment(ctx)
+
+    await tenant_held_roles(ctx, ra, principal_id)
+
+
 async def test_a_principal_past_one_in_batch_resolves_in_full(
     firestore_client: FirestoreClient,
     unique_collection: str,
 ) -> None:
     # Firestore takes at most 30 values in one `in`: 39 roles to expand and 31 active groups
     # make every batched read split, and the grants must still match the row-by-row reads.
-    routes = {
-        spec.name: ConfigurableFirestoreDocument(
-            config=FirestoreDocumentConfig(
-                read=("(default)", f"{unique_collection}_{spec.name}"),
-                write=("(default)", f"{unique_collection}_{spec.name}"),
-            ),
-        )
-        for spec in GRANT_SPECS
-    }
-    ctx = context_from_deps(
-        Deps.plain({FirestoreClientDepKey: firestore_client}).merge(
-            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
-        )
-    )
+    ctx = _routed_context(firestore_client, unique_collection, GRANT_SPECS)
     principal_id, roles, permissions = await wide_catalog(ctx)
 
     assert await resolve_both_ways(ctx, principal_id) == (roles, permissions)

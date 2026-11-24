@@ -599,7 +599,7 @@ class TestOperationKind:
             handlers={"list": lambda c: _ListsTenants(manager=c.tenancy.require_manager("t"))}
         )
         frozen = reg.bind("list").as_query().finish().freeze()
-        ctx = context_from_modules(MockDepsModule(), TenancyDepsModule(tenant_management={"t"}))
+        ctx = context_from_modules(MockDepsModule(), TenancyDepsModule(tenant_management={"t"}, detach_keeps_roles=True))
 
         assert await run_operation(frozen, "list", None, ctx) == 0
 

@@ -12,6 +12,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 from forze_identity._routes import refuse_undeclared_overrides
@@ -56,6 +57,15 @@ class TenancyDepsModule(DepsModule):
     tenant also creates its per-tenant resources.
     """
 
+    authz_route: StrKey | None = attrs.field(default=None)
+    """Authz route whose role assignment ``detach_principal`` uses: leaving a tenant first
+    revokes the roles the principal holds in it. Required with :attr:`tenant_management`
+    unless :attr:`detach_keeps_roles` declares otherwise."""
+
+    detach_keeps_roles: bool = attrs.field(default=False)
+    """Declare that ``detach_principal`` leaves role bindings alone, for a deployment with
+    no authz plane. A principal attached again then holds whatever it held in the tenant."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -65,6 +75,28 @@ class TenancyDepsModule(DepsModule):
             field="tenant_resolvers",
             declared_field="tenant_resolver",
         )
+
+        if self.authz_route is not None and self.detach_keeps_roles:
+            raise exc.configuration(
+                "TenancyDepsModule got both authz_route and detach_keeps_roles=True: name the "
+                "authz route to revoke a leaving principal's roles, or keep them, not both.",
+                code="tenancy_detach_roles_ambiguous",
+            )
+
+        # No module sees both planes here, so the choice is asked of every deployment with
+        # tenant management; a default would silently keep a former member's roles.
+        if (
+            _normalize_route_set(self.tenant_management)
+            and self.authz_route is None
+            and not self.detach_keeps_roles
+        ):
+            raise exc.configuration(
+                "TenancyDepsModule registers tenant management, so detach_principal must know "
+                "what happens to the roles a principal holds in the tenant it leaves. Name the "
+                "authz route to revoke them (authz_route=...), or pass detach_keeps_roles=True "
+                "to keep them.",
+                code="tenancy_detach_roles_unset",
+            )
 
     # ....................... #
 
@@ -100,6 +132,7 @@ class TenancyDepsModule(DepsModule):
                         TenantManagementDepKey: {
                             name: ConfigurableTenantManagement(
                                 provisioner=self.tenant_provisioner,
+                                authz_route=self.authz_route,
                             )
                             for name in tm
                         },

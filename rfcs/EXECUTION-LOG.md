@@ -7949,3 +7949,266 @@ the fixes from #945's review. One of them extends D-290; the others change docs 
   `(PrincipalRegistryDepKey, authz_route)` and `(TokenLifecycleDepKey, <its route>)`. This
   replaces D-290's proposed row.
 - **Action:** decided.
+
+# Unit 29 · RFC 0082 P1 — tenant-held role bindings
+
+Branch `feat/authz-tenant-role-bindings`, cut from `main` after #945. RFC 0082 P1 per §12:
+§5.1–§5.8, the §6 tests and the §7 pages. Rows 1, 2, 4, 6 and 7 (`LOCKED`) hold as written, and
+D-302 closes them out. Rows 3, 8, 9, 11 to 14, 17 and 19 hold as written. Rows 15, 16 and 18 are
+decided by D-296 to D-298. Rows 5 and 10 are departed from by D-299 and D-298. The plan listed
+every one of these before any code was written, and the maintainer accepted it.
+
+The recipe's table and index pass startup schema validation with no warnings, run from the page
+itself (`tests/integration/test_forze_authn/test_pg_identity_docs_ddl.py`). A separate test proves
+the index refuses a second row per tenant and per none, and lets one of each stand side by side.
+
+**Drift count: 0.** Seven entries, D-296 to D-302: six `spec-gap` (D-296 to D-298 settle the `OPEN`
+rows, D-298 and D-299 depart from `ASSUMED` rows 10 and 5) and one close-out.
+
+## D-296 — The tenant is matched over the principal's rows, on every backend
+
+- **Touches:** row 15 (`OPEN`), §5.2, §5.3.
+- **RFC said:** settle whether the predicate runs in the binding query or as a Python filter by
+  whether every document adapter passes the conformance test with the query form.
+- **Built:** a Python filter, on every backend. `_direct_role_ids` reads the principal's rows as
+  it did and keeps a row when `scope_tenant_id` is `None` or the bound tenant
+  (`src/forze_identity/authz/services/grants.py:385`). The adapter's exact-tenant lookup does the
+  same over the role's rows.
+- **Why:** Firestore refuses the null check the query form needs (§3), so by the row's own test
+  the query form does not pass everywhere. One path beats a per-backend switch, and both reads
+  already fetched every row of the principal, so it adds no reads.
+- **Evidence:** `test_tenant_held_role_bindings` passes on the Firestore emulator, Mongo and
+  Postgres, and over mock storage
+  (`tests/unit/test_forze_authz/test_tenant_role_bindings.py:129`).
+- **Class:** `spec-gap`. Row 15 left it to execution.
+- **Proposed row (RFC 0082):** `ASSUMED`. The bound tenant selects principal-role bindings as a
+  filter over the principal's rows, on every backend.
+- **Action:** decided.
+
+## D-297 — The adapter reads the invocation tenant through its resolver
+
+- **Touches:** row 16 (`OPEN`), §5.3.
+- **RFC said:** pick how `RoleAssignmentAdapter` reads the invocation tenant by what the deps
+  factory already passes.
+- **Built:** through the resolver. The factory already gives the resolver the request context
+  (`src/forze_identity/authz/execution/deps/deps.py:47-66`), so the resolver's private tenant
+  read and scope check became public: `invocation_tenant()` and
+  `require_scope_matches_invocation()` (`grants.py:162`, `:180`). The adapter adds no field.
+- **Class:** `spec-gap`. Row 16 left it to execution.
+- **Proposed row (RFC 0082):** `ASSUMED`. `RoleAssignmentAdapter` reads the invocation tenant
+  through `AuthzGrantResolver.invocation_tenant()`.
+- **Action:** decided.
+
+## D-298 — Tenant management names its authz route or declares it keeps roles
+
+- **Touches:** row 18 (`OPEN`), row 10 (`ASSUMED`), §5.4.
+- **RFC said:** a runtime with tenant management and a role-assignment port but no `authz_route`
+  is refused at startup, detected at module build or when the management port is first resolved,
+  whichever is earliest and sees both modules.
+- **Found:** neither point sees both modules. A module sees only itself at construction, the
+  first resolve is at request time rather than startup, and the freeze check RFC 0081 added can
+  say "Y is missing" but not "X is registered without Y".
+- **Built:** `TenancyDepsModule` with `tenant_management` must name `authz_route=...` or pass
+  `detach_keeps_roles=True`. Naming neither is refused at construction
+  (`tenancy_detach_roles_unset`), and so is naming both (`tenancy_detach_roles_ambiguous`)
+  (`src/forze_identity/tenancy/execution/deps/module.py:83`, `:98`). With `authz_route` set, the
+  management factory declares `Requirement(RoleAssignmentDepKey, authz_route)`, so a route that
+  names authz but is not wired is refused at freeze
+  (`src/forze_identity/tenancy/execution/deps/deps.py:70`).
+- **Departure from row 10:** the trigger is wider than "tenant management and a role-assignment
+  port". A deployment with tenant management and no authz plane must now declare
+  `detach_keeps_roles=True`. Of the surveyed consumers only bi sets `tenant_management`, and it
+  is the consumer this RFC is for. The maintainer accepted this in the plan.
+- **Evidence:** `tests/unit/test_forze_tenancy/test_tenancy_deps_module.py:72`, `:102`.
+- **Class:** `spec-gap`. The row assumed a detection point that does not exist.
+- **Proposed row (RFC 0082):** `ASSUMED`. `TenancyDepsModule(tenant_management=...)` names
+  `authz_route` or declares `detach_keeps_roles=True`, refused at construction otherwise; with
+  `authz_route`, freezing requires the role assignment on that route.
+- **Action:** departed.
+
+## D-299 — Revoking a tenant's roles is not checked against the bound tenant
+
+- **Touches:** row 5 (`ASSUMED`), §5.3 ("Like the other writes, it refuses a `tenant_id` that
+  contradicts a bound tenant").
+- **Found:** detach runs from wherever the caller is bound. `LeaveTenant` lets a member leave any
+  tenant it belongs to (`src/forze_kits/aggregates/tenancy/handlers.py:131`), and
+  `RemoveMember` takes the tenant from its arguments
+  (`src/forze_kits/aggregates/tenancy_admin/handlers.py:81`). With the check, leaving T from a
+  request bound to U would fail the detach.
+- **Built:** `revoke_tenant_roles` skips the mismatch check
+  (`src/forze_identity/authz/adapters/role_assignment.py:146`). It only removes grants, so it
+  cannot widen one. A tenant-aware binding store is the exception: it reads only the bound
+  tenant's rows, so there a different tenant is refused (`:152`) rather than left in force. The
+  check keys on the store, not the spec's mode, because tenant management builds the port from a
+  bare `AuthzSpec(name=authz_route)`, whose mode is `global`. The first draft keyed it on the
+  mode, and self-review before the PR found it would silently keep the roles there. The other
+  writes keep the check, and run it before `effective_tenant` so a contradiction is refused as
+  `authz.scope_tenant_mismatch`, as row 5 says, not `tenant_mismatch`
+  (`role_assignment.py:198`).
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:336`, `:357`.
+- **Class:** `spec-gap`. Both callers were readable before code.
+- **Proposed row (RFC 0082):** `ASSUMED`. `assign_role` and `revoke_role` take their tenant as
+  row 5 says; `revoke_tenant_roles` takes it from its argument, refused only over a tenant-aware
+  binding store, which reaches the bound tenant's rows alone.
+- **Action:** departed.
+
+## D-300 — Detach drains every membership row
+
+- **Touches:** none; found in `detach_principal` while rewriting it for §5.4.
+- **Found:** it killed the first page of a principal's memberships in a tenant
+  (`find_many` without paging), so rows past it survived.
+- **Built:** it reads them through `_all_bindings`, the cursor drain the listings use
+  (`src/forze_identity/tenancy/adapters/management.py:138`). Fixed in passing with the
+  maintainer's agreement on the plan, and recorded under **Fixed** in the changelog.
+- **Evidence:** `tests/unit/test_forze_tenancy/test_tenant_management_adapter.py:218`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. `detach_principal` removes every membership row of
+  the pair.
+- **Action:** decided.
+
+## D-301 — `authz.role_held_globally` is documented on the port, not in the errors page
+
+- **Touches:** §7 (`reference/errors.md`: `authz.role_held_globally`).
+- **Found:** `pages/docs/reference/errors.md` documents error kinds and how they render
+  (`:11`, `:27`), and lists no individual code. One code there would be the page's only one.
+- **Built:** the code, its kind and status are on the `RoleAssignmentPort` row of
+  `pages/docs/reference/contracts/identity.md:143`, and in the assign and revoke table on the
+  identity page.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. `authz.role_held_globally` is documented where the
+  port is, not in the errors page.
+- **Action:** decided.
+
+## D-302 — Close-out: isolation, the representation and the write rules hold
+
+- **Touches:** rows 1, 2, 4, 6 and 7 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:**
+  - **Rows 1 and 2.** Only the binding carries a tenant: a nullable `scope_tenant_id` on
+    `PrincipalRoleBinding`, its create command and read model; catalogue rows are unchanged
+    (`src/forze_identity/authz/domain/models/bindings.py:41-70`).
+  - **Row 4.** Decisions, grant queries and `list_roles` select by the bound tenant only, and
+    with nothing bound only global rows hold, whatever scope is passed (`grants.py:385`).
+  - **Row 6.** An unscoped assign inside a tenant writes that tenant (`role_assignment.py:95`).
+  - **Row 7.** A revoke inside a tenant of a role held globally is refused with
+    `authz.role_held_globally`; with no tenant it removes every row of the role
+    (`role_assignment.py:126`).
+- **Evidence:**
+  - `test_tenant_role_bindings.py:129`, `:141`, `:233`, `:275`, which sabotages fail: the
+    resolver ignoring the tenant (4 failed), assign writing a global row (7), the revoke
+    ignoring a global row (4), the lookup ignoring the tenant (2), and `revoke_tenant_roles`
+    killing every row (2).
+  - The DST check `no_permission_outside_its_tenant` (`src/forze_dst/oracle/invariants.py:848`):
+    `tests/unit/test_forze_authz/test_tenant_role_bindings_dst.py:200` holds under the grants
+    cache. Seeding the role in every tenant makes it fire (`:203`), and the resolver ignoring
+    the tenant fails it.
+- **Action:** decided.
+
+# Unit 30 · RFC 0082 P1 review — stores that follow the bound tenant
+
+Branch `feat/authz-tenant-role-bindings` (#947): fixes from the PR's review. Two of them revise
+Unit 29's decisions, in D-303 and D-304. The rest change no decision:
+
+- A revoke now forgets the principal in a `finally`, so a kill that fails partway does not leave
+  the cache serving a deleted grant.
+- The DST invariant reads an event with no `outcome` as a success, because `record_operation`
+  records only returned operations and stamps none.
+- The recipe's migration drops Postgres's default-named `(principal_id, role_id)` constraint, and
+  a test runs that migration from the page against a pair-constrained table.
+
+One finding is refuted without a change. A concurrent `assign_role` landing between detach's
+revoke and its membership removal leaves a role pre-staged for a non-member. Row 11 allows that,
+§9 accepts it, and assigning right after the detach commits reaches the same state.
+
+**Drift count: 0.** Two entries, D-303 and D-304, both `spec-gap`.
+
+## D-303 — In a partitioned store, a row without a tenant is the bound tenant's
+
+- **Touches:** row 9 (`ASSUMED`), §5.6 ("In that configuration the column is redundant but
+  harmless"), and D-302's row 7 close-out.
+- **Found:** in review on #947. A store that confines rows to the bound tenant (tenant-aware, as
+  `require_invocation_tenant` demands) still holds rows written before `scope_tenant_id`
+  existed, and they read as `None`. Inside T, `revoke_role` took such a row for a global one and
+  refused with `authz.role_held_globally`. The suggested revoke with no tenant bound is refused
+  by that storage too, so an existing grant could not be revoked at all. `revoke_tenant_roles`
+  also skipped those rows, so leaving T kept them.
+- **Built:** a store is partitioned when its binding port is tenant-aware or the spec is
+  `require_invocation_tenant` (`src/forze_identity/authz/adapters/role_assignment.py:269`). There,
+  every row read is the bound tenant's: `None` and T both match T (`:281`), and the refusal applies
+  only to a shared store (`:124`). Resolution needed no change, because a row storage confines to
+  T was already held only in T.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:427` (revoke, assign
+  and detach over such rows). Treating every store as shared fails four tests.
+- **Class:** `spec-gap`. §5.6 considered new rows only.
+- **Proposed row (RFC 0082):** `ASSUMED`. Over a binding store that confines rows to the bound
+  tenant, a row naming no tenant is that tenant's binding, for assign, revoke and
+  `revoke_tenant_roles`.
+- **Action:** decided.
+
+## D-304 — Revoking a tenant's roles runs with that tenant bound
+
+- **Touches:** row 5 (`ASSUMED`) as D-299 departed from it, and row 10 (`ASSUMED`).
+- **Found:** in review on #947. A store can follow the bound tenant without being tenant-aware:
+  a relation resolved per tenant (the `namespace` tier) is a configuration fact the port does not
+  expose. D-299 refused another tenant only over a tenant-aware store. Leaving T from inside U
+  over such a relation read U's rows, kept T's, and then removed the membership, so attaching
+  again restored the roles.
+- **Built:** `revoke_tenant_roles` binds T, keeping the caller's identity, for its reads and
+  kills (`role_assignment.py:158`, `:290`). Any store that follows the bound tenant, by column or
+  by relation, then reaches T's rows. This replaces D-299's refusal. A resolver without a context
+  cannot rebind, and there a partitioned store bound to another tenant is still refused.
+- **Not covered:** a per-tenant relation that is not tenant-aware, in `global` mode, holding rows
+  written before the column. The adapter cannot tell it from a shared store, so those rows read
+  as global: a revoke in T refuses them, and leaving T keeps them. `require_invocation_tenant`
+  refuses ports that are not tenant-aware, so this is a per-tenant catalog wired as `global`.
+  Migrating those rows to their tenant closes it.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:469`. It fails without
+  the rebinding.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. `revoke_tenant_roles(subject, tenant_id=T)` runs with
+  T bound, from wherever the caller is bound. This replaces D-299's proposed row for that call.
+- **Action:** decided.
+
+## D-305 — Leaving from another tenant forgets the principal at once
+
+- **Touches:** D-304, row 13 (`ASSUMED`; the grants cache and the RFC 0068 broadcast do not
+  change), §5.5.
+- **Found:** in review on #947. With a client per tenant (the `dedicated` tier), D-304's
+  rebinding sends T's kills to T's own client, outside the caller's transaction, while `forget`
+  waits for that transaction to commit. If the caller's transaction rolls back, the kills stay
+  committed and the forget never runs, so the cache keeps serving the removed roles until its TTL.
+- **Built:** when `revoke_tenant_roles` rebinds to another tenant, it also forgets the
+  principal at once, here and through the broadcast, with the new
+  `AuthzGrantResolver.forget_now` (`src/forze_identity/authz/services/grants.py:316`,
+  `src/forze_identity/authz/adapters/role_assignment.py:180`). The deferred forget still runs at
+  commit, for kills that do commit with the caller's transaction, so there the early forget
+  costs one miss. Without a rebinding nothing changes. If the caller's transaction rolls back,
+  the membership stays and the roles are gone: §5.4's order, a member without roles.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:485`. Leaving from U
+  forgets before the commit, and leaving from T waits for it. Dropping the early forget fails
+  the first test.
+- **Class:** `spec-gap`. Row 13 holds for every write that commits with the caller's
+  transaction; this one may not.
+- **Proposed row (RFC 0082):** `ASSUMED`. `revoke_tenant_roles` from another tenant forgets
+  the principal at once as well as at commit.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 30 now holds three entries, D-303 to D-305, all `spec-gap`.
+
+## D-306 — The binding ports agree on tenant awareness or are refused
+
+- **Touches:** D-303, which reads partitioning off the query port.
+- **Found:** in review on #947. Query and command routes are registered apart. A tenant-aware
+  binding query over a command port that is not would write a binding outside the partition the
+  reads select from, so a role assigned in T would not grant there.
+- **Built:** `RoleAssignmentAdapter` refuses at construction a principal-role binding query and
+  command port that disagree on tenant awareness (`configuration`,
+  `authz_binding_ports_tenancy_mismatch`)
+  (`src/forze_identity/authz/adapters/role_assignment.py:81`).
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:429`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. The principal-role binding query and command ports
+  are both tenant-aware or neither, refused at construction otherwise.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 30 now holds four entries, D-303 to D-306, all `spec-gap`.
