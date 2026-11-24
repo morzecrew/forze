@@ -116,42 +116,44 @@ def _bind(entries: Iterable[_Entry]) -> OwnedRelations:
             found, route=f"{found.route}, {route}", shape=found.shape.union(shape)
         )
 
-    bound = tuple(_name_default_partition(relation, tables) for relation in tables.values())
+    # Every name a partition could take, the bound tables' and each one already handed out.
+    taken = set(tables)
+    bound = tuple(_name_default_partition(relation, taken) for relation in tables.values())
 
     return OwnedRelations(bound=bound, skipped=tuple(skipped))
 
 
 def _name_default_partition(
     relation: BoundOwnedRelation,
-    tables: Mapping[tuple[str, str], BoundOwnedRelation],
+    taken: set[tuple[str, str]],
 ) -> BoundOwnedRelation:
-    """*relation* with a ``DEFAULT`` partition name no other bound table holds.
+    """*relation* with a ``DEFAULT`` partition name nothing in *taken* holds, which it then
+    adds to *taken*.
 
-    ``<name>_default`` is kept where it is free. Where another table already holds it, such
-    as an outbox ``events_default`` beside the log ``events``, the hashed form is taken.
+    ``<name>_default`` is kept where it is free. Where a bound table or an earlier partition
+    already holds it, such as an outbox ``events_default`` beside the log ``events``, the
+    hashed form is taken.
 
     :raises CoreException: ``configuration``, code ``postgres_owned_partition_name_taken``,
-        when bound tables hold both forms.
+        when both forms are taken.
     """
 
     if relation.shape.partitioned_by is None:
         return relation
 
-    taken = {name for schema, name in tables if schema == relation.schema}
+    for hashed in (False, True):
+        name = default_partition_name(relation.name, hashed=hashed)
 
-    if default_partition_name(relation.name) not in taken:
-        return relation
+        if (relation.schema, name) not in taken:
+            taken.add((relation.schema, name))
 
-    name = default_partition_name(relation.name, hashed=True)
+            return relation if not hashed else attrs.evolve(relation, default_partition=name)
 
-    if name in taken:
-        raise exc.configuration(
-            f"Every name for the DEFAULT partition of {relation.schema}.{relation.name} is "
-            "taken by another table the deps module binds; rename one of them.",
-            code="postgres_owned_partition_name_taken",
-        )
-
-    return attrs.evolve(relation, default_partition=name)
+    raise exc.configuration(
+        f"Every name for the DEFAULT partition of {relation.schema}.{relation.name} is taken "
+        "by another table the deps module binds, or another table's partition; rename one.",
+        code="postgres_owned_partition_name_taken",
+    )
 
 
 def owned_relations(deps: PostgresDepsModule) -> OwnedRelations:

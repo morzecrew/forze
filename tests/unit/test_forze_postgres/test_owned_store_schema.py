@@ -520,6 +520,31 @@ class TestDeliveryLog:
             "PARTITION OF app.events DEFAULT"
         ]
 
+    def test_two_partitions_never_take_one_name(self) -> None:
+        # events takes the hashed name, which is the plain one of the log events_<hash>.
+        digest = default_partition_name("events", hashed=True).removesuffix("_default")
+        deps = PostgresDepsModule(
+            client=PostgresClient(),
+            outboxes={
+                "a": _outbox(
+                    relation=("app", "events_default"),
+                    storage="consume",
+                    delivery_log=("app", "events"),
+                ),
+                "b": _outbox(
+                    relation=("app", "other"), storage="consume", delivery_log=("app", digest)
+                ),
+            },
+        )
+
+        text = render_sql(owned_relations(deps).bound, version="9.9.9")
+        partitions = [
+            s.split(" PARTITION OF ")[0] for s in split_sql(text) if " PARTITION OF " in s
+        ]
+
+        assert len(partitions) == 2
+        assert len(set(partitions)) == 2
+
     def test_bound_tables_holding_both_partition_names_are_refused(self) -> None:
         hashed = default_partition_name("events", hashed=True)
         deps = PostgresDepsModule(

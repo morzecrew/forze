@@ -9174,3 +9174,25 @@ The rest change no decision:
 - **Action:** decided.
 
 **Drift count: 0.** Unit 34 now holds seven entries, D-342 to D-348, all `spec-gap`.
+
+## D-349 — Binding reserves each partition name it hands out
+
+- **Touches:** D-348 (proposed).
+- **Found:** in review on #951. D-348 checked a partition name against the bound tables only.
+  - The log `events`, beside an outbox `events_default`, took the hashed
+    `events_<hash>_default`.
+  - The log `events_<hash>` then took the same name as its plain one, so the second
+    `CREATE TABLE` failed.
+- **Built:**
+  - Binding hands out names in bound order, against one set holding the bound tables and
+    each partition name already taken. Each chosen name joins the set
+    (`src/forze_postgres/execution/deps/owned.py:120`, `:126`).
+  - A plain name is still kept where it is free.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:523`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-348's row, plus: no two partitions bound together take one
+  name.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds eight entries, D-342 to D-349, all `spec-gap`.
