@@ -52,14 +52,18 @@ Type families: `text`, `varchar`, `char` and `citext` are one; `smallint`, `inte
 `bigint` are one; every other type is its own.
 
 An index **matches** a declared one when it is a b-tree over the same keys in the same order
-and direction, with the same uniqueness and predicate and default operator classes.
-`INCLUDE` columns do not count against a match. A unique constraint's index matches a declared
-unique index. Predicates are compared after normalizing: casts and whitespace dropped,
-keywords and bare names case-insensitive, `AND` and `OR` compared as a tree.
+and direction, with the same uniqueness and predicate, and default operator classes and
+collations. `INCLUDE` columns do not count against a match. A unique constraint's index
+matches a declared unique index, unless the constraint is `DEFERRABLE`: `ON CONFLICT` never
+takes a deferrable index as its arbiter, so the diff prints the index, and refuses a
+deferrable primary key. Keys and predicates are compared after normalizing: casts on literals
+and whitespace dropped, keywords and bare names case-insensitive, `AND` and `OR` compared as a
+tree. A cast on a column is kept, since it can change the value.
 
 A **retired match** has a retired shape's keys and is not unique, backs no constraint, has
-exactly the retired predicate, and has no `INCLUDE` columns or non-default operator classes.
-Anything else with those keys is refused, because it may be the application's own.
+exactly the retired predicate, and has no `INCLUDE` columns, non-default operator classes or
+non-default collations. Anything else with those keys is refused, because it may be the
+application's own.
 
 "A build may be running" means `pg_stat_progress_create_index` shows a build on the table, or
 one on a table the role cannot see. A role without `pg_read_all_stats` sees no table for

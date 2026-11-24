@@ -81,6 +81,8 @@ def _found(
     method: str = "btree",
     primary: bool = False,
     default_opclasses: bool = True,
+    default_collations: bool = True,
+    immediate: bool = True,
 ) -> IndexShapeInfo:
     """An index as the catalog reports it: each key deparsed bare, its order in flags."""
 
@@ -88,7 +90,7 @@ def _found(
     descending: list[bool] = []
 
     for key in keys:
-        column, _, order = key.partition(" ")
+        column, _, order = key.rpartition(" ") if key.upper().endswith(" DESC") else (key, "", "")
         bare.append(column)
         descending.append(order.upper() == "DESC")
 
@@ -107,6 +109,8 @@ def _found(
         valid=valid,
         backs_constraint=backs_constraint,
         default_opclasses=default_opclasses,
+        default_collations=default_collations,
+        immediate=immediate,
     )
 
 
@@ -276,6 +280,10 @@ class TestMatching:
             ("NOT (a AND b)", "NOT a AND b"),
             ("status = 'pending'", "status = 'done'"),
             ("status = 'pending'", "\"Status\" = 'pending'"),
+            # A cast on a column or an expression changes the value: varchar(1) truncates.
+            ("(status)::character varying(1)", "status"),
+            ("(idempotency_key)::character varying(10)", "idempotency_key"),
+            ("((status)::character varying(1) = 'x'::text)", "status = 'x'"),
         ],
     )
     def test_spellings_that_differ_in_meaning_stay_apart(self, left: str, right: str) -> None:
@@ -497,6 +505,53 @@ class TestDiff:
 
         assert diff_relation(relation, catalog).blocks == ()
 
+    def test_a_deferrable_unique_constraint_is_no_arbiter_so_the_index_is_built(self) -> None:
+        # ON CONFLICT never infers a deferrable index, INITIALLY IMMEDIATE included.
+        relation = _run()
+        keys = ("idempotency_key",)
+        catalog = _with(
+            _in_sync(relation),
+            drop=[_index_named(relation, keys)],
+            add=[
+                _found(keys, name="deferred", unique=True, backs_constraint=True, immediate=False)
+            ],
+        )
+
+        assert _statements(diff_relation(relation, catalog)) == [
+            "CREATE UNIQUE INDEX CONCURRENTLY ON bi.durable_run (idempotency_key);"
+        ]
+
+    def test_a_deferrable_primary_key_is_refused(self) -> None:
+        relation = _run()
+        catalog = _with(
+            _in_sync(relation),
+            drop=["pkey"],
+            add=[
+                _found(
+                    ("run_id",),
+                    name="pkey",
+                    unique=True,
+                    primary=True,
+                    backs_constraint=True,
+                    immediate=False,
+                )
+            ],
+        )
+
+        delta = diff_relation(relation, catalog)
+
+        assert diff_outcome([delta]) == "refusal"
+        assert "deferrable" in _text(delta)
+
+    def test_a_cast_key_is_not_the_retired_column_key(self) -> None:
+        relation = _run()
+        cast_index = attrs.evolve(
+            _found(("status", "created_at"), name="app_cast"),
+            keys=("(status)::character varying(1)", "created_at"),
+        )
+
+        assert diff_relation(relation, _with(_in_sync(relation), add=[cast_index])).blocks == ()
+
     def test_an_invalid_index_is_dropped_and_rebuilt(self) -> None:
         relation = _run()
         keys = ("status", "updated_at")
@@ -566,6 +621,7 @@ class TestDiff:
             ),
             (_found(("status", "created_at"), name="i", included=1), "INCLUDE columns"),
             (_found(("status", "created_at"), name="o", default_opclasses=False), "operator class"),
+            (_found(("status", "created_at"), name="l", default_collations=False), "collation"),
         ],
     )
     def test_an_index_with_the_retired_keys_that_is_not_a_retired_match_is_refused(

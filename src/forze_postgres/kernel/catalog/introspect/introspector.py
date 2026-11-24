@@ -753,7 +753,17 @@ class PostgresIntrospector:
                 FROM unnest(i.indclass::oid[]) AS o(opclass)
                 JOIN pg_opclass oc ON oc.oid = o.opclass
                 WHERE NOT oc.opcdefault
-              ) AS default_opclasses
+              ) AS default_opclasses,
+              NOT EXISTS (
+                SELECT 1
+                FROM generate_series(0, i.indnkeyatts - 1) AS k
+                JOIN pg_attribute a
+                  ON a.attrelid = i.indrelid
+                 AND a.attnum = i.indkey[k]
+                WHERE i.indkey[k] <> 0
+                  AND i.indcollation[k] <> a.attcollation
+              ) AS default_collations,
+              i.indimmediate AS is_immediate
             FROM pg_index i
             JOIN rel ON rel.oid = i.indrelid
             JOIN pg_class ic ON ic.oid = i.indexrelid
@@ -792,6 +802,8 @@ class PostgresIntrospector:
                     valid=bool(row.get("is_valid")),
                     backs_constraint=bool(row.get("backs_constraint")),
                     default_opclasses=bool(row.get("default_opclasses")),
+                    default_collations=bool(row.get("default_collations")),
+                    immediate=bool(row.get("is_immediate")),
                 )
             )
 

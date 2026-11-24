@@ -180,6 +180,16 @@ class IndexShapeInfo:
     default_opclasses: bool
     """Whether every key uses its type's default operator class."""
 
+    default_collations: bool
+    """Whether every column key sorts under its column's own collation, with no ``COLLATE``.
+
+    ``pg_get_indexdef`` leaves a key's collation out when asked for one column, so it is read
+    from ``indcollation`` instead."""
+
+    immediate: bool
+    """``indimmediate``: ``False`` for the index of a ``DEFERRABLE`` constraint, ``INITIALLY
+    IMMEDIATE`` included. ``ON CONFLICT`` never takes such an index as its arbiter."""
+
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExclusionConstraintInfo:

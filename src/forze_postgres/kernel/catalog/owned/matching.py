@@ -5,7 +5,8 @@ back as ``((status = 'pending'::text) AND (attempts = 0))``. Rendering the decla
 through the server would need a scratch ``CREATE INDEX``, which the diff's read-only role and
 ``READ ONLY`` transaction both refuse, so both sides are normalized as text instead:
 
-* casts are dropped, and string literals are kept as written;
+* a cast on a literal is dropped, and a cast on anything else is kept, since it can change
+  the value;
 * whitespace goes, and keywords and bare names compare case-insensitively;
 * ``AND`` and ``OR`` become a tree, so wrapping parentheses and nesting do not matter, but
   grouping does. ``a OR b AND c`` and ``(a OR b) AND c`` stay different.
@@ -49,19 +50,28 @@ type Tree = str | tuple[str, tuple[Tree, ...]]
 
 
 def _tokens(text: str) -> list[str]:
-    """*text* split into tokens with casts removed and whitespace kept as single spaces."""
+    """*text* split into tokens, whitespace kept as single spaces.
+
+    A cast on a literal is dropped: it is the type Postgres gives the constant when it stores
+    the predicate (``'pending'::text``). A cast on a column or an expression is kept, because it
+    can change the value: ``status::varchar(1)`` truncates.
+    """
 
     raw = [(match.lastgroup, match.group()) for match in _TOKEN.finditer(text)]
     out: list[str] = []
     position = 0
+    last: str | None = None
 
     while position < len(raw):
         kind, value = raw[position]
         position += 1
 
-        if kind == "cast":
+        if kind == "cast" and last in ("literal", "number"):
             position = _skip_type(raw, position)
             continue
+
+        if kind != "space":
+            last = kind
 
         if kind == "space":
             out.append(" ")
@@ -273,7 +283,9 @@ def same_predicate(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
 
 def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     """Whether *index* is the declared index: the same keys, uniqueness and predicate, with
-    default operator classes, and nulls distinct as Postgres has them by default.
+    default operator classes and collations, and nulls distinct as Postgres has them by
+    default. A unique one must also be immediate, since ``ON CONFLICT`` never takes a
+    deferrable index as its arbiter.
 
     ``INCLUDE`` columns do not count against it: they add payload and change neither which
     rows the index finds nor which tuples are unique.
@@ -284,8 +296,10 @@ def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
         and index.unique == declared.unique
         and same_predicate(declared, index)
         and index.default_opclasses
+        and index.default_collations
         and not index.nulls_not_distinct
         and not index.primary
+        and (index.immediate or not index.unique)
     )
 
 
@@ -310,6 +324,9 @@ def retired_mismatch(retired: OwnedIndex, index: IndexShapeInfo) -> str | None:
 
     if not index.default_opclasses:
         return "it uses a non-default operator class"
+
+    if not index.default_collations:
+        return "it sorts a key under another collation than its column's"
 
     return None
 

@@ -204,8 +204,9 @@ async def test_a_retired_index_with_a_hand_picked_name_is_dropped_under_that_nam
         "CREATE UNIQUE INDEX app_idx ON {} (status, created_at)",
         "CREATE INDEX app_idx ON {} (status, created_at) WHERE status = 'pending'",
         "ALTER TABLE {} ADD CONSTRAINT app_idx UNIQUE (status, created_at)",
+        'CREATE INDEX app_idx ON {} (status COLLATE "C", created_at)',
     ],
-    ids=["unique", "other-predicate", "constraint"],
+    ids=["unique", "other-predicate", "constraint", "collation"],
 )
 async def test_an_index_with_the_retired_keys_that_is_not_a_retired_match_is_kept(
     dsn: str, admin, schema: str, definition: str
@@ -223,6 +224,76 @@ async def test_an_index_with_the_retired_keys_that_is_not_a_retired_match_is_kep
     assert diff_outcome(deltas) == "refusal"
     assert _statements(text) == []
     assert "app_idx" in text
+
+
+async def test_an_index_on_a_cast_of_the_retired_keys_is_left_alone(
+    dsn: str, admin, schema: str
+) -> None:
+    # status::varchar(1) truncates, so the index is not the retired (status, created_at).
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    await admin.execute(
+        sql.SQL("CREATE INDEX app_cast ON {} ((status::varchar(1)), created_at)").format(
+            sql.Identifier(schema, "durable_run")
+        )
+    )
+
+    assert diff_outcome(await _diff(dsn, relations)) == "in_sync"
+
+
+async def test_a_deferrable_unique_constraint_is_no_arbiter_so_the_index_is_printed(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    table = sql.Identifier(schema, "durable_run")
+    await admin.execute(
+        sql.SQL("DROP INDEX {}").format(sql.Identifier(schema, "durable_run_idempotency_key_idx"))
+    )
+    await admin.execute(
+        sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT deferred_idem UNIQUE (idempotency_key) "
+            "DEFERRABLE INITIALLY IMMEDIATE"
+        ).format(table)
+    )
+
+    # What the adapter's conflict target meets on such a table.
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="deferrable"):
+        await admin.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id, name, status, idempotency_key, created_at, updated_at) "
+                "VALUES ('r', 'fn', 'pending', 'k', now(), now()) "
+                "ON CONFLICT (idempotency_key) DO NOTHING"
+            ).format(table)
+        )
+
+    statements = _statements(render_diff(await _diff(dsn, relations), version="9.9.9"))
+
+    assert statements == [
+        f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.durable_run (idempotency_key)"
+    ]
+
+
+async def test_a_deferrable_primary_key_is_refused(dsn: str, admin, schema: str) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    table = sql.Identifier(schema, "durable_schedule")
+    await admin.execute(
+        sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(
+            table, sql.Identifier("durable_schedule_pkey")
+        )
+    )
+    await admin.execute(
+        sql.SQL("ALTER TABLE {} ADD PRIMARY KEY (schedule_id) DEFERRABLE").format(table)
+    )
+
+    deltas = await _diff(dsn, relations)
+
+    assert diff_outcome(deltas) == "refusal"
+    assert "DEFERRABLE" in render_diff(deltas, version="9.9.9")
 
 
 async def test_an_index_left_invalid_by_a_failed_build_is_dropped_and_rebuilt(

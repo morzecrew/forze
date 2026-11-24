@@ -320,6 +320,15 @@ def diff_relation(
             )
         )
 
+    elif any(index.primary and not index.immediate for index in catalog.indexes):
+        refusals.append(
+            _refusal(
+                f"the primary key of {table} is DEFERRABLE.",
+                "ON CONFLICT never takes a deferrable key as its arbiter, so the adapter's "
+                "writes fail; recreate it NOT DEFERRABLE.",
+            )
+        )
+
     for column in shape.columns:
         found = catalog.columns.get(column.name)
 
