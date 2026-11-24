@@ -450,6 +450,20 @@ class TestDiff:
 
         assert diff_relation(relation, attrs.evolve(catalog, columns=columns)).blocks == ()
 
+    def test_a_declared_nullable_column_found_not_null_is_refused(self) -> None:
+        # enqueue(input_json=None) writes NULL, which the stricter column refuses.
+        relation = _run()
+        catalog = _in_sync(relation)
+        columns = {
+            **catalog.columns,
+            "input": PostgresType(base="jsonb", is_array=False, not_null=True),
+        }
+
+        delta = diff_relation(relation, attrs.evolve(catalog, columns=columns))
+
+        assert diff_outcome([delta]) == "refusal"
+        assert "-- ALTER TABLE bi.durable_run ALTER COLUMN input DROP NOT NULL;" in _text(delta)
+
     def test_a_declared_not_null_column_found_nullable_is_refused_with_the_statement_commented(
         self,
     ) -> None:

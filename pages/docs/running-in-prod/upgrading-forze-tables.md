@@ -96,6 +96,7 @@ exists. The same SQL, for the default relation names, is on the
     - a `NOT NULL` column with no literal default, which needs a data step;
     - a column whose type changed family (`text` and `citext` are one family, and so are
       the integer widths);
+    - a column made `NOT NULL` that forze writes `NULL` to;
     - a primary key on other columns than the adapter's `ON CONFLICT` needs;
     - an index with a retired shape's keys that might be your own, because it is unique,
       backs a constraint, or has another predicate.

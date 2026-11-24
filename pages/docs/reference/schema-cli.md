@@ -40,6 +40,7 @@ the transaction, keeps the diff from writing.
 | Column missing, `NOT NULL` with no literal default | A refusal, the `ADD COLUMN` commented |
 | Column type of another family | A refusal naming both types; never `ALTER … TYPE` |
 | Declared `NOT NULL`, found nullable | A refusal, the `SET NOT NULL` commented |
+| Declared nullable, found `NOT NULL` | A refusal, the `DROP NOT NULL` commented: the adapter writes `NULL` there |
 | Declared index absent | `CREATE [UNIQUE] INDEX CONCURRENTLY ON …`, with its comment |
 | Declared index invalid, no build running | `DROP INDEX CONCURRENTLY <found name>`, then the create |
 | Declared index invalid while a build may be running | A warning, and nothing for that index |

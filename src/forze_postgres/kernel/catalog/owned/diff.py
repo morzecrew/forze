@@ -183,6 +183,13 @@ def _compare_column(
             commented=(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;",),
         )
 
+    if column.nullable and found.not_null:
+        return _refusal(
+            f"column {name} of {table} is NOT NULL, but forze declares it nullable.",
+            "The adapter writes NULL to it, and the column refuses those writes.",
+            commented=(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL;",),
+        )
+
     return None
 
 
