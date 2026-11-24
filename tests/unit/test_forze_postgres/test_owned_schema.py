@@ -46,7 +46,11 @@ from forze_postgres.kernel.catalog.owned import (
     render_diff,
     render_sql,
 )
-from forze_postgres.kernel.catalog.owned.matching import declared_key, normalize_expression
+from forze_postgres.kernel.catalog.owned.matching import (
+    conflicting_unique,
+    declared_key,
+    normalize_expression,
+)
 from tests.support.sql_statements import split_sql
 
 pytestmark = pytest.mark.unit
@@ -461,6 +465,16 @@ class TestDiff:
         served = _with(catalog, add=[_found(("run_id",), name="app_by_run")])
 
         assert diff_relation(relation, served).blocks == ()
+
+        # A partial one does not: the purge filters on run_id alone.
+        partial = _with(
+            catalog,
+            add=[_found(("run_id",), name="app_tagged", predicate="(tenant_id IS NOT NULL)")],
+        )
+
+        assert "-- CREATE INDEX CONCURRENTLY ON bi.durable_step (run_id);" in _text(
+            diff_relation(relation, partial)
+        )
 
     def test_a_missing_nullable_column_is_added(self) -> None:
         relation = _run()
@@ -1010,3 +1024,24 @@ class TestDiff:
         assert _statements(diff_relation(relation, catalog)) == [
             "CREATE INDEX CONCURRENTLY ON bi.durable_run (status, updated_at);"
         ]
+
+
+@pytest.mark.parametrize(
+    ("predicate", "collides"),
+    [
+        # b stays nullable, so (1, NULL) and (1, NULL) still collide.
+        ("(a IS NOT NULL)", True),
+        ("((a IS NOT NULL) AND (b IS NOT NULL))", False),
+    ],
+)
+def test_a_composite_nulls_not_distinct_index_is_exempt_only_when_every_nullable_key_is(
+    predicate: str, collides: bool
+) -> None:
+    target = OwnedIndex(keys=("a", "b"), unique=True, comment="composite")
+    index = _found(
+        ("a", "b"), name="nnd", unique=True, nulls_not_distinct=True, predicate=predicate
+    )
+
+    reason = conflicting_unique(target, index, nullable_keys=frozenset({"a", "b"}))
+
+    assert (reason is not None) is collides

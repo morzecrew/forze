@@ -37,7 +37,7 @@ the transaction, keeps the diff from writing.
 | Table missing | `CREATE TABLE`, then every declared index, without `CONCURRENTLY` |
 | A view, a partitioned table or another non-plain table under the name | A refusal; a partitioned table takes no `CREATE INDEX CONCURRENTLY` |
 | Primary key on other columns than declared | A refusal naming both key lists |
-| Primary key on the declared columns in another order | A note with an index on the declared leading column commented, unless an index already leads with it: writes work, a scan on that column does not use the key |
+| Primary key on the declared columns in another order | A note with an index on the declared leading column commented, unless a full index already leads with it: writes work, a scan on that column does not use the key |
 | Column missing, nullable or with a literal default | `ALTER TABLE … ADD COLUMN` |
 | Column missing, `NOT NULL` with no literal default | A refusal, the `ADD COLUMN` commented |
 | Column type of another family | A refusal naming both types; never `ALTER … TYPE` |
@@ -68,7 +68,7 @@ target included, and refuses a deferrable one even beside a `NOT DEFERRABLE` ind
 diff refuses a deferrable unique index on the columns of any target the adapter writes to:
 each declared unique index's and the primary key's. It also refuses a `NULLS NOT DISTINCT`
 unique index on a nullable key, on which two rows without a key collide, partial or not,
-unless its predicate keeps those rows out with `<key> IS NOT NULL`. Each refusal carries the
+unless its predicate keeps those rows out with `<key> IS NOT NULL` for every nullable key. Each refusal carries the
 `DROP CONSTRAINT` or `DROP INDEX` commented, unless a foreign key depends on the index, when
 it says to drop that key first. The diff still prints forze's own index when it is missing.
 

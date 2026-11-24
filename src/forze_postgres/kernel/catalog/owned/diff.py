@@ -259,12 +259,16 @@ def _declared_index(
 
 
 def _led_by(catalog: CatalogRelation, column: str) -> bool:
-    """Whether a valid b-tree index on the table leads with *column*."""
+    """Whether a valid, full b-tree index on the table leads with *column*. A partial one
+    cannot serve a scan that filters on *column* alone."""
 
     wanted = declared_key(column)[0]
 
     return any(
-        found.valid and found.method == "btree" and catalog_keys(found)[0][0] == wanted
+        found.valid
+        and found.method == "btree"
+        and found.predicate is None
+        and catalog_keys(found)[0][0] == wanted
         for found in catalog.indexes
         if found.keys
     )
@@ -311,7 +315,7 @@ def _conflicting_uniques(
             reason = conflicting_unique(
                 target,
                 found,
-                nullable=any(key in nullable for key in target.keys),
+                nullable_keys=frozenset(key for key in target.keys if key in nullable),
                 text_columns=casts,
             )
 

@@ -16,7 +16,7 @@ duplicates a scan index. A retired one read as different is refused rather than 
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Final
 
 from ..introspect.types import IndexShapeInfo, PostgresType
@@ -412,7 +412,7 @@ def conflicting_unique(
     target: OwnedIndex,
     index: IndexShapeInfo,
     *,
-    nullable: bool,
+    nullable_keys: frozenset[str] = frozenset(),
     text_columns: frozenset[str] = frozenset(),
 ) -> str | None:
     """What makes *index* break writes to the conflict target *target*, or ``None``.
@@ -420,7 +420,7 @@ def conflicting_unique(
     Postgres infers every unique index over the target's columns, in any order, whose
     predicate the target's implies, a full index included for a partial target. It rejects
     the statement when one of them is deferrable, even beside an immediate one. A unique index
-    built ``NULLS NOT DISTINCT`` on a *nullable* key also refuses a second row without a key,
+    built ``NULLS NOT DISTINCT`` on *nullable_keys* also refuses a second row without a key,
     which the adapter writes. Either one breaks the writes until it is dropped.
     """
 
@@ -436,15 +436,16 @@ def conflicting_unique(
         return "is DEFERRABLE, and ON CONFLICT infers it and then refuses it"
 
     # Not a question of inference: any index that holds a NULL key refuses the second one.
-    if nullable and index.nulls_not_distinct and not _holds_no_null(index, target.keys):
+    if nullable_keys and index.nulls_not_distinct and not _holds_no_null(index, nullable_keys):
         return "is NULLS NOT DISTINCT, so two rows without a key collide on it"
 
     return None
 
 
-def _holds_no_null(index: IndexShapeInfo, keys: Sequence[str]) -> bool:
-    """Whether *index*'s predicate keeps out every row with a NULL in one of *keys*: one of its
-    top-level conjuncts is ``<key> IS NOT NULL``."""
+def _holds_no_null(index: IndexShapeInfo, keys: Collection[str]) -> bool:
+    """Whether *index*'s predicate keeps out every row with a NULL in any of *keys*: each of
+    them has a top-level ``<key> IS NOT NULL`` conjunct. Excluding one of two nullable keys
+    still lets ``(1, NULL)`` collide with ``(1, NULL)``."""
 
     tree = normalize_expression(index.predicate, predicate=True)
 
@@ -454,7 +455,7 @@ def _holds_no_null(index: IndexShapeInfo, keys: Sequence[str]) -> bool:
     conjuncts = tree[1] if isinstance(tree, tuple) and tree[0] == "and" else (tree,)
     excluded = {f"{declared_key(key)[0]}isnotnull" for key in keys}
 
-    return any(conjunct in excluded for conjunct in conjuncts)
+    return excluded <= set(conjuncts)
 
 
 def retired_mismatch(

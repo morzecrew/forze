@@ -8748,3 +8748,25 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds twelve entries, D-319 to D-330: eleven `spec-gap` and one
 `discovery`.
+
+## D-331 — Only a full index silences the purge note, and every nullable key must be excluded
+
+- **Touches:** D-329 and D-330 (proposed).
+- **Found:** in review on #949.
+  - D-330's note was silenced by any index leading with `run_id`, a partial one included,
+    though the purge filters on `run_id` alone and cannot use a partial index.
+  - D-329 exempted a `NULLS NOT DISTINCT` index whose predicate excluded NULL from any one
+    key. For two nullable keys, `(1, NULL)` still collides with `(1, NULL)`.
+- **Built:** the note is silenced only by a valid, full b-tree index
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:270`). The exemption needs an
+  `IS NOT NULL` conjunct for every nullable key of the target, passed as `nullable_keys`
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:415`, `:445`). Single-key targets read
+  as before.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:442`, `:1037`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-329's and D-330's rows, as narrowed here.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 32 now holds thirteen entries, D-319 to D-331: twelve `spec-gap` and
+one `discovery`.
