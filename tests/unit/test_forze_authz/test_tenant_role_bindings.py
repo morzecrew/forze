@@ -13,6 +13,7 @@ import pytest
 from forze.application.contracts.authz import AuthzScope
 from forze.application.contracts.authz.specs import AuthzSpec, AuthzTenancyMode
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze_identity.authz.adapters.role_assignment import RoleAssignmentAdapter
 from forze_identity.authz.domain.models.bindings import (
@@ -374,3 +375,106 @@ class TestRevokeTenantRoles:
 
         with pytest.raises(CoreException):
             await w.adapter.revoke_tenant_roles(w.pid, tenant_id=T)
+
+    async def test_a_failed_kill_still_forgets_the_principal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Outside a transaction the kills before the failure stay, so the cache must not.
+        forget = AsyncMock()
+        monkeypatch.setattr(AuthzGrantResolver, "forget", forget)
+        w = _Wiring(T)
+        w.bindings.rows.extend([w.row(T), _binding(w.pid, uuid4(), T)])
+        down = RuntimeError("down")
+        w.bindings.kill = AsyncMock(side_effect=[None, down, down])  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError):
+            await w.adapter.revoke_tenant_roles(w.pid, tenant_id=T)
+
+        with pytest.raises(RuntimeError):
+            await w.adapter.revoke_role(w.pid, "analyst")  # its one kill fails
+
+        assert forget.await_count == 2
+
+
+class _Partitioned(_Bindings):
+    """A store that follows the bound tenant, as a tenant column or a per-tenant relation
+    does: each row lives in the tenant bound when it was written, and only that tenant's rows
+    are read."""
+
+    def __init__(self, ctx: Any) -> None:
+        super().__init__(tenant_aware=True)
+        self.ctx = ctx
+        self.partition: dict[UUID, UUID | None] = {}
+
+    def _bound(self) -> UUID | None:
+        tenant = self.ctx.inv_ctx.get_tenant()
+
+        return tenant.tenant_id if tenant is not None else None
+
+    def put(self, row: ReadPrincipalRoleBinding, partition: UUID) -> None:
+        self._rows.append(row)
+        self.partition[row.id] = partition
+
+    async def find_stream(self, *, filters: Any, chunk_size: int) -> Any:
+        async for batch in super().find_stream(filters=filters, chunk_size=chunk_size):
+            yield [r for r in batch if self.partition.get(r.id) == self._bound()]
+
+    async def create(self, cmd: CreatePrincipalRoleBindingCmd, *, return_new: bool = True) -> None:
+        await super().create(cmd, return_new=return_new)
+        self.partition[self._rows[-1].id] = self._bound()
+
+
+class TestOverAPartitionedStore:
+    """A store that confines rows to the bound tenant, holding rows written before
+    ``scope_tenant_id`` existed, which read as ``None`` without being held everywhere."""
+
+    def _wiring(self) -> tuple[_Wiring, Any, _Partitioned]:
+        ctx = context_from_modules(MockDepsModule())
+        w = _Wiring(None)
+        store = _Partitioned(ctx)
+        resolver = attrs.evolve(
+            w.adapter.resolver,
+            deps=attrs.evolve(w.adapter.resolver.deps, pr_binding_qry=store),
+            ctx=ctx,
+        )
+        w.bindings = store
+        w.adapter = attrs.evolve(
+            w.adapter, pr_binding_qry=store, pr_binding_cmd=store, resolver=resolver
+        )
+
+        return w, ctx, store
+
+    @staticmethod
+    def _in(ctx: Any, tenant: UUID) -> Any:
+        return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant))
+
+    async def test_a_revoke_in_the_tenant_removes_a_row_written_before_the_column(self) -> None:
+        w, ctx, store = self._wiring()
+        store.put(w.row(None), T)
+
+        with self._in(ctx, T):
+            await w.adapter.revoke_role(w.pid, "analyst")  # not refused as held everywhere
+
+        assert store.rows == []
+
+    async def test_an_assign_in_the_tenant_counts_that_row_as_there(self) -> None:
+        w, ctx, store = self._wiring()
+        store.put(w.row(None), T)
+
+        with self._in(ctx, T):
+            await w.adapter.assign_role(w.pid, "analyst")
+
+        assert len(store.rows) == 1
+
+    async def test_leaving_from_inside_another_tenant_reaches_the_tenants_rows(self) -> None:
+        w, ctx, store = self._wiring()
+        store.put(w.row(None), T)
+        store.put(w.row(T), T)
+        store.put(w.row(U), U)
+
+        with self._in(ctx, U):
+            await w.adapter.revoke_tenant_roles(w.pid, tenant_id=T)
+
+            assert ctx.inv_ctx.get_tenant().tenant_id == U  # the caller's tenant is back
+
+        assert [store.partition[r.id] for r in store.rows] == [U]

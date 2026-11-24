@@ -8103,3 +8103,68 @@ rows, D-298 and D-299 depart from `ASSUMED` rows 10 and 5) and one close-out.
     cache. Seeding the role in every tenant makes it fire (`:203`), and the resolver ignoring
     the tenant fails it.
 - **Action:** decided.
+
+# Unit 30 · RFC 0082 P1 review — stores that follow the bound tenant
+
+Branch `feat/authz-tenant-role-bindings` (#947): fixes from the PR's review. Two of them revise
+Unit 29's decisions, in D-303 and D-304. The rest change no decision:
+
+- A revoke now forgets the principal in a `finally`, so a kill that fails partway does not leave
+  the cache serving a deleted grant.
+- The DST invariant reads an event with no `outcome` as a success, because `record_operation`
+  records only returned operations and stamps none.
+- The recipe's migration drops Postgres's default-named `(principal_id, role_id)` constraint, and
+  a test runs that migration from the page against a pair-constrained table.
+
+One finding is refuted without a change. A concurrent `assign_role` landing between detach's
+revoke and its membership removal leaves a role pre-staged for a non-member. Row 11 allows that,
+§9 accepts it, and assigning right after the detach commits reaches the same state.
+
+**Drift count: 0.** Two entries, D-303 and D-304, both `spec-gap`.
+
+## D-303 — In a partitioned store, a row without a tenant is the bound tenant's
+
+- **Touches:** row 9 (`ASSUMED`), §5.6 ("In that configuration the column is redundant but
+  harmless"), and D-302's row 7 close-out.
+- **Found:** in review on #947. A store that confines rows to the bound tenant (tenant-aware, as
+  `require_invocation_tenant` demands) still holds rows written before `scope_tenant_id`
+  existed, and they read as `None`. Inside T, `revoke_role` took such a row for a global one and
+  refused with `authz.role_held_globally`. The suggested revoke with no tenant bound is refused
+  by that storage too, so an existing grant could not be revoked at all. `revoke_tenant_roles`
+  also skipped those rows, so leaving T kept them.
+- **Built:** a store is partitioned when its binding port is tenant-aware or the spec is
+  `require_invocation_tenant` (`src/forze_identity/authz/adapters/role_assignment.py:269`). There,
+  every row read is the bound tenant's: `None` and T both match T (`:281`), and the refusal applies
+  only to a shared store (`:124`). Resolution needed no change, because a row storage confines to
+  T was already held only in T.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:427` (revoke, assign
+  and detach over such rows). Treating every store as shared fails four tests.
+- **Class:** `spec-gap`. §5.6 considered new rows only.
+- **Proposed row (RFC 0082):** `ASSUMED`. Over a binding store that confines rows to the bound
+  tenant, a row naming no tenant is that tenant's binding, for assign, revoke and
+  `revoke_tenant_roles`.
+- **Action:** decided.
+
+## D-304 — Revoking a tenant's roles runs with that tenant bound
+
+- **Touches:** row 5 (`ASSUMED`) as D-299 departed from it, and row 10 (`ASSUMED`).
+- **Found:** in review on #947. A store can follow the bound tenant without being tenant-aware:
+  a relation resolved per tenant (the `namespace` tier) is a configuration fact the port does not
+  expose. D-299 refused another tenant only over a tenant-aware store. Leaving T from inside U
+  over such a relation read U's rows, kept T's, and then removed the membership, so attaching
+  again restored the roles.
+- **Built:** `revoke_tenant_roles` binds T, keeping the caller's identity, for its reads and
+  kills (`role_assignment.py:158`, `:290`). Any store that follows the bound tenant, by column or
+  by relation, then reaches T's rows. This replaces D-299's refusal. A resolver without a context
+  cannot rebind, and there a partitioned store bound to another tenant is still refused.
+- **Not covered:** a per-tenant relation that is not tenant-aware, in `global` mode, holding rows
+  written before the column. The adapter cannot tell it from a shared store, so those rows read
+  as global: a revoke in T refuses them, and leaving T keeps them. `require_invocation_tenant`
+  refuses ports that are not tenant-aware, so this is a per-tenant catalog wired as `global`.
+  Migrating those rows to their tenant closes it.
+- **Evidence:** `tests/unit/test_forze_authz/test_tenant_role_bindings.py:469`. It fails without
+  the rebinding.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0082):** `ASSUMED`. `revoke_tenant_roles(subject, tenant_id=T)` runs with
+  T bound, from wherever the caller is bound. This replaces D-299's proposed row for that call.
+- **Action:** decided.

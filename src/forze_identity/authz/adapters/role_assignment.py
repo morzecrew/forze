@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, final
 from uuid import UUID
 
@@ -15,7 +17,7 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.application.contracts.tenancy import effective_tenant
+from forze.application.contracts.tenancy import TenantIdentity, effective_tenant
 from forze.base.exceptions import exc
 
 from ..domain.models.bindings import (
@@ -119,7 +121,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
             # every tenant row of the role.
             doomed = rows
 
-        elif any(row.scope_tenant_id is None for row in rows):
+        elif not self._partitioned and any(row.scope_tenant_id is None for row in rows):
             # Removing only this tenant's row would leave the global one granting here.
             raise exc.conflict(
                 f"Role {role_key!r} is held in every tenant; revoke it with no tenant bound.",
@@ -127,13 +129,16 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
             )
 
         else:
-            doomed = [row for row in rows if row.scope_tenant_id == tenant_id]
+            doomed = [row for row in rows if self._held_in(row, tenant_id)]
 
-        for row in doomed:
-            await self.pr_binding_cmd.kill(row.id)
+        try:
+            for row in doomed:
+                await self.pr_binding_cmd.kill(row.id)
 
-        # Even when another process removed it first: this process may still cache the role.
-        await self.resolver.forget(pid)
+        finally:
+            # Even when another process removed it first: this process may still cache the
+            # role. Also after a kill fails partway, when the earlier ones may have committed.
+            await self.resolver.forget(pid)
 
     # ....................... #
 
@@ -143,33 +148,34 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         *,
         tenant_id: UUID,
     ) -> None:
-        # Not checked against the bound tenant, unlike the other writes: it only removes grants,
-        # and leaving a tenant happens from wherever the caller is bound (a member leaves T
-        # from inside U; an operator removes members of any tenant). A tenant-aware store is
-        # the exception: it reads only the bound tenant's rows, so another tenant's would stay
-        # in force without a word. Keyed on the store, not the spec's mode, because tenant
-        # management builds this port from a bare ``AuthzSpec(name=...)``.
-        if self.pr_binding_qry.tenant_aware and tenant_id != self.resolver.invocation_tenant():
-            raise exc.internal(
-                "Revoking a tenant's roles needs that tenant bound: the principal-role binding "
-                "store is tenant-aware, so it reaches only the bound tenant's rows.",
-                code="authz.scope_tenant_mismatch",
-            )
-
         pid = subject_for_grant_query(subject)
 
-        # No policy-principal lookup: leaving a tenant must not fail for a principal the
-        # authz plane never saw, and such a principal holds no rows to remove.
-        rows = await fetch_all_document_hits(
-            self.pr_binding_qry,
-            filters={"$values": {"principal_id": pid}},
-        )
+        # Not checked against the bound tenant, unlike the other writes: it only removes grants,
+        # and leaving a tenant happens from wherever the caller is bound (a member leaves T
+        # from inside U; an operator removes members of any tenant). So it runs with T bound:
+        # a store that follows the bound tenant, by a tenant column or by a relation resolved
+        # per tenant, then reaches T's rows rather than the caller's.
+        with self._bound_to(tenant_id):
+            _ = resolve_policy_scope(
+                spec=self.spec,
+                explicit=AuthzScope(tenant_id=tenant_id),
+                invocation_tenant_id=self.resolver.invocation_tenant(),
+            )
 
-        for row in rows:
-            if row.scope_tenant_id == tenant_id:
-                await self.pr_binding_cmd.kill(row.id)
+            # No policy-principal lookup: leaving a tenant must not fail for a principal the
+            # authz plane never saw, and such a principal holds no rows to remove.
+            rows = await fetch_all_document_hits(
+                self.pr_binding_qry,
+                filters={"$values": {"principal_id": pid}},
+            )
 
-        await self.resolver.forget(pid)
+            try:
+                for row in rows:
+                    if self._held_in(row, tenant_id):
+                        await self.pr_binding_cmd.kill(row.id)
+
+            finally:
+                await self.resolver.forget(pid)
 
     # ....................... #
 
@@ -252,7 +258,63 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         """The row for exactly this tenant: ``None`` matches only a global row."""
 
         for row in await self._principal_role_bindings(principal_id, role_id):
-            if row.scope_tenant_id == tenant_id:
+            if self._held_in(row, tenant_id):
                 return row
 
         return None
+
+    # ....................... #
+
+    @property
+    def _partitioned(self) -> bool:
+        """Whether the binding store itself confines rows to the bound tenant.
+
+        There every row read belongs to the bound tenant, including one written before
+        ``scope_tenant_id`` existed, which reads as ``None`` without being held everywhere.
+        """
+
+        return (
+            self.pr_binding_qry.tenant_aware
+            or self.spec.tenancy_mode == "require_invocation_tenant"
+        )
+
+    def _held_in(self, row: ReadPrincipalRoleBinding, tenant_id: UUID | None) -> bool:
+        """Whether *row* is the binding for exactly *tenant_id* (``None``: every tenant)."""
+
+        if tenant_id is not None and self._partitioned:
+            return row.scope_tenant_id in (None, tenant_id)
+
+        return row.scope_tenant_id == tenant_id
+
+    @contextmanager
+    def _bound_to(self, tenant_id: UUID) -> Iterator[None]:
+        """Bind *tenant_id* for the body, keeping the caller's identity, unless it already is.
+
+        Without a context the resolver's fixed tenant stands in, and nothing can be rebound:
+        a partitioned store bound to another tenant would reach none of *tenant_id*'s rows,
+        so that is refused rather than left to keep them.
+        """
+
+        ctx = self.resolver.ctx
+        bound = self.resolver.invocation_tenant()
+
+        if bound == tenant_id:
+            yield
+            return
+
+        if ctx is None:
+            if self._partitioned and bound is not None:
+                raise exc.internal(
+                    "Revoking a tenant's roles needs that tenant bound: the principal-role "
+                    "binding store reaches only the bound tenant's rows.",
+                    code="authz.scope_tenant_mismatch",
+                )
+
+            yield
+            return
+
+        with ctx.inv_ctx.bind_identity(
+            authn=ctx.inv_ctx.get_authn(),
+            tenant=TenantIdentity(tenant_id=tenant_id),
+        ):
+            yield

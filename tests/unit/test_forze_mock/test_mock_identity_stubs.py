@@ -53,6 +53,7 @@ from forze_mock.adapters.identity import (
     MockAuthzScopePort,
     MockPasswordVerifierPort,
     MockPrincipalResolverPort,
+    MockRoleAssignmentPort,
     MockSecretsPort,
     MockTenantManagementPort,
     MockTenantResolverPort,
@@ -175,6 +176,17 @@ async def test_password_verifier_unknown_login_same_message() -> None:
 
 # ----------------------- #
 # Authz: deny-by-default decision and sensitive-resource stubs
+
+
+async def test_role_assignment_stub_accepts_every_write_and_lists_none() -> None:
+    port = MockRoleAssignmentPort()
+    principal = uuid4()
+
+    await port.assign_role(principal, "analyst")
+    await port.revoke_role(principal, "analyst")
+    await port.revoke_tenant_roles(principal, tenant_id=uuid4())
+
+    assert await port.list_roles(principal) == frozenset()
 
 
 async def test_authz_decision_denies_by_default() -> None:
