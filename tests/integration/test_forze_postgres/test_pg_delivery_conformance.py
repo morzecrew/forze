@@ -35,12 +35,18 @@ from forze_dst.conformance import (
     run_rollback_crash_delivery,
 )
 from forze_postgres.adapters.outbox import PostgresOutboxStore
+from forze_postgres.adapters.store_schema import inbox_shape
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import (
     PostgresInboxConfig,
     PostgresOutboxConfig,
 )
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import (
+    UNUSED_RELATION,
+    create_owned_table,
+    every_column_outbox_shape,
+)
 
 # ----------------------- #
 
@@ -53,52 +59,15 @@ _ROUTE = DELIVERY_OUTBOX.name
 
 @pytest_asyncio.fixture(scope="function")
 async def delivery_tables(pg_client: PostgresClient):
-    """A dedicated outbox + inbox table pair (application-provided schema)."""
+    """A dedicated outbox + inbox table pair, as forze declares them."""
 
     suffix = uuid4().hex[:8]
     outbox = f"conformance_outbox_{suffix}"
     inbox = f"conformance_inbox_{suffix}"
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {t} (
-                id UUID PRIMARY KEY,
-                outbox_route TEXT NOT NULL,
-                event_id UUID NOT NULL,
-                event_type TEXT NOT NULL,
-                tenant_id UUID,
-                execution_id UUID,
-                correlation_id UUID,
-                causation_id UUID,
-                occurred_at TIMESTAMPTZ NOT NULL,
-                payload JSONB NOT NULL,
-                status TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                published_at TIMESTAMPTZ,
-                processing_at TIMESTAMPTZ,
-                last_error TEXT,
-                attempts INT NOT NULL DEFAULT 0,
-                available_at TIMESTAMPTZ,
-                ordering_key TEXT,
-                hlc BIGINT,
-                traceparent TEXT,
-                UNIQUE (outbox_route, event_id)
-            )
-            """
-        ).format(t=sql.Identifier("public", outbox))
-    )
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {t} (
-                inbox_route  TEXT NOT NULL,
-                message_id   TEXT NOT NULL,
-                processed_at TIMESTAMPTZ NOT NULL,
-                PRIMARY KEY (inbox_route, message_id)
-            )
-            """
-        ).format(t=sql.Identifier("public", inbox))
+    await create_owned_table(pg_client, every_column_outbox_shape(), "public", outbox)
+    await create_owned_table(
+        pg_client, inbox_shape(PostgresInboxConfig(relation=UNUSED_RELATION)), "public", inbox
     )
 
     yield outbox, inbox

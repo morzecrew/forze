@@ -59,6 +59,7 @@ from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_mock.adapters.tx import MockTxManagerAdapter
 from forze_postgres.adapters.principal_epoch import PostgresPrincipalEpochStore
+from forze_postgres.adapters.store_schema import principal_epoch_shape
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import (
     PostgresDocumentConfig,
@@ -90,6 +91,7 @@ from tests.support.eligibility_skip_conformance import (
     CountingPrincipalReads,
 )
 from tests.support.execution_context import context_from_deps
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -228,10 +230,11 @@ async def _stack(
     # The authz catalog, for the decision route: its own suffix, its policy principals unused.
     catalog = uuid4().hex[:12]
     await _authz_pg_setup(pg_client, suffix=catalog)
-    await pg_client.execute(
-        sql.SQL(
-            "CREATE TABLE {table} (principal_id uuid PRIMARY KEY, epoch bigint NOT NULL)"
-        ).format(table=sql.Identifier("public", epochs))
+    await create_owned_table(
+        pg_client,
+        principal_epoch_shape(PostgresPrincipalEpochConfig(relation=UNUSED_RELATION)),
+        "public",
+        epochs,
     )
     config = RevocationStates(
         route=STATES,

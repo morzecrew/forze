@@ -64,6 +64,7 @@ from forze_redis import (
     RedisStreamGroupConfig,
 )
 from forze_redis.kernel.client import RedisClient
+from tests.support.owned_schema import create_owned_table, every_column_outbox_shape
 
 
 class _OutboxPayload(BaseModel):
@@ -104,35 +105,8 @@ async def outbox_table(pg_client: PostgresClient) -> str:
     schema = "public"
     table = f"outbox_{uuid4().hex[:8]}"
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                id UUID PRIMARY KEY,
-                outbox_route TEXT NOT NULL,
-                event_id UUID NOT NULL,
-                event_type TEXT NOT NULL,
-                tenant_id UUID,
-                execution_id UUID,
-                correlation_id UUID,
-                causation_id UUID,
-                occurred_at TIMESTAMPTZ NOT NULL,
-                payload JSONB NOT NULL,
-                status TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                published_at TIMESTAMPTZ,
-                processing_at TIMESTAMPTZ,
-                last_error TEXT,
-                attempts INT NOT NULL DEFAULT 0,
-                available_at TIMESTAMPTZ,
-                ordering_key TEXT,
-                hlc BIGINT,
-                traceparent TEXT,
-                UNIQUE (outbox_route, event_id)
-            )
-            """
-        ).format(table=sql.Identifier(schema, table))
-    )
+    # Every optional column, so one table serves routes with and without each switch.
+    await create_owned_table(pg_client, every_column_outbox_shape(), schema, table)
 
     yield table
 

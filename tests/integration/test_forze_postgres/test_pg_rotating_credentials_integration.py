@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -38,7 +39,10 @@ from forze_postgres.adapters.rotating_credentials import (
     PostgresRotatingCredentialsAdmin,
     PostgresRotatingCredentialStore,
 )
+from forze_postgres.adapters.store_schema import rotating_credentials_shape
+from forze_postgres.execution.deps.configs import PostgresRotatingCredentialsConfig
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 from tests.support.rotating_credentials import (
     EXCHANGE_TIMEOUT,
     REF,
@@ -68,33 +72,19 @@ expire inside it. Anything larger stops being a timeout there and starts being a
 """
 
 
+_NO_EXCHANGE: Any = object()
+"""Stands in for the token endpoint: only the shape is built from this config."""
+
+
 @pytest_asyncio.fixture
 async def credentials_table(pg_client: PostgresClient) -> str:
     table = f"rotating_credentials_{uuid4().hex[:8]}"
+    shape = rotating_credentials_shape(
+        PostgresRotatingCredentialsConfig(relation=UNUSED_RELATION, exchanger=_NO_EXCHANGE)
+    )
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                tenant_id    text        NOT NULL,
-                ref          text        NOT NULL,
-                payload      jsonb       NOT NULL,
-                expires_at   timestamptz,
-                version      bigint      NOT NULL,
-                burnt_reason text,
-                created_at   timestamptz NOT NULL,
-                updated_at   timestamptz NOT NULL,
-                PRIMARY KEY (tenant_id, ref)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
-    # The control-plane scan's documented index — the battery runs against the real DDL.
-    await pg_client.execute(
-        sql.SQL("CREATE INDEX ON {table} (tenant_id, updated_at)").format(
-            table=sql.Identifier("public", table)
-        )
-    )
+    # The declared table and the control-plane scan's index: the battery runs against them.
+    await create_owned_table(pg_client, shape, "public", table)
 
     return table
 

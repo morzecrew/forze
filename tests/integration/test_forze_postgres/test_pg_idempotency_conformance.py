@@ -13,10 +13,10 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from psycopg import sql
 
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
+from forze_postgres.adapters.store_schema import idempotency_shape
 from forze_postgres.execution.deps.configs import PostgresIdempotencyConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
@@ -25,6 +25,7 @@ from tests.support.idempotency_conformance import (
     Check,
     IdempotencyHarness,
 )
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -32,23 +33,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 @pytest_asyncio.fixture
 async def harness(pg_client: PostgresClient) -> IdempotencyHarness:
     table = f"idem_conf_{uuid4().hex[:8]}"
+    shape = idempotency_shape(PostgresIdempotencyConfig(relation=UNUSED_RELATION))
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                op           TEXT        NOT NULL,
-                idem_key     TEXT        NOT NULL,
-                payload_hash TEXT        NOT NULL,
-                status       TEXT        NOT NULL,
-                result       BYTEA,
-                expires_at   TIMESTAMPTZ NOT NULL,
-                owner        UUID,
-                PRIMARY KEY (op, idem_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_owned_table(pg_client, shape, "public", table)
 
     def _store(ttl: timedelta, owner: UUID | None) -> PostgresIdempotencyStore:
         return PostgresIdempotencyStore(

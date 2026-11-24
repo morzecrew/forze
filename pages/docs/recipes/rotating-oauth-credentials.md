@@ -19,22 +19,10 @@ Postgres store, writes the exchanger, and shows the call pattern.
 
 Provisioning is yours, and the store is deliberately narrow about what it needs — every
 access the *store* makes is a point lookup on the primary key. The second index serves the
-control-plane idleness scan (see [keeping idle grants alive](#keeping-idle-grants-alive)):
-
-```sql
-CREATE TABLE rotating_credentials (
-    tenant_id    text        NOT NULL,
-    ref          text        NOT NULL,
-    payload      jsonb       NOT NULL,
-    expires_at   timestamptz,
-    version      bigint      NOT NULL,
-    burnt_reason text,
-    created_at   timestamptz NOT NULL,
-    updated_at   timestamptz NOT NULL,
-    PRIMARY KEY (tenant_id, ref)
-);
-CREATE INDEX ON rotating_credentials (tenant_id, updated_at);
-```
+control-plane idleness scan (see [keeping idle grants alive](#keeping-idle-grants-alive)).
+`forze schema sql --deps <your module>` prints the table and its index for the relation your
+`PostgresRotatingCredentialsConfig` names, and
+[Store table schema](../reference/store-schema.md#rotating-credentials) shows them.
 
 `tenant_id` is part of the key rather than a filter beside it — a table keyed on `ref`
 alone hands one tenant another tenant's grant. An unbound tenant stores as the empty

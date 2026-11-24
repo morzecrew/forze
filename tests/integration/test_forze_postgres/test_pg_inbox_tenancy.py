@@ -15,8 +15,10 @@ from psycopg import sql
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_postgres.adapters.inbox import PostgresInboxStore
+from forze_postgres.adapters.store_schema import inbox_shape
 from forze_postgres.execution.deps.configs import PostgresInboxConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -26,18 +28,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 @pytest_asyncio.fixture
 async def inbox_table(pg_client: PostgresClient):
     name = f"inbox_tenancy_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {t} (
-                inbox_route  TEXT NOT NULL,
-                message_id   TEXT NOT NULL,
-                processed_at TIMESTAMPTZ NOT NULL,
-                PRIMARY KEY (inbox_route, message_id)
-            )
-            """
-        ).format(t=sql.Identifier("public", name))
-    )
+    shape = inbox_shape(PostgresInboxConfig(relation=UNUSED_RELATION))
+    await create_owned_table(pg_client, shape, "public", name)
 
     yield name
 

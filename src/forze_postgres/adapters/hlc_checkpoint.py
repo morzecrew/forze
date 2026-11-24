@@ -31,13 +31,9 @@ class PostgresHlcCheckpointStore(HlcCheckpointPort):
     rows at startup, so a restart resumes above the whole deployment's emissions.
 
     The mark is a monotonic max (``GREATEST``), so out-of-order or concurrent writers never
-    lower it. The table is provided by the application; expected schema::
-
-        CREATE TABLE <relation> (
-            node_key text   NOT NULL,
-            hlc      bigint NOT NULL,   -- packed HlcTimestamp: physical_ms << 16 | logical
-            PRIMARY KEY (node_key)
-        );
+    lower it. The application applies the table, declared by
+    :func:`forze_postgres.adapters.store_schema.hlc_checkpoint_shape`, which ``forze schema
+    sql`` prints. ``hlc`` is the packed ``HlcTimestamp``, ``physical_ms << 16 | logical``.
     """
 
     client: PostgresClientPort

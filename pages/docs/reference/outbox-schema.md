@@ -1,67 +1,81 @@
 ---
-title: Outbox table schema
+title: Outbox and inbox table schema
 icon: lucide/table
-summary: The application-owned outbox table — columns, indexes, migrations, and the HLC ordering column
+summary: The application-owned outbox, delivery log, HLC checkpoint and inbox tables — columns, indexes and the switches that change them
 ---
 
-The outbox table is application-owned: you create and migrate it. This is the
-schema the relay claims from and the columns it reads. The wiring that stages and
-relays events is in the [Transactional outbox recipe](../recipes/transactional-outbox.md).
+The outbox and inbox tables are application-owned: you apply their DDL with your
+migration tool. This is the schema the relay claims from, the columns it reads, and the
+ledger a consumer deduplicates on. The wiring that stages and relays events is in the
+[Transactional outbox recipe](../recipes/transactional-outbox.md).
 
 ## Postgres
 
-For Postgres (`PostgresOutboxConfig(relation=("app", "outbox"))`):
+Forze declares each Postgres table once, in code. `forze schema sql` prints the statements
+below for the relations your `PostgresDepsModule` names and the switches their configs set,
+and `forze schema diff` prints what an existing database is missing.
+[Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md) walks through both.
+The SQL on this page is that render, for tables in the `app` schema, and a test keeps it so.
+
+For `PostgresOutboxConfig(relation=("app", "outbox"))`:
 
 ```sql
 CREATE TABLE app.outbox (
-    id UUID PRIMARY KEY,
-    outbox_route TEXT NOT NULL,
-    event_id UUID NOT NULL,
-    event_type TEXT NOT NULL,
-    tenant_id UUID,
-    execution_id UUID,
-    correlation_id UUID,
-    causation_id UUID,
-    occurred_at TIMESTAMPTZ NOT NULL,
-    payload JSONB NOT NULL,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    published_at TIMESTAMPTZ,
-    processing_at TIMESTAMPTZ,
-    last_error TEXT,
-    attempts INT NOT NULL DEFAULT 0,
-    available_at TIMESTAMPTZ,
-    ordering_key TEXT,
-    UNIQUE (outbox_route, event_id)
+    id             uuid        NOT NULL,
+    outbox_route   text        NOT NULL,
+    event_id       uuid        NOT NULL,
+    event_type     text        NOT NULL,
+    tenant_id      uuid,
+    execution_id   uuid,
+    correlation_id uuid,
+    causation_id   uuid,
+    occurred_at    timestamptz NOT NULL,
+    payload        jsonb       NOT NULL,
+    status         text        NOT NULL,
+    created_at     timestamptz NOT NULL,
+    published_at   timestamptz,
+    processing_at  timestamptz,
+    last_error     text,
+    attempts       integer     NOT NULL DEFAULT 0,
+    available_at   timestamptz,
+    ordering_key   text,
+    PRIMARY KEY (id)
 );
 
--- covers the claim predicate (route + pending + ripe, oldest first)
-CREATE INDEX outbox_claim_idx
-    ON app.outbox (outbox_route, status, available_at, created_at);
+-- staging an event twice keeps one row (ON CONFLICT (outbox_route, event_id))
+CREATE UNIQUE INDEX ON app.outbox (outbox_route, event_id);
+
+-- the claim filters a route's pending, ripe rows and takes the oldest first
+CREATE INDEX ON app.outbox (outbox_route, status, created_at);
 ```
 
 `attempts` is the durable retry counter; `available_at` schedules the next
 retry (`NULL` = claimable now); `ordering_key` is the optional delivery
 partition key (`NULL` = no partitioning, key falls back to the event id).
-Existing tables migrate with:
 
-```sql
-ALTER TABLE app.outbox
-    ADD COLUMN attempts INT NOT NULL DEFAULT 0,
-    ADD COLUMN available_at TIMESTAMPTZ,
-    ADD COLUMN ordering_key TEXT;
-```
+The claim index leaves `available_at` out on purpose. The claim orders by `created_at`, and
+an index whose third key is `available_at` cannot return rows in that order for
+`available_at IS NULL OR available_at <= now()`, so Postgres sorts every pending row of the
+route before it takes a batch. `forze schema diff` drops the earlier
+`(outbox_route, status, available_at, created_at)` index once it has built this one.
+
+The config's switches change the table:
+
+| Config | Table |
+| --- | --- |
+| `propagate_trace=True` | Adds `traceparent text` |
+| `hlc_ordering=True` | Adds `hlc bigint`, and claims by `(outbox_route, status, hlc, created_at, id)` instead |
+| `storage="consume"` | Leaves out `published_at`, which it never writes |
+| `tenant_aware=True` on a `(schema, table)` relation | Adds the claim index led by `tenant_id` |
+
+Routes that name one table get one table, with every column and index any of them needs.
 
 ### Trace propagation (optional column)
 
 `PostgresOutboxConfig(propagate_trace=True)` persists each event's W3C `traceparent` so
 the relay forwards it as the `traceparent` header and the consume side links its span to
-the publish span. Opt in **after** adding the nullable column (legacy / `NULL` rows simply
-carry no parent); independent of `hlc_ordering`:
-
-```sql
-ALTER TABLE app.outbox ADD COLUMN traceparent TEXT;
-```
+the publish span. Opt in **after** `forze schema diff` has added the nullable column
+(legacy / `NULL` rows simply carry no parent); independent of `hlc_ordering`.
 
 ### Causal ordering (Hybrid Logical Clock)
 
@@ -73,15 +87,11 @@ Clock stamp that stays close to wall time yet always exceeds any timestamp the
 process has observed (including one merged from a consumed event's `forze_hlc`
 header), so a reaction sorts after its cause across replicas, and the
 time-ordered `id` breaks any remaining tie. Add the column first, then opt in
-(legacy `NULL`-`hlc` rows fall back to `created_at`):
-
-```sql
-ALTER TABLE app.outbox ADD COLUMN hlc BIGINT;
-
--- claim order becomes (hlc NULLS LAST, created_at, id); index to match
-CREATE INDEX outbox_claim_hlc_idx
-    ON app.outbox (outbox_route, status, available_at, hlc, created_at, id);
-```
+(legacy `NULL`-`hlc` rows fall back to `created_at`): `forze schema diff` adds `hlc bigint`
+and the index `(outbox_route, status, hlc, created_at, id)`, which returns rows in the claim's
+order, `(hlc NULLS LAST, created_at, id)`. It drops the earlier
+`(outbox_route, status, available_at, hlc, created_at, id)` and
+`(outbox_route, status, hlc, created_at)` indexes once it has built that one.
 
 #### Restart monotonicity (clock high-water mark)
 
@@ -95,11 +105,13 @@ tenant-partitioned:
 
 ```sql
 CREATE TABLE app.hlc_checkpoint (
-    node_key TEXT   NOT NULL,
-    hlc      BIGINT NOT NULL,   -- packed HlcTimestamp: physical_ms << 16 | logical
+    node_key text   NOT NULL,
+    hlc      bigint NOT NULL,
     PRIMARY KEY (node_key)
 );
 ```
+
+`hlc` is the packed `HlcTimestamp`, `physical_ms << 16 | logical`.
 
 Wire it with `PostgresDepsModule(hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc_checkpoint")))`
 and add `hlc_checkpoint_recovery_lifecycle_step()` to the runtime's lifecycle.
@@ -130,10 +142,10 @@ A row that publishes first time is written twice, inserted and deleted, and neve
 updated, so nothing published is left for a retention job to prune. Postgres only: Mongo
 keeps `retain`.
 
-- **The indexes stay three:** the primary key, `UNIQUE (outbox_route, event_id)`, which
-  staging deduplicates on, and the claim index. A retry changes `available_at`, which the
-  claim index above includes, so a retry is not a HOT update under it. Retries are rare,
-  and a row that publishes first time never updates.
+- **The indexes stay three:** the primary key, the unique index on `(outbox_route,
+  event_id)`, which staging deduplicates on, and the claim index. A retry changes
+  `attempts`, `available_at` and `last_error`, none of which an index covers, so it can be
+  a HOT update. Retries are rare, and a row that publishes first time never updates.
 - **The dedup window narrows.** Staging an event id again is deduplicated only while its
   row is still in the table, pending or parked as `failed`. Once the row is relayed and
   deleted, the same event id publishes again.
@@ -186,16 +198,18 @@ keeps `retain`.
    claims take `pending` rows, and reclaim still returns the `processing` rows `retain`
    left behind for the next pass to relay.
 2. Leave the `published` rows to your existing retention job.
-3. Once no `processing` row is left, set `reclaim_stale_after=None`. Once the retention job
-   has removed every `published` row, retire it. Only then drop the two columns, and any
-   index that exists only for them:
+3. Once no `processing` row is left, you may set `reclaim_stale_after=None`. Once the
+   retention job has removed every `published` row, retire it. Only then drop
+   `published_at`, and any index that exists only for it:
 
-```sql
-ALTER TABLE app.outbox DROP COLUMN processing_at, DROP COLUMN published_at;
+```sql title="Your migration"
+ALTER TABLE app.outbox DROP COLUMN published_at;
 ```
 
-Reclaim reads `processing_at`, so dropping it while reclaim is on fails every pass, and
-the retention job reads `published_at`. Relays in both modes on one route stay
+The retention job reads `published_at`. Keep `processing_at`: reclaim reads it in either
+mode, so dropping it while reclaim is on fails every pass. Whether reclaim runs is the
+relay's setting, which the declaration cannot see, so the declaration keeps the column and
+`forze schema diff` would add it back. Relays in both modes on one route stay
 at-least-once: a row a `retain` relay claimed is `processing`, which a `consume` claim never
 matches, until it is marked or reclaimed.
 
@@ -219,26 +233,34 @@ outbox beside one is only as isolated as the log's `tenant_id` filtering: a modu
 declares `required_tenant_isolation="namespace"` refuses it, and needs a per-tenant
 resolver for the log too. `storage="retain"` refuses the log.
 
-The table is yours: forze only inserts into it, and never creates, drops or prunes its
-partitions. Dropping a day's partition is its whole retention. Nothing updates or deletes
-a committed row; the only dead rows are the inserts of passes that rolled back after a
-mark, which vacuum clears as usual. Partition it by day on `published_at`:
+The table is yours: forze only inserts into it. It declares the table and its `DEFAULT`
+partition, and never creates, drops or prunes the partitions beside it. Dropping a day's
+partition is its whole retention. Nothing updates or deletes a committed row; the only dead
+rows are the inserts of passes that rolled back after a mark, which vacuum clears as usual.
+It is partitioned on `published_at`:
 
 ```sql
 CREATE TABLE app.outbox_delivered (
-    id UUID NOT NULL,              -- the outbox row's id
-    outbox_route TEXT NOT NULL,
-    event_id UUID NOT NULL,
-    tenant_id UUID,
-    published_at TIMESTAMPTZ NOT NULL
+    id           uuid        NOT NULL,
+    outbox_route text        NOT NULL,
+    event_id     uuid        NOT NULL,
+    tenant_id    uuid,
+    published_at timestamptz NOT NULL
 ) PARTITION BY RANGE (published_at);
-
--- no unique key: an event staged again after delivery is delivered again
-CREATE INDEX outbox_delivered_event_idx ON app.outbox_delivered (event_id);
 
 -- the net for a day nobody added
 CREATE TABLE app.outbox_delivered_default PARTITION OF app.outbox_delivered DEFAULT;
 
+-- no unique key: an event staged again after delivery is delivered again
+CREATE INDEX ON app.outbox_delivered (event_id);
+```
+
+`id` is the outbox row's id. `forze schema diff` accepts the log as a partitioned or a plain
+table. Postgres builds no index `CONCURRENTLY` on a partitioned table, so the diff prints a
+missing index there as a warning, its statement commented, for you to schedule. Partition
+it by day:
+
+```sql title="Your partitions"
 -- a partition per day, added days ahead: built apart, then attached
 CREATE TABLE app.outbox_delivered_20261018 (LIKE app.outbox_delivered);
 ALTER TABLE app.outbox_delivered ATTACH PARTITION app.outbox_delivered_20261018
@@ -253,7 +275,7 @@ DROP TABLE app.outbox_delivered_20261011;
   after its row was consumed. When you answer a tenant, filter on its `tenant_id`, the
   tenant of the outbox row:
 
-    ```sql
+    ```sql title="Your query"
     SELECT published_at FROM app.outbox_delivered WHERE event_id = $1 AND tenant_id = $2;
     ```
 
@@ -278,6 +300,24 @@ DROP TABLE app.outbox_delivered_20261011;
   partition Postgres refuses `DETACH PARTITION … CONCURRENTLY`. A pass whose insert waits
   behind that lock longer than `pass_statement_timeout` fails and backs off, so drop old
   days with a short `lock_timeout`, well under `pass_statement_timeout`, and retry.
+
+### Inbox
+
+For `PostgresInboxConfig(relation=("app", "inbox"))`, the ledger a consumer marks each
+message processed in, inside the handler's transaction:
+
+```sql
+CREATE TABLE app.inbox (
+    inbox_route  text        NOT NULL,
+    message_id   text        NOT NULL,
+    processed_at timestamptz NOT NULL,
+    PRIMARY KEY (inbox_route, message_id)
+);
+```
+
+A tenant-aware inbox stores `inbox_route` as `t:<tenant_id>:<inbox_route>`, so tenants that
+share the table never deduplicate each other's messages, and the table needs no tenant
+column.
 
 ## Mongo
 

@@ -97,7 +97,8 @@ async def read_catalog(
     if kind is None:
         return None
 
-    if kind != "table":
+    # A partitioned table is compared too where forze declares one; anything else is refused.
+    if kind not in ("table", "partitioned_table"):
         return CatalogRelation(kind=kind)
 
     return CatalogRelation(
@@ -159,7 +160,7 @@ def _add_column(relation: BoundOwnedRelation, column: OwnedColumn) -> Block:
 
     if column.nullable or (column.default is not None and is_constant_default(column.default)):
         statement = f"ALTER TABLE {table} ADD COLUMN {column_definition(column)};"
-        comments = (column.comment,) if column.comment else ()
+        comments = (column.label,) if column.label else ()
 
         return Block(comments=comments, statement=statement)
 
@@ -225,7 +226,7 @@ def _declared_index(
     present = any(found.valid for found in matches)
     invalid = [found for found in matches if not found.valid]
     create = Block(
-        comments=(index.comment,),
+        comments=(index.label,),
         statement=create_index(relation, index, concurrently=True),
     )
 
@@ -256,6 +257,50 @@ def _declared_index(
         statements.append(create)
 
     return statements, []
+
+
+def _partitioned_index(
+    relation: BoundOwnedRelation,
+    index: OwnedIndex,
+    catalog: CatalogRelation,
+) -> list[Block]:
+    """A warning for a declared index a partitioned table lacks, or holds only invalid.
+
+    Postgres builds no index ``CONCURRENTLY`` on a partitioned table, so the statement that
+    would fix it locks writes to every partition while it builds, and a person schedules it.
+    """
+
+    casts = text_columns(catalog.columns)
+
+    if any(found.valid and satisfies(index, found, casts) for found in catalog.indexes):
+        return []
+
+    table = qualified(relation.schema, relation.name)
+    keys = describe_keys(index.keys)
+
+    return [
+        Block(
+            comments=(
+                f"WARNING: {table} is partitioned and has no valid index on {keys}.",
+                "It cannot be built CONCURRENTLY: building it locks writes to every partition.",
+                index.label,
+            ),
+            commented=(create_index(relation, index, concurrently=False),),
+        )
+    ]
+
+
+def _without_concurrently(drop: Block) -> Block:
+    """A retired drop on a partitioned table, as a warning with the drop commented: a
+    partitioned index takes no ``DROP INDEX CONCURRENTLY``."""
+
+    statement = (drop.statement or "").replace("DROP INDEX CONCURRENTLY", "DROP INDEX", 1)
+    warning = (
+        "WARNING: the table is partitioned, so this drop cannot run CONCURRENTLY and locks "
+        "writes to every partition:"
+    )
+
+    return Block(comments=(warning, *drop.comments), commented=(statement,))
 
 
 def _led_by(catalog: CatalogRelation, column: str) -> bool:
@@ -307,10 +352,13 @@ def _conflicting_uniques(
     table = qualified(relation.schema, relation.name)
     nullable = {column.name for column in shape.columns if column.nullable}
     casts = text_columns(catalog.columns)
-    primary = OwnedIndex(keys=shape.primary_key, unique=True, comment="the primary key")
+    targets = [*shape.indexes]
     refusals: list[Block] = []
 
-    for target in (*shape.indexes, primary):
+    if shape.primary_key:
+        targets.append(OwnedIndex(keys=shape.primary_key, unique=True, comment="the primary key"))
+
+    for target in targets:
         for found in catalog.indexes:
             reason = conflicting_unique(
                 target,
@@ -398,7 +446,7 @@ def _retired_indexes(
             if mismatch is None:
                 drops.append(
                     Block(
-                        comments=(retired.comment,),
+                        comments=(retired.label,),
                         statement=f"DROP INDEX CONCURRENTLY {name};",
                     )
                 )
@@ -418,16 +466,28 @@ def _retired_indexes(
 def diff_relation(
     relation: BoundOwnedRelation,
     catalog: CatalogRelation | None,
+    *,
+    keep_retired: bool = False,
 ) -> RelationDelta:
-    """Compare *relation*'s shape with what the catalog holds for it."""
+    """Compare *relation*'s shape with what the catalog holds for it.
+
+    With *keep_retired*, retired indexes are left out entirely: no drop, no refusal and no
+    warning for any index with a retired shape's keys. A retired column's note stays, since it
+    asks nothing.
+    """
 
     table = qualified(relation.schema, relation.name)
+    shape = relation.shape
 
     if catalog is None:
         return RelationDelta(relation=relation, statements=tuple(install_blocks(relation)))
 
-    # A partitioned table takes no CREATE INDEX CONCURRENTLY, so it is refused with the rest.
-    if catalog.kind != "table":
+    # A partitioned table takes no CREATE INDEX CONCURRENTLY, so it is refused with the rest,
+    # unless forze declares the table partitioned; a plain table serves such a shape too.
+    accepted = {"table", "partitioned_table"} if shape.partitioned_by else {"table"}
+    partitioned = catalog.kind == "partitioned_table"
+
+    if catalog.kind not in accepted:
         return RelationDelta(
             relation=relation,
             refusals=(
@@ -439,13 +499,15 @@ def diff_relation(
             ),
         )
 
-    shape = relation.shape
     statements: list[Block] = []
     refusals: list[Block] = []
     warnings: list[Block] = []
     notes: list[Block] = []
 
-    if set(catalog.primary_key) != set(shape.primary_key):
+    if not shape.primary_key:
+        pass  # a table forze declares no key on, such as a log; a key the app adds is its own
+
+    elif set(catalog.primary_key) != set(shape.primary_key):
         declared_key = describe_keys([quote_ident(column) for column in shape.primary_key])
         found_key = (
             describe_keys([quote_ident(column) for column in catalog.primary_key])
@@ -487,23 +549,34 @@ def diff_relation(
             refusals.append(refusal)
 
     for index in shape.indexes:
+        if partitioned:
+            warnings.extend(_partitioned_index(relation, index, catalog))
+            continue
+
         created, warned = _declared_index(relation, index, catalog)
         statements.extend(created)
         warnings.extend(warned)
 
     refusals.extend(_conflicting_uniques(relation, catalog))
 
-    drops, retired_refusals, retired_warnings = _retired_indexes(relation, catalog)
-    statements.extend(drops)
-    refusals.extend(retired_refusals)
-    warnings.extend(retired_warnings)
+    if not keep_retired:
+        drops, retired_refusals, retired_warnings = _retired_indexes(relation, catalog)
+
+        if partitioned:
+            warnings.extend(_without_concurrently(drop) for drop in drops)
+
+        else:
+            statements.extend(drops)
+
+        refusals.extend(retired_refusals)
+        warnings.extend(retired_warnings)
 
     for retired in shape.retired:
         if isinstance(retired.shape, OwnedColumn) and retired.shape.name in catalog.columns:
             name = quote_ident(retired.shape.name)
             notes.append(
                 Block(
-                    comments=(retired.comment, f"{name} still holds data; drop it when unused:"),
+                    comments=(retired.label, f"{name} still holds data; drop it when unused:"),
                     commented=(f"ALTER TABLE {table} DROP COLUMN {name};",),
                 )
             )

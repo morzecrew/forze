@@ -5,11 +5,7 @@ Every integration test that creates a durable table renders it from the declarat
 column an adapter reads and the declaration lacks fails those suites.
 """
 
-import re
-from typing import Literal, LiteralString, cast
-
-import attrs
-from psycopg import sql
+from typing import Literal
 
 from forze_postgres.adapters.durable.schema import (
     durable_run_shape,
@@ -21,9 +17,9 @@ from forze_postgres.execution.deps.configs import (
     PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
 )
-from forze_postgres.kernel.catalog.owned import BoundOwnedRelation, OwnedRelationShape
-from forze_postgres.kernel.catalog.owned.render import install_blocks
+from forze_postgres.kernel.catalog.owned import OwnedRelationShape
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import create_owned_table
 
 # ----------------------- #
 
@@ -50,12 +46,6 @@ def durable_shape(kind: DurableTable) -> OwnedRelationShape:
             )
 
 
-def _mentions(text: str | None, columns: frozenset[str]) -> bool:
-    return text is not None and any(
-        re.search(rf"\b{re.escape(column)}\b", text) for column in columns
-    )
-
-
 async def create_durable_table(
     client: PostgresClient,
     kind: DurableTable,
@@ -70,21 +60,4 @@ async def create_durable_table(
     those columns were declared.
     """
 
-    shape = durable_shape(kind)
-
-    if omit:
-        shape = attrs.evolve(
-            shape,
-            columns=tuple(column for column in shape.columns if column.name not in omit),
-            indexes=tuple(
-                index
-                for index in shape.indexes
-                if not _mentions(" ".join(index.keys), omit) and not _mentions(index.where, omit)
-            ),
-        )
-
-    relation = BoundOwnedRelation(route=kind, schema=schema, name=table, shape=shape)
-
-    for block in install_blocks(relation):
-        assert block.statement is not None
-        await client.execute(sql.SQL(cast(LiteralString, block.statement)))
+    await create_owned_table(client, durable_shape(kind), schema, table, omit=omit)

@@ -77,11 +77,9 @@ it, and a store refuses to complete or release a claim that now belongs to someo
 else — otherwise the slow operation would overwrite the live one's claim, and a
 third duplicate would replay a result for work that never finished.
 
-On **Postgres** this needs one column on your table:
-
-```sql
-ALTER TABLE <your idempotency table> ADD COLUMN owner uuid;
-```
+On **Postgres** this needs one column on your table, `owner uuid`. Forze declares it, and
+`forze schema diff` prints the `ADD COLUMN` for a table that lacks it
+([Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md)).
 
 It is nullable and additive, so nothing breaks before you run it and existing rows
 need no backfill, and you can apply it to a running deployment — the store notices

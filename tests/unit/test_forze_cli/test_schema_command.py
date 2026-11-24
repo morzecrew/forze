@@ -36,13 +36,17 @@ runner = CliRunner()
 def _patch_deltas(
     monkeypatch: pytest.MonkeyPatch, catalog: CatalogRelation | Exception | None
 ) -> None:
-    async def read(dsn: str, relations: Sequence[BoundOwnedRelation]) -> list[RelationDelta]:
+    async def read(
+        dsn: str, relations: Sequence[BoundOwnedRelation], *, keep_retired: bool = False
+    ) -> list[RelationDelta]:
         assert dsn == "postgresql://reader@db/app"
 
         if isinstance(catalog, Exception):
             raise catalog
 
-        return [diff_relation(relation, catalog) for relation in relations]
+        return [
+            diff_relation(relation, catalog, keep_retired=keep_retired) for relation in relations
+        ]
 
     monkeypatch.setattr(schema_cli, "_read_deltas", read)
     monkeypatch.setenv(schema_cli.DSN_ENV, "postgresql://reader@db/app")
@@ -53,7 +57,8 @@ class TestSql:
         result = runner.invoke(app, ["schema", "sql", "--deps", _DEPS])
 
         assert result.exit_code == 0, result.output
-        assert result.stdout.count("CREATE TABLE") == 3
+        # Twelve tables, and the delivery log's DEFAULT partition.
+        assert result.stdout.count("CREATE TABLE") == 13
         assert "CREATE INDEX ON public.durable_run (status, name, created_at);" in result.stdout
 
     def test_a_sequence_holding_one_deps_module_is_accepted(self) -> None:
@@ -125,7 +130,8 @@ class TestDiff:
         result = runner.invoke(app, ["schema", "diff", "--deps", _DEPS])
 
         assert result.exit_code == schema_cli.EXIT_DELTA
-        assert result.stdout.count("CREATE TABLE") == 3
+        # Twelve tables, and the delivery log's DEFAULT partition.
+        assert result.stdout.count("CREATE TABLE") == 13
 
     def test_a_refusal_exits_11(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_deltas(monkeypatch, CatalogRelation(kind="view"))
@@ -217,7 +223,9 @@ class TestDiff:
     ) -> None:
         _patch_deltas(monkeypatch, None)
 
-        async def nothing(dsn: str, relations: Sequence[BoundOwnedRelation]) -> list[RelationDelta]:
+        async def nothing(
+            dsn: str, relations: Sequence[BoundOwnedRelation], *, keep_retired: bool = False
+        ) -> list[RelationDelta]:
             return []
 
         monkeypatch.setattr(schema_cli, "_read_deltas", nothing)

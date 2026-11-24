@@ -83,13 +83,33 @@ def create_table(relation: BoundOwnedRelation) -> str:
         if constraints:
             line = f"{name.ljust(name_width)} {column.type.ljust(type_width)} {constraints}"
 
-        lines.append(f"    {line},")
+        lines.append(f"    {line}")
 
-    key = ", ".join(quote_ident(column) for column in shape.primary_key)
-    lines.append(f"    PRIMARY KEY ({key})")
-    body = "\n".join(lines)
+    if shape.primary_key:
+        key = ", ".join(quote_ident(column) for column in shape.primary_key)
+        lines.append(f"    PRIMARY KEY ({key})")
 
-    return f"CREATE TABLE {qualified(relation.schema, relation.name)} (\n{body}\n);"
+    body = ",\n".join(lines)
+    tail = (
+        f" PARTITION BY RANGE ({quote_ident(shape.partitioned_by)})"
+        if shape.partitioned_by is not None
+        else ""
+    )
+
+    return f"CREATE TABLE {qualified(relation.schema, relation.name)} (\n{body}\n){tail};"
+
+
+def default_partition(relation: BoundOwnedRelation) -> Block:
+    """The ``DEFAULT`` partition of a partitioned table, which takes a row no partition of the
+    application's covers. Without a partition every insert fails."""
+
+    parent = qualified(relation.schema, relation.name)
+    partition = qualified(relation.schema, f"{relation.name}_default")
+
+    return Block(
+        comments=("the partition for rows no other partition covers; add yours beside it",),
+        statement=f"CREATE TABLE {partition} PARTITION OF {parent} DEFAULT;",
+    )
 
 
 def create_index(
@@ -114,14 +134,16 @@ def create_index(
 
 
 def install_blocks(relation: BoundOwnedRelation) -> list[Block]:
-    """The table, then each declared index, for a database that has none of it."""
+    """The table, its ``DEFAULT`` partition when it is partitioned, then each declared index,
+    for a database that has none of it."""
 
     blocks = [Block(statement=create_table(relation))]
 
+    if relation.shape.partitioned_by is not None:
+        blocks.append(default_partition(relation))
+
     blocks.extend(
-        Block(
-            comments=(index.comment,), statement=create_index(relation, index, concurrently=False)
-        )
+        Block(comments=(index.label,), statement=create_index(relation, index, concurrently=False))
         for index in relation.shape.indexes
     )
 

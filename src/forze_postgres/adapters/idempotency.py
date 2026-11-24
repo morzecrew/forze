@@ -83,18 +83,10 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
     transaction (auto-committed by the client), so a pending claim is immediately visible
     to a concurrent duplicate. Expired rows (past ``IdempotencySpec.ttl``) are re-claimable.
 
-    The table is provided by the application; expected schema::
-
-        CREATE TABLE <relation> (
-            op           text        NOT NULL,
-            idem_key     text        NOT NULL,
-            payload_hash text        NOT NULL,
-            status       text        NOT NULL,   -- 'pending' | 'done'
-            result       bytea,                   -- NULL while pending
-            expires_at   timestamptz NOT NULL,
-            owner        uuid,                    -- optional; see below
-            PRIMARY KEY (op, idem_key)
-        );
+    The application applies the table, declared by
+    :func:`forze_postgres.adapters.store_schema.idempotency_shape`, which ``forze schema
+    sql`` prints. ``status`` is ``'pending'`` or ``'done'``, and ``result`` is ``NULL`` while
+    pending.
 
     ``owner`` is **optional and additive**. With it, :meth:`commit` and :meth:`fail` refuse
     a claim another invocation reclaimed — the failure two duplicates of one request can
@@ -106,9 +98,9 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
     silent, and re-probed on a cooldown, so applying the migration to a running deployment
     turns the fence on without a restart (see :meth:`_has_owner_column`).
 
-    ``ALTER TABLE <relation> ADD COLUMN owner uuid;`` is the whole migration — nullable, so
-    existing rows need no backfill: they expire inside the dedup window, and a row with a
-    NULL owner is still completable by design.
+    The column is nullable, so ``forze schema diff`` adds it with no backfill: existing rows
+    expire inside the dedup window, and a row with a NULL owner is still completable by
+    design.
     """
 
     client: PostgresClientPort

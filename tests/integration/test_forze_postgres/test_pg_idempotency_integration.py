@@ -20,9 +20,11 @@ from psycopg import sql
 from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
+from forze_postgres.adapters.store_schema import idempotency_shape
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import PostgresIdempotencyConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -32,21 +34,9 @@ async def idem_table(pg_client: PostgresClient) -> str:
     """Create a dedicated idempotency table and return its name."""
 
     table = f"idem_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                op           TEXT        NOT NULL,
-                idem_key     TEXT        NOT NULL,
-                payload_hash TEXT        NOT NULL,
-                status       TEXT        NOT NULL,
-                result       BYTEA,
-                expires_at   TIMESTAMPTZ NOT NULL,
-                PRIMARY KEY (op, idem_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    shape = idempotency_shape(PostgresIdempotencyConfig(relation=UNUSED_RELATION))
+    # Without the optional owner column: these tests cover the unfenced store.
+    await create_owned_table(pg_client, shape, "public", table, omit=frozenset({"owner"}))
     return table
 
 

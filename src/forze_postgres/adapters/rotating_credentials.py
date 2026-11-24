@@ -21,20 +21,9 @@ from that bound. Without the first, a server-side idle reaper could kill the tra
 *between* a successful exchange and its commit — manufacturing precisely the lockout this
 plane exists to prevent.
 
-The table is provided by the application; expected schema::
-
-    CREATE TABLE <relation> (
-        tenant_id    text        NOT NULL,
-        ref          text        NOT NULL,
-        payload      jsonb       NOT NULL,
-        expires_at   timestamptz,
-        version      bigint      NOT NULL,
-        burnt_reason text,
-        created_at   timestamptz NOT NULL,
-        updated_at   timestamptz NOT NULL,
-        PRIMARY KEY (tenant_id, ref)
-    );
-    CREATE INDEX ON <relation> (tenant_id, updated_at);
+The application applies the table and its index, declared by
+:func:`forze_postgres.adapters.store_schema.rotating_credentials_shape`, which ``forze schema
+sql`` prints.
 
 The primary key covers every access *this store* makes — each one a point lookup on
 ``(tenant_id, ref)``, with ``tenant_id`` part of the key rather than a filter beside it
@@ -909,9 +898,7 @@ class PostgresRotatingCredentialsAdmin(TenancyMixin, RotatingCredentialsAdminPor
     (``version``, ``burnt_reason``, ``updated_at``) and nothing else.
 
     The scan orders and filters on ``updated_at``, which the primary key does not cover, so
-    the documented DDL adds one index for this port::
-
-        CREATE INDEX ON <relation> (tenant_id, updated_at);
+    the declared shape recommends one index for this port, on ``(tenant_id, updated_at)``.
 
     ``tenant_id`` leads it because the scan is always tenant-scoped — a fleet sweep is one
     scan per tenant, so the index prefix matches every query this port ever issues. Without

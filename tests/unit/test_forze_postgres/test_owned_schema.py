@@ -225,6 +225,7 @@ class TestDeclarations:
         with pytest.raises(CoreException) as caught:
             OwnedRelationShape(
                 owner="X",
+                since="1.0.0",
                 columns=(
                     OwnedColumn(name="a", type="timestamptz", nullable=False, default=default),
                 ),
@@ -243,15 +244,16 @@ class TestDeclarations:
         [
             ((OwnedColumn(name="a", type="text"), OwnedColumn(name="a", type="text")), ("a",)),
             ((OwnedColumn(name="a", type="text"),), ("b",)),
-            ((OwnedColumn(name="a", type="text"),), ()),
         ],
-        ids=["column-twice", "key-on-undeclared-column", "no-key"],
+        ids=["column-twice", "key-on-undeclared-column"],
     )
     def test_an_inconsistent_shape_is_refused_at_construction(
         self, columns: tuple[OwnedColumn, ...], primary_key: tuple[str, ...]
     ) -> None:
         with pytest.raises(CoreException) as caught:
-            OwnedRelationShape(owner="X", columns=columns, primary_key=primary_key, indexes=())
+            OwnedRelationShape(
+                owner="X", since="1.0.0", columns=columns, primary_key=primary_key, indexes=()
+            )
 
         assert caught.value.code == "postgres_owned_shape_invalid"
 
@@ -313,6 +315,9 @@ class TestMatching:
             ("(status)::character varying(1)", "status"),
             ("(idempotency_key)::character varying(10)", "idempotency_key"),
             ("((status)::character varying(1) = 'x'::text)", "status = 'x'"),
+            # A modifier on a literal's cast truncates, and Postgres keeps it unfolded.
+            ("(status = 'pendingX'::character(7))", "status = 'pendingX'"),
+            ("x = 'abcdefghijkl'::character varying(10)", "x = 'abcdefghijkl'"),
         ],
     )
     def test_spellings_that_differ_in_meaning_stay_apart(self, left: str, right: str) -> None:
@@ -324,7 +329,6 @@ class TestMatching:
             ("a = 1 AND (b = 2 AND c = 3)", "((a = 1) AND (b = 2) AND (c = 3))"),
             ("x = 'a'::character varying", "x='a'"),
             ("ts < '2020-01-01'::timestamp with time zone", "ts < '2020-01-01'"),
-            ("x = 'a'::character varying(10)", "x = 'a'"),
             ("tags && '{a}'::text[]", "tags && '{a}'"),
             ("x = 'a'::public.citext", "x = 'a'"),
             ('"status" = 1', "STATUS = 1"),
@@ -975,7 +979,11 @@ class TestDiff:
             _run().shape,
             retired=(
                 *_run().shape.retired,
-                Retired(shape=OwnedColumn(name="legacy", type="text"), comment="retired in 1.0"),
+                Retired(
+                    shape=OwnedColumn(name="legacy", type="text"),
+                    retired_in="1.0.0",
+                    comment="unused since",
+                ),
             ),
         )
         relation = attrs.evolve(_run(), shape=shape)

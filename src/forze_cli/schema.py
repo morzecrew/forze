@@ -18,7 +18,7 @@ Exit codes are a contract for CI. They say what the diff found, whether or not i
   or the ``postgres`` extra is missing;
 * ``1``: an internal error.
 
-``--check`` prints nothing and keeps the code.
+``--check`` prints nothing and keeps the code. ``--keep-retired`` leaves retired indexes out.
 """
 
 from __future__ import annotations
@@ -68,7 +68,10 @@ schema_app = typer.Typer(
     no_args_is_help=True,
     help=(
         "The SQL for the tables forze owns. Forze prints it and never runs it: apply it "
-        "with your migration tool. Covers the durable run, step and schedule tables."
+        "with your migration tool. Covers the store tables a PostgresDepsModule configures: "
+        "durable runs, steps and schedules, outboxes and their delivery logs, the HLC "
+        "checkpoint, inboxes, idempotency claims, counters, principal epochs and rotating "
+        "credentials."
     ),
 )
 
@@ -156,6 +159,8 @@ def sql_command(
 async def _read_deltas(
     dsn: str,
     relations: Sequence[BoundOwnedRelation],
+    *,
+    keep_retired: bool = False,
 ) -> list[RelationDelta]:
     from forze_postgres import PostgresClient, PostgresConfig
     from forze_postgres.kernel.catalog import PostgresIntrospector
@@ -173,7 +178,11 @@ async def _read_deltas(
         # One snapshot for every relation, so the output describes one moment.
         async with client.transaction(options=options):
             return [
-                diff_relation(relation, await read_catalog(introspector, relation))
+                diff_relation(
+                    relation,
+                    await read_catalog(introspector, relation),
+                    keep_retired=keep_retired,
+                )
                 for relation in relations
             ]
 
@@ -268,6 +277,14 @@ def diff_command(
             "person is needed."
         ),
     ),
+    keep_retired: bool = typer.Option(
+        False,
+        "--keep-retired",
+        help=(
+            "Leave indexes forze has retired alone: print no drop, refusal or warning for any "
+            "index with a retired shape's keys."
+        ),
+    ),
     dsn: str | None = typer.Option(None, "--dsn", hidden=True),
 ) -> None:
     if dsn is not None:
@@ -289,7 +306,7 @@ def diff_command(
     relations = _relations(deps)
 
     try:
-        deltas = _run(_read_deltas(url, relations.bound))
+        deltas = _run(_read_deltas(url, relations.bound, keep_retired=keep_retired))
 
     except CoreException as error:
         _fail(f"Cannot read the catalog: {error.summary}", _exit_for(error))

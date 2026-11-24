@@ -5,8 +5,8 @@ back as ``((status = 'pending'::text) AND (attempts = 0))``. Rendering the decla
 through the server would need a scratch ``CREATE INDEX``, which the diff's read-only role and
 ``READ ONLY`` transaction both refuse, so both sides are normalized as text instead:
 
-* a cast on a literal is dropped, and a cast on anything else is kept, since it can change
-  the value;
+* a cast on a literal is dropped unless its type carries a modifier, and a cast on anything
+  else is kept, since it can change the value;
 * whitespace goes, and keywords and bare names compare case-insensitively;
 * ``AND`` and ``OR`` become a tree, so wrapping parentheses and nesting do not matter, but
   grouping does. ``a OR b AND c`` and ``(a OR b) AND c`` stay different.
@@ -115,9 +115,13 @@ def _tokens(
 ) -> list[str]:
     """*text* split into tokens, whitespace kept as single spaces.
 
-    A cast on a literal is dropped: it is the type Postgres gives the constant when it stores
-    the predicate (``'pending'::text``). A cast on a column or an expression is kept, because it
-    can change the value: ``status::varchar(1)`` truncates.
+    A cast on a literal is dropped when its type has no modifier: it is the type Postgres gives
+    the constant when it stores the predicate (``'pending'::text``), and Postgres folds a cast
+    that changes the value into the literal (``'2024-01-01 12:00:00'::date`` is stored as
+    ``'2024-01-01'::date``). It keeps a modifier unfolded, ``'pendingX'::character(7)``, which
+    truncates, so that cast is kept. A declaration writes its literals bare
+    (:class:`~.shapes.OwnedIndex`). A cast on a column or an expression is kept, because it can
+    change the value: ``status::varchar(1)`` truncates.
 
     In a *predicate*, a cast to plain ``text`` on one of *text_columns* is dropped as well, and a
     lone column in parentheses is unwrapped: on a ``varchar`` column Postgres stores
@@ -136,7 +140,7 @@ def _tokens(
         position += 1
 
         if kind == "cast" and (
-            last in ("literal", "number")
+            (last in ("literal", "number") and not _has_modifier(raw, position))
             or (
                 predicate
                 and _is_plain_text_cast(raw, position)
@@ -163,6 +167,13 @@ def _tokens(
             out.append(value)
 
     return _unwrap_columns(out) if predicate else out
+
+
+def _has_modifier(raw: list[tuple[str | None, str]], position: int) -> bool:
+    """Whether the type a ``::`` cast at *position* names carries a modifier, such as the
+    length of ``character(7)`` or the scale of ``numeric(3, 1)``."""
+
+    return any(value == "(" for _, value in raw[position : _skip_type(raw, position)])
 
 
 def _skip_type(raw: list[tuple[str | None, str]], position: int) -> int:

@@ -21,10 +21,12 @@ from typer.testing import CliRunner
 
 from forze_cli.app import app
 from forze_postgres import PostgresClient, PostgresConfig, PostgresDepsModule, owned_relations
+from forze_postgres.adapters.store_schema import outbox_shape
 from forze_postgres.execution.deps.configs import (
     PostgresDurableRunConfig,
     PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
+    PostgresOutboxConfig,
 )
 from forze_postgres.kernel.catalog import PostgresIntrospector
 from forze_postgres.kernel.catalog.owned import (
@@ -39,7 +41,7 @@ from forze_postgres.kernel.catalog.owned import (
 )
 from forze_postgres.kernel.catalog.owned.matching import normalize_expression
 from forze_postgres.kernel.client.value_objects import PostgresTransactionOptions
-from tests.support.schema_snapshots import SNAPSHOTS, snapshot_versions
+from tests.support.schema_snapshots import SNAPSHOTS, deps_for, snapshot_versions
 from tests.support.sql_statements import split_sql
 
 pytestmark = pytest.mark.integration
@@ -115,7 +117,7 @@ async def _create_schema(admin: psycopg.AsyncConnection, schema: str) -> None:
 
 async def test_a_fresh_render_reads_back_in_sync(dsn: str, admin, schema: str) -> None:
     await _create_schema(admin, schema)
-    relations = owned_relations(_deps(schema)).bound
+    relations = owned_relations(deps_for(schema)).bound
 
     await _run(admin, render_sql(relations, version="9.9.9"))
     deltas = await _diff(dsn, relations)
@@ -127,7 +129,7 @@ async def test_every_declared_predicate_matches_its_deparsed_form(
     dsn: str, admin, schema: str
 ) -> None:
     await _create_schema(admin, schema)
-    relations = owned_relations(_deps(schema)).bound
+    relations = owned_relations(deps_for(schema)).bound
     await _run(admin, render_sql(relations, version="9.9.9"))
     client = PostgresClient()
     await client.initialize(dsn, config=PostgresConfig(min_size=0, max_size=1, pool_headroom=0))
@@ -158,7 +160,7 @@ async def test_a_database_at_an_earlier_release_converges(
     await _create_schema(admin, schema)
     snapshot = (SNAPSHOTS / f"{version}.sql").read_text().replace("public.", f"{schema}.")
     await _run(admin, snapshot)
-    relations = owned_relations(_deps(schema)).bound
+    relations = owned_relations(deps_for(schema)).bound
 
     first = await _diff(dsn, relations)
     assert diff_outcome(first) in ("in_sync", "delta"), render_diff(first, version="9.9.9")
@@ -166,6 +168,57 @@ async def test_a_database_at_an_earlier_release_converges(
 
     second = await _diff(dsn, relations)
     assert diff_outcome(second) == "in_sync", render_diff(second, version="9.9.9")
+
+
+async def test_the_0_25_upgrade_replaces_the_outbox_claim_indexes_the_page_printed(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    await _run(admin, (SNAPSHOTS / "0.24.1.sql").read_text().replace("public.", f"{schema}."))
+
+    text = render_diff(await _diff(dsn, owned_relations(deps_for(schema)).bound), version="9.9.9")
+
+    # The causal claim and the consumed table's claim are built before the page's go.
+    assert (
+        f"CREATE INDEX CONCURRENTLY ON {schema}.outbox (outbox_route, status, hlc, created_at, id);"
+        in text
+    )
+    assert f"DROP INDEX CONCURRENTLY {schema}.outbox_claim_idx;" in text
+    assert f"DROP INDEX CONCURRENTLY {schema}.outbox_claim_hlc_idx;" in text
+    assert f"DROP INDEX CONCURRENTLY {schema}.outbox_consumed_claim_idx;" in text
+    # The consume migration dropped processing_at, which the relay's reclaim still reads.
+    assert f"ALTER TABLE {schema}.outbox_consumed ADD COLUMN processing_at timestamptz;" in text
+    # The page's delivery log, partitioned, is forze's with another index name.
+    assert "outbox_delivered" not in text
+
+
+async def test_a_partitioned_log_without_its_index_gets_a_warning_not_a_statement(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(deps_for(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    await admin.execute(
+        sql.SQL(
+            "DROP INDEX {}"
+        ).format(sql.Identifier(schema, await _index_on(admin, schema, "outbox_delivered")))
+    )
+
+    deltas = await _diff(dsn, relations)
+    text = render_diff(deltas, version="9.9.9")
+
+    assert diff_outcome(deltas) == "refusal"
+    assert f"-- CREATE INDEX ON {schema}.outbox_delivered (event_id);" in text
+    assert "CONCURRENTLY ON " + f"{schema}.outbox_delivered" not in text
+
+
+async def _index_on(admin: psycopg.AsyncConnection, schema: str, table: str) -> str:
+    cursor = await admin.execute(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = %s AND tablename = %s",
+        (schema, table),
+    )
+    (name,) = await cursor.fetchone() or ("",)
+    return str(name)
 
 
 async def test_the_0_18_upgrade_drops_the_retired_scans_under_their_generated_names(
@@ -780,3 +833,61 @@ async def test_an_index_a_foreign_key_depends_on_is_refused_without_a_drop(
     assert diff_outcome(deltas) == "refusal"
     assert "foreign keys depend on it" in text
     assert "app_nnd;" not in text
+
+
+_CLAIM: LiteralString = """
+    SELECT id FROM {table}
+    WHERE outbox_route = 'route_1' AND status = 'pending'
+      AND (available_at IS NULL OR available_at <= now())
+    ORDER BY {order} LIMIT 100 FOR UPDATE SKIP LOCKED
+"""
+"""The store's claim, as ``PostgresOutboxStore.claim_pending`` issues it."""
+
+
+@pytest.mark.parametrize(
+    ("hlc", "order"),
+    [(False, "created_at"), (True, "hlc NULLS LAST, created_at, id")],
+    ids=["created_at", "hlc"],
+)
+async def test_the_declared_claim_index_returns_the_claim_in_order_without_a_sort(
+    dsn: str, admin, schema: str, hlc: bool, order: str
+) -> None:
+    # The page's (outbox_route, status, available_at, created_at) cannot: the OR on its third
+    # key leaves Postgres sorting every pending row of the route before it takes a batch.
+    await _create_schema(admin, schema)
+    config = PostgresOutboxConfig(relation=(schema, "outbox"), hlc_ordering=hlc)
+    relation = BoundOwnedRelation(
+        route="outboxes.events", schema=schema, name="outbox", shape=outbox_shape(config)
+    )
+    table = sql.Identifier(schema, "outbox")
+    await _run(admin, render_sql([relation], version="9.9.9"))
+    await admin.execute(
+        sql.SQL(
+            """
+            INSERT INTO {table} (id, outbox_route, event_id, event_type, occurred_at, payload,
+                                 status, created_at, hlc)
+            SELECT gen_random_uuid(), 'route_' || (g % 4), gen_random_uuid(), 'evt', now(),
+                   '{{}}'::jsonb, CASE WHEN g % 25 = 0 THEN 'pending' ELSE 'published' END,
+                   now() - g * interval '1 second', g::bigint << 16
+            FROM generate_series(1, 20000) AS g
+            """
+            if hlc
+            else """
+            INSERT INTO {table} (id, outbox_route, event_id, event_type, occurred_at, payload,
+                                 status, created_at)
+            SELECT gen_random_uuid(), 'route_' || (g % 4), gen_random_uuid(), 'evt', now(),
+                   '{{}}'::jsonb, CASE WHEN g % 25 = 0 THEN 'pending' ELSE 'published' END,
+                   now() - g * interval '1 second'
+            FROM generate_series(1, 20000) AS g
+            """
+        ).format(table=table)
+    )
+    await admin.execute(sql.SQL("ANALYZE {}").format(table))
+
+    cursor = await admin.execute(
+        sql.SQL("EXPLAIN (COSTS OFF) " + _CLAIM).format(table=table, order=sql.SQL(order))
+    )
+    plan = "\n".join(str(row[0]) for row in await cursor.fetchall())
+
+    assert "Index Scan using" in plan, plan
+    assert "Sort" not in plan, plan

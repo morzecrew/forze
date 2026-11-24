@@ -39,10 +39,12 @@ from forze_postgres.adapters.idempotency import (
     _REPORTED_UNFENCED,  # pyright: ignore[reportPrivateUsage]
     PostgresIdempotencyStore,
 )
+from forze_postgres.adapters.store_schema import idempotency_shape
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import PostgresIdempotencyConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -57,23 +59,10 @@ async def _table(pg_client: PostgresClient, *, owner_column: bool) -> str:
     """Create an idempotency table, with or without the optional ``owner`` column."""
 
     table = f"idem_own_{uuid4().hex[:8]}"
-    owner = sql.SQL(", owner UUID") if owner_column else sql.SQL("")
+    shape = idempotency_shape(PostgresIdempotencyConfig(relation=UNUSED_RELATION))
+    omit = frozenset() if owner_column else frozenset({"owner"})
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                op           TEXT        NOT NULL,
-                idem_key     TEXT        NOT NULL,
-                payload_hash TEXT        NOT NULL,
-                status       TEXT        NOT NULL,
-                result       BYTEA,
-                expires_at   TIMESTAMPTZ NOT NULL{owner},
-                PRIMARY KEY (op, idem_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table), owner=owner)
-    )
+    await create_owned_table(pg_client, shape, "public", table, omit=omit)
 
     return table
 

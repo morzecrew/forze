@@ -17,9 +17,11 @@ pytest.importorskip("psycopg")
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_postgres.adapters.counter import PostgresCounterAdapter, PostgresCounterAdminAdapter
+from forze_postgres.adapters.store_schema import counter_shape
 from forze_postgres.execution.deps.configs import PostgresCounterConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from tests.support.counter_conformance import COUNTER_BATTERY, Check, CounterHarness
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -27,17 +29,8 @@ from tests.support.counter_conformance import COUNTER_BATTERY, Check, CounterHar
 @pytest_asyncio.fixture
 async def harness(pg_client) -> CounterHarness:
     table = f"counter_conf_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        f"""
-        CREATE TABLE {table} (
-            tenant_id  text        NOT NULL,
-            suffix     text        NOT NULL,
-            value      bigint      NOT NULL,
-            expires_at timestamptz,
-            PRIMARY KEY (tenant_id, suffix)
-        )
-        """
-    )
+    shape = counter_shape(PostgresCounterConfig(relation=UNUSED_RELATION))
+    await create_owned_table(pg_client, shape, "public", table)
     run = uuid4().hex[:8]
     config = PostgresCounterConfig(relation=("public", table))
     # Wired like the factory does it: the introspector is how the adapter finds the

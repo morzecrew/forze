@@ -47,9 +47,11 @@ from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStart
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockState
 from forze_mock.adapters.queue import MockQueueAdapter
+from forze_postgres.adapters.store_schema import outbox_delivery_log_shape, outbox_shape
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -67,43 +69,17 @@ _QUEUE = QueueSpec(name="relay", codec=_CODEC)
 
 @pytest.fixture
 async def outbox_table(pg_client: PostgresClient) -> AsyncIterator[str]:
-    """A fresh outbox table with the documented unique key and claim index."""
+    """A fresh outbox table with the declared unique key and claim index.
+
+    It is the ``retain`` shape, so it serves routes in both storage modes; the tests of a
+    table moved over to ``consume`` drop its columns themselves.
+    """
 
     table = f"outbox_consume_{uuid4().hex[:8]}"
     ident = sql.Identifier("public", table)
+    shape = outbox_shape(PostgresOutboxConfig(relation=UNUSED_RELATION))
 
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {t} (
-                id UUID PRIMARY KEY,
-                outbox_route TEXT NOT NULL,
-                event_id UUID NOT NULL,
-                event_type TEXT NOT NULL,
-                tenant_id UUID,
-                execution_id UUID,
-                correlation_id UUID,
-                causation_id UUID,
-                occurred_at TIMESTAMPTZ NOT NULL,
-                payload JSONB NOT NULL,
-                status TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                published_at TIMESTAMPTZ,
-                processing_at TIMESTAMPTZ,
-                last_error TEXT,
-                attempts INT NOT NULL DEFAULT 0,
-                available_at TIMESTAMPTZ,
-                ordering_key TEXT,
-                UNIQUE (outbox_route, event_id)
-            )
-            """
-        ).format(t=ident)
-    )
-    await pg_client.execute(
-        sql.SQL("CREATE INDEX ON {t} (outbox_route, status, available_at, created_at)").format(
-            t=ident
-        )
-    )
+    await create_owned_table(pg_client, shape, "public", table)
 
     yield table
 
@@ -112,35 +88,21 @@ async def outbox_table(pg_client: PostgresClient) -> AsyncIterator[str]:
 
 @pytest.fixture
 async def make_log(pg_client: PostgresClient) -> AsyncIterator[Callable[..., Awaitable[str]]]:
-    """Delivery logs as the schema page documents them: partitioned by day on publish time."""
+    """Delivery logs as forze declares them: partitioned on publish time."""
 
     made: list[str] = []
+    shape = outbox_delivery_log_shape(
+        PostgresOutboxConfig(
+            relation=UNUSED_RELATION, storage="consume", delivery_log=UNUSED_RELATION
+        )
+    )
 
     async def make(*, default_partition: bool) -> str:
         table = f"outbox_log_{uuid4().hex[:8]}"
         made.append(table)
-        ident = sql.Identifier("public", table)
-        await pg_client.execute(
-            sql.SQL(
-                """
-                CREATE TABLE {t} (
-                    id UUID NOT NULL,
-                    outbox_route TEXT NOT NULL,
-                    event_id UUID NOT NULL,
-                    tenant_id UUID,
-                    published_at TIMESTAMPTZ NOT NULL
-                ) PARTITION BY RANGE (published_at)
-                """
-            ).format(t=ident)
+        await create_owned_table(
+            pg_client, shape, "public", table, default_partition=default_partition
         )
-        await pg_client.execute(sql.SQL("CREATE INDEX ON {t} (event_id)").format(t=ident))
-
-        if default_partition:
-            await pg_client.execute(
-                sql.SQL("CREATE TABLE {p} PARTITION OF {t} DEFAULT").format(
-                    p=sql.Identifier("public", f"{table}_default"), t=ident
-                )
-            )
 
         return table
 

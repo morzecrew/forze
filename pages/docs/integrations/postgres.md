@@ -168,8 +168,9 @@ PostgresLifecycleModule(
 
 - **You own the schema.** Forze *introspects* existing relations; it never
   creates application tables. Provision read / write / history / search relations
-  (and extensions) with your migration tool first. For the durable tables, `forze schema`
-  prints the SQL and you apply it
+  (and extensions) with your migration tool first. For forze's store tables (durable
+  execution, outbox and inbox, idempotency, counters, principal epochs, rotating
+  credentials), `forze schema` prints the SQL and you apply it
   ([Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md)).
 - **Values a column rounds or pads.** An update compares a value as its column stores it, so
   resending an unchanged one writes nothing: `timestamp(p)`, `timestamptz(p)`, `time(p)` and
@@ -183,11 +184,8 @@ PostgresLifecycleModule(
       tests run on Postgres 18.
     - `interval(p)` is compared as sent.
 - **Counter lifetimes need one column.** A counter written with a `ttl` stores its lapse
-  instant in an optional `expires_at timestamptz` column:
-
-    ```sql
-    ALTER TABLE <counters> ADD COLUMN expires_at timestamptz;
-    ```
+  instant in an optional `expires_at timestamptz` column, which forze declares and
+  `forze schema diff` adds to a table that lacks it.
 
     A table without it keeps working for every call that does not pass a `ttl`; a call
     that does is refused with `configuration` (`counter_ttl_unsupported`) until the column
