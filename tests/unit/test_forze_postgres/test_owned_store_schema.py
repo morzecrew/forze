@@ -520,6 +520,25 @@ class TestDeliveryLog:
             "PARTITION OF app.events DEFAULT"
         ]
 
+    def test_bound_tables_holding_both_partition_names_are_refused(self) -> None:
+        hashed = default_partition_name("events", hashed=True)
+        deps = PostgresDepsModule(
+            client=PostgresClient(),
+            outboxes={
+                "events": _outbox(
+                    relation=("app", "events_default"),
+                    storage="consume",
+                    delivery_log=("app", "events"),
+                ),
+                "other": _outbox(relation=("app", hashed)),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            owned_relations(deps)
+
+        assert caught.value.code == "postgres_owned_partition_name_taken"
+
     def test_two_long_names_sharing_a_prefix_get_two_partitions(self) -> None:
         # Cutting both to the same prefix would make the second CREATE TABLE fail.
         assert default_partition_name("a" * 55 + "x") != default_partition_name("a" * 55 + "y")
