@@ -376,6 +376,9 @@
         <loc>https://morzecrew.github.io/forze/dev/reference/resilience-tuning/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/schema-cli/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/spec-registry/</loc>
       </url>
       <url>
@@ -416,6 +419,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/running-in-prod/shutdown-and-fleets/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/upgrading-forze-tables/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/testing/concurrency/</loc>

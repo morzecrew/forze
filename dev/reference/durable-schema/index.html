@@ -2301,6 +2301,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/upgrading-forze-tables/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database-zap" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 12 2.84M21 5v3M21 12l-3 5h4l-3 5"/><path d="M3 12a9 3 0 0 0 11.59 2.87"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Upgrading forze's tables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -6255,17 +6284,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#migrations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Migrations
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -6364,6 +6382,35 @@
     
   
   Operations CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../schema-cli/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-terminal" viewBox="0 0 24 24"><path d="M12 19h8M4 17l6-6-6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema CLI
 
     
   </span>
@@ -6624,17 +6671,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#migrations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Migrations
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -6748,10 +6784,15 @@
 
   <h1>Durable execution schema</h1>
 
-<p>The durable-execution tables are application-owned: you create and migrate them. This is
-the schema the run store, the step journal and the scheduler read and write. The wiring is
-in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
+<p>The durable-execution tables are application-owned: you apply their DDL with your
+migration tool. This is the schema the run store, the step journal and the scheduler read
+and write. The wiring is in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <h2 id="postgres">Postgres<a class="headerlink" href="#postgres" title="Permanent link">&para;</a></h2>
+<p>Forze declares each Postgres table once, in code. <code>forze schema sql</code> prints the statements
+below for the relations your <code>PostgresDepsModule</code> names, and <code>forze schema diff</code> prints
+what an existing database is missing. <a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>
+walks through both. The SQL on this page is that render, for a tenant-aware table named
+<code>public.durable_*</code>, and a test keeps it so.</p>
 <h3 id="runs">Runs<a class="headerlink" href="#runs" title="Permanent link">&para;</a></h3>
 <p>For <code>PostgresDurableRunConfig(relation=("public", "durable_run"))</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span>
@@ -6771,16 +6812,18 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="w">    </span><span class="n">updated_at</span><span class="w">          </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">cancel_requested_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
 <span class="w">    </span><span class="n">cancel_refused_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">run_id</span><span class="p">),</span>
-<span class="w">    </span><span class="k">UNIQUE</span><span class="w"> </span><span class="p">(</span><span class="n">idempotency_key</span><span class="p">)</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span>
 <span class="p">);</span>
 
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">idempotency_key</span><span class="p">);</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">coalesce_key</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
 </code></pre></div>
 <ul>
-<li><code>UNIQUE (idempotency_key)</code> makes two submits of one key converge on a single run.</li>
+<li>The unique index on <code>idempotency_key</code> makes two submits of one key converge on a single
+  run. A table created with a <code>UNIQUE (idempotency_key)</code> constraint has the same index, and
+  <code>forze schema diff</code> reads it as present.</li>
 <li>The partial unique index on <code>coalesce_key</code> admits one unclaimed <code>pending</code> run per key,
-  which <code>enqueue(coalesce_key=...)</code> joins.</li>
+  which <code>enqueue(coalesce_key=...)</code> joins. Only that call reads the column.</li>
 <li>Both keys are stored as <code>{tenant_id}:{key}</code>, or <code>:{key}</code> untagged, so no key reaches
   another tenant's run. Records return the key as the caller passed it.</li>
 <li><code>attempts</code> is the fence token: each claim advances it under a row lock, and a terminal
@@ -6805,13 +6848,17 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="p">,</span><span class="w"> </span><span class="n">run_id</span><span class="w"> </span><span class="k">DESC</span><span class="p">);</span>
 </code></pre></div>
 <p>Without them, the recovery scan, the purge and the listing scan and sort the whole table
-as it grows.</p>
-<p>The two recovery-scan indexes replace <code>(status, created_at)</code> and
-<code>(tenant_id, status, created_at)</code>. A scan of every function costs the same on either:
-neither lets the claim read in <code>created_at</code> order, since it selects <code>pending</code> and
+as it grows. <code>forze schema</code> declares the <code>tenant_id</code> variants for a tenant-aware table on a
+static relation. The store filters a bound scan by tenant whether or not the table is
+tenant-aware, so if you bind tenants without <code>tenant_aware=True</code>, create the variants
+yourself; the diff leaves an index it does not declare alone. A table in a per-tenant
+schema needs none.</p>
+<p>The two recovery-scan indexes replaced <code>(status, created_at)</code> and
+<code>(tenant_id, status, created_at)</code> in 0.18.0. A scan of every function costs the same on
+either: neither lets the claim read in <code>created_at</code> order, since it selects <code>pending</code> and
 <code>running</code> rows and sorts them. On the old ones, a worker that claims only some functions
-would read every pending run of the others on each scan. On an existing table, create the new indexes (<code>CONCURRENTLY</code> on a live one)
-before such a worker starts, then drop the old ones.</p>
+would read every pending run of the others on each scan. <code>forze schema diff</code> creates the
+new indexes before it drops the old ones, under whatever names your database gave them.</p>
 <h3 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h3>
 <p>For <code>PostgresDurableStepConfig(relation=("public", "durable_step"))</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_step</span><span class="w"> </span><span class="p">(</span>
@@ -6850,28 +6897,13 @@ schedule. Records return the id as the caller registered it.</p>
 <span class="c1">-- on a shared tagged table a bound scheduler also filters tenant_id</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_schedule</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">next_fire_at</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">enabled</span><span class="p">;</span>
 </code></pre></div>
-<h3 id="migrations">Migrations<a class="headerlink" href="#migrations" title="Permanent link">&para;</a></h3>
-<p><strong>Purging runs reads <code>updated_at</code>.</strong> The column exists already; where you run the
-retention purge, add the <code>(status, updated_at)</code> index recommended above, built
-<code>CONCURRENTLY</code> so the table stays writable meanwhile.</p>
-<p><strong>Coalescing enqueue needs a column and an index.</strong> Only <code>enqueue(coalesce_key=...)</code> reads
-them, so add both before the first such call; nothing else changes:</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">coalesce_key</span><span class="w"> </span><span class="nb">text</span><span class="p">;</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">coalesce_key</span><span class="p">)</span>
-<span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
-</code></pre></div>
-<p><strong>0.6.0 added run cancellation.</strong> Both cancel columns are nullable with no default, so an
-existing <code>durable_run</code> table migrates with no rewrite:</p>
-<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span>
-<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">cancel_requested_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">cancel_refused_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">;</span>
-</code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Migrate before you deploy</p>
-<p>Starting a run, the recovery scan and every read return both columns, so against the
-old schema each one raises <code>UndefinedColumn</code> and no body starts. A new enqueue still
-inserts, so its run waits <code>pending</code> until the migration lands and the recovery scan
-claims it; a re-submit of an existing key fails like a read.</p>
+<p>The run store names every column but <code>coalesce_key</code> on its common paths. Against a
+table missing one, starting a run, the recovery scan or a read can raise
+<code>UndefinedColumn</code>, and no body starts. Apply <code>forze schema diff</code>'s output before the
+forze version that needs it reaches production. Only <code>enqueue(coalesce_key=...)</code> names
+<code>coalesce_key</code>, so a table without it serves every other call.</p>
 </div>
 <h2 id="mongo">Mongo<a class="headerlink" href="#mongo" title="Permanent link">&para;</a></h2>
 <p>For <code>MongoDurableRunConfig</code>, <code>MongoDurableStepConfig</code> and <code>MongoDurableScheduleConfig</code>,

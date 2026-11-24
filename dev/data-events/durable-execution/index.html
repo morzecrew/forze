@@ -2508,6 +2508,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/upgrading-forze-tables/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database-zap" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 12 2.84M21 5v3M21 12l-3 5h4l-3 5"/><path d="M3 12a9 3 0 0 0 11.59 2.87"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Upgrading forze's tables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -6453,6 +6482,35 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/schema-cli/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-terminal" viewBox="0 0 24 24"><path d="M12 19h8M4 17l6-6-6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -7326,9 +7384,10 @@ retried in place with backoff before it is journaled — compensation only runs 
 failures or exhausted retries, never a one-off blip. A throttled failure waits at least its
 <code>retry_after</code>; one longer than the schedule's last backoff is journaled at once. This tier is self-hosted only
 (Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
-Temporal/Inngest. The relations come from your migrations; their schema, indexes and
-migrations — and the one index the Mongo run store needs — are in the
-<a href="../../reference/durable-schema/">Durable execution schema</a>.</p>
+Temporal/Inngest. The relations come from your migrations; their schema and indexes, and
+the one index the Mongo run store needs, are in the
+<a href="../../reference/durable-schema/">Durable execution schema</a>. On Postgres, <code>forze schema</code>
+writes those migrations (<a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>).</p>
 <h3 id="recurring-schedules">Recurring schedules<a class="headerlink" href="#recurring-schedules" title="Permanent link">&para;</a></h3>
 <p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
 schedule and run the scheduler step (alongside the recovery step, which executes the runs it

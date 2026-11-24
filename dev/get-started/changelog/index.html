@@ -4693,6 +4693,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/upgrading-forze-tables/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database-zap" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 12 2.84M21 5v3M21 12l-3 5h4l-3 5"/><path d="M3 12a9 3 0 0 0 11.59 2.87"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Upgrading forze's tables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -8635,6 +8664,35 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/schema-cli/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-terminal" viewBox="0 0 24 24"><path d="M12 19h8M4 17l6-6-6-6"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Schema CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -11272,6 +11330,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Providers can declare what they resolve.</strong> <code>Requirement(key, route, remedy)</code> and <code>DeclaresRequirements</code> in <code>forze.application.contracts.deps</code>, and <code>ProviderStore.providers()</code> to walk a store's registrations.</p>
+</li>
+<li>
+<p><strong><code>forze schema</code> prints the SQL for the durable tables.</strong> <code>sql</code> prints the <code>CREATE</code> statements and <code>diff</code> what a database lacks, read via a role in <code>FORZE_SCHEMA_DSN</code>, exiting 0, 10 or 11 (<code>--check</code> for CI); forze never runs it. New: <code>owned_relations</code>, <code>OwnedRelationShape</code>.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
