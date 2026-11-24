@@ -212,6 +212,31 @@ async def test_a_partitioned_log_without_its_index_gets_a_warning_not_a_statemen
     assert "CONCURRENTLY ON " + f"{schema}.outbox_delivered" not in text
 
 
+@pytest.mark.parametrize("partition", ["default", "none"])
+async def test_the_diff_reads_a_partitioned_logs_partitions(
+    dsn: str, admin, schema: str, partition: str
+) -> None:
+    await _create_schema(admin, schema)
+    log = next(
+        r for r in owned_relations(deps_for(schema)).bound if r.name == "outbox_delivered"
+    )
+    await _run(admin, render_sql([log], version="9.9.9"))
+
+    if partition == "none":
+        await admin.execute(
+            sql.SQL("DROP TABLE {}").format(sql.Identifier(schema, "outbox_delivered_default"))
+        )
+
+    deltas = await _diff(dsn, (log,))
+    text = render_diff(deltas, version="9.9.9")
+
+    if partition == "default":
+        assert text == ""
+    else:
+        assert diff_outcome(deltas) == "refusal"
+        assert "has no partition, so every insert into it fails" in text
+
+
 async def _index_on(admin: psycopg.AsyncConnection, schema: str, table: str) -> str:
     cursor = await admin.execute(
         "SELECT indexname FROM pg_indexes WHERE schemaname = %s AND tablename = %s",

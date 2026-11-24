@@ -9016,3 +9016,99 @@ measurement), one `discovery` (D-340) and one close-out.
 
 **Drift count: 0.** Unit 33 holds ten entries, D-332 to D-341: eight `spec-gap`, one
 `discovery` and one close-out.
+
+# Unit 34 · RFC 0080 P2a review — partitions, held drops and NULL defaults
+
+Branch `feat/postgres-owned-store-tables` (#951): fixes from the PR's review.
+- D-342 and D-343 narrow D-333's partitioned log.
+- D-344 extends row 17.
+- D-345 narrows D-337's rule.
+
+The rest change no decision:
+- Routes that cannot share their table now exit `78`, a configuration error, from both
+  commands, not `1` with a traceback (`src/forze_cli/schema.py:122`,
+  `tests/unit/test_forze_cli/test_schema_command.py:249`).
+- `--check` is described as printing no SQL, since warnings still go to stderr.
+- The outbox claim indexes name their release, `0.5.0`.
+- The recovery scan's comment says it filters on `name` only for a worker that claims some
+  functions.
+- The page counts the tagged table's claim twin.
+
+**Drift count: 0.** Four entries, D-342 to D-345, all `spec-gap`.
+
+## D-342 — The default partition's name fits one identifier and differs from its table's
+
+- **Touches:** D-333 (proposed).
+- **Found:** in review on #951. `<name>_default` for a 63-byte table name came back from
+  Postgres truncated to the table's own name, so the second `CREATE TABLE` failed.
+- **Built:** the name is cut on a character boundary to leave room for `_default` within 63
+  bytes. A name the cut would turn back into the table's own takes `_default1` instead
+  (`src/forze_postgres/kernel/catalog/owned/render.py:106`, `:114`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:487`, red before
+  the change, over a 63-byte name, a name ending in the suffix, and a multibyte one.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-333's row, plus: the `DEFAULT` partition's name fits 63
+  bytes and is never its table's.
+- **Action:** decided.
+
+## D-343 — A partitioned log with no partition is never read as in sync
+
+- **Touches:** D-333 (proposed), which compared a partitioned table's columns and indexes
+  only.
+- **Found:** in review on #951. A log with its index and no partition read as in sync, and
+  every insert into it then fails.
+- **Built:**
+  - The catalog read counts a partitioned table's partitions and whether one is its
+    `DEFAULT` (`src/forze_postgres/kernel/catalog/introspect/introspector.py:875`,
+    `src/forze_postgres/kernel/catalog/owned/diff.py:95`).
+  - No partition at all is a warning, with the `DEFAULT` partition's `CREATE TABLE`
+    commented (`diff.py:320`).
+  - Partitions that are all the application's, none `DEFAULT`, get a note with the same
+    statement commented, since an application may run without the net (`:337`).
+  - The diff never creates a partition, since doing so locks the table.
+- **Evidence:**
+  - `tests/unit/test_forze_postgres/test_owned_store_schema.py:497`, `:510`, red before the
+    change.
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:216` on Postgres 18.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-333's row, plus: a partitioned table with no partition is a
+  warning, and one with no `DEFAULT` a note.
+- **Action:** decided.
+
+## D-344 — A retired index stays while a declared one is still being built
+
+- **Touches:** row 17 (`ASSUMED`, accepted).
+- **Found:** in review on #951. While a declared index was invalid under a running build, the
+  diff warned and printed nothing for it, yet still dropped a valid retired index. The old
+  claim index could then go before its replacement was usable.
+- **Built:** while any declared index on the table is held back by a running build, every
+  retired drop is a warning with its statement commented
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:308`, `:614`, `:638`). When a build
+  failed earlier, the replacement is still recreated before the drop.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:655`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 17, plus: while a declared index on the table may still be
+  building, no retired index on it is dropped.
+- **Action:** departed.
+
+## D-345 — A `NOT NULL` column may not default to `NULL`
+
+- **Touches:** D-337 (proposed), row 6 (`ASSUMED`).
+- **Found:** in review on #951. `default="NULL"` is a literal, so a later `NOT NULL` column
+  with it passed the rule. The diff would then print `ADD COLUMN … NOT NULL DEFAULT NULL`,
+  which fails on a table with rows.
+- **Built:**
+  - A column fills existing rows only when it is nullable or has a literal default other
+    than `NULL` (`src/forze_postgres/kernel/catalog/owned/shapes.py:45`).
+  - A `NOT NULL` column defaulting to `NULL` is refused when its shape is built, whatever
+    its release (`:263`).
+  - The rule and the diff's `ADD COLUMN` both apply the same test (`:328`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:238`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-337's row, plus: a `NOT NULL` column's default is never
+  `NULL`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 holds four entries, D-342 to D-345, all `spec-gap`.

@@ -6,7 +6,7 @@ declarations, never read from a catalog.
 """
 
 from collections.abc import Iterable, Sequence
-from typing import final
+from typing import Final, final
 
 import attrs
 
@@ -99,12 +99,33 @@ def create_table(relation: BoundOwnedRelation) -> str:
     return f"CREATE TABLE {qualified(relation.schema, relation.name)} (\n{body}\n){tail};"
 
 
+_IDENTIFIER_BYTES: Final = 63
+"""Postgres's longest identifier (``NAMEDATALEN - 1``); a longer one is truncated."""
+
+
+def _fit(name: str, suffix: str) -> str:
+    """*name* cut on a character boundary so that it and *suffix* fit one identifier."""
+
+    room = _IDENTIFIER_BYTES - len(suffix.encode())
+
+    return name.encode()[:room].decode(errors="ignore") + suffix
+
+
+def default_partition_name(parent: str) -> str:
+    """``<parent>_default``, shortened to fit an identifier, and never *parent* itself, which
+    a long name ending in ``_default`` would otherwise come back as."""
+
+    name = _fit(parent, "_default")
+
+    return name if name != parent else _fit(parent, "_default1")
+
+
 def default_partition(relation: BoundOwnedRelation) -> Block:
     """The ``DEFAULT`` partition of a partitioned table, which takes a row no partition of the
     application's covers. Without a partition every insert fails."""
 
     parent = qualified(relation.schema, relation.name)
-    partition = qualified(relation.schema, f"{relation.name}_default")
+    partition = qualified(relation.schema, default_partition_name(relation.name))
 
     return Block(
         comments=("the partition for rows no other partition covers; add yours beside it",),

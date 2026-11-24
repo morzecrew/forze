@@ -42,6 +42,21 @@ def is_constant_default(expression: str) -> bool:
     return _CONSTANT_DEFAULT.fullmatch(expression.strip()) is not None
 
 
+def fills_rows(column: "OwnedColumn") -> bool:
+    """Whether ``ADD COLUMN`` for *column* gives every existing row a value: it is nullable,
+    or it has a literal default other than ``NULL``. Only then does adding it to a table that
+    holds rows succeed without a rewrite."""
+
+    default = column.default
+
+    if column.nullable:
+        return True
+
+    return (
+        default is not None and is_constant_default(default) and default.strip().upper() != "NULL"
+    )
+
+
 def release(version: str) -> tuple[int, ...]:
     """``0.18.0`` as ``(0, 18, 0)``, for ordering releases.
 
@@ -245,6 +260,13 @@ class OwnedRelationShape:
                     code="postgres_owned_shape_invalid",
                 )
 
+            if column.default is not None and not fills_rows(column):
+                raise exc.configuration(
+                    f"Owned table shape for {self.owner} declares column {column.name!r} NOT "
+                    "NULL with the default NULL.",
+                    code="postgres_owned_shape_invalid",
+                )
+
             if column.since is not None and _added_unsafely(column, first):
                 raise exc.configuration(
                     f"Owned table shape for {self.owner} adds column {column.name!r} in "
@@ -303,7 +325,7 @@ class OwnedRelationShape:
 def _added_unsafely(column: OwnedColumn, first: tuple[int, ...]) -> bool:
     later = column.since is not None and release(column.since) > first
 
-    return later and not column.nullable and column.default is None
+    return later and not fills_rows(column)
 
 
 def _index_key(index: OwnedIndex) -> tuple[object, ...]:

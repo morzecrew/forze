@@ -34,11 +34,12 @@ from .render import (
     Block,
     column_definition,
     create_index,
+    default_partition,
     install_blocks,
     join_blocks,
     relation_header,
 )
-from .shapes import BoundOwnedRelation, OwnedColumn, OwnedIndex, is_constant_default
+from .shapes import BoundOwnedRelation, OwnedColumn, OwnedIndex, fills_rows
 
 # ----------------------- #
 
@@ -81,6 +82,12 @@ class CatalogRelation:
     building: bool = False
     """Whether an index build may be running on the relation."""
 
+    partitions: int = 0
+    """How many partitions a partitioned table has."""
+
+    default_partition: bool = False
+    """Whether one of a partitioned table's partitions is its ``DEFAULT``."""
+
 
 # ....................... #
 
@@ -101,12 +108,20 @@ async def read_catalog(
     if kind not in ("table", "partitioned_table"):
         return CatalogRelation(kind=kind)
 
+    partitions, default_partition = (
+        await introspector.partitions(schema=schema, relation=name)
+        if kind == "partitioned_table"
+        else (0, False)
+    )
+
     return CatalogRelation(
         kind=kind,
         columns=await introspector.get_column_types(schema=schema, relation=name),
         primary_key=await introspector.get_primary_key_columns(schema=schema, relation=name),
         indexes=await introspector.indexes(schema=schema, relation=name),
         building=await introspector.index_build_in_progress(schema=schema, relation=name),
+        partitions=partitions,
+        default_partition=default_partition,
     )
 
 
@@ -158,7 +173,7 @@ def _warning(line: str) -> Block:
 def _add_column(relation: BoundOwnedRelation, column: OwnedColumn) -> Block:
     table = qualified(relation.schema, relation.name)
 
-    if column.nullable or (column.default is not None and is_constant_default(column.default)):
+    if fills_rows(column):
         statement = f"ALTER TABLE {table} ADD COLUMN {column_definition(column)};"
         comments = (column.label,) if column.label else ()
 
@@ -288,6 +303,53 @@ def _partitioned_index(
             commented=(create_index(relation, index, concurrently=False),),
         )
     ]
+
+
+def _held_until_built(drop: Block) -> Block:
+    """A retired drop held back while a declared index is still being built: the retired
+    index may serve the scan its replacement will, so it stays until that one is usable."""
+
+    warning = (
+        "WARNING: an index forze declares on the table is still being built, so this retired "
+        "index is kept. Run the diff again once the build ends:"
+    )
+
+    return Block(comments=(warning, *drop.comments), commented=(drop.statement or "",))
+
+
+def _missing_partitions(relation: BoundOwnedRelation, catalog: CatalogRelation) -> list[Block]:
+    """A warning for a partitioned table with no partition at all, which no insert fits."""
+
+    if catalog.partitions:
+        return []
+
+    table = qualified(relation.schema, relation.name)
+    warning = f"WARNING: {table} has no partition, so every insert into it fails."
+
+    return [
+        Block(
+            comments=(warning, "Its DEFAULT partition takes every row until yours exist:"),
+            commented=(default_partition(relation).statement or "",),
+        )
+    ]
+
+
+def _missing_default_partition(
+    relation: BoundOwnedRelation, catalog: CatalogRelation
+) -> list[Block]:
+    """A note for a partitioned table whose partitions are all the application's: a row none
+    of them covers fails its insert."""
+
+    if not catalog.partitions or catalog.default_partition:
+        return []
+
+    table = qualified(relation.schema, relation.name)
+    note = (
+        f"{table} has no DEFAULT partition; a row no other partition covers fails its insert. "
+        "Where you want that net:"
+    )
+
+    return [Block(comments=(note,), commented=(default_partition(relation).statement or "",))]
 
 
 def _without_concurrently(drop: Block) -> Block:
@@ -548,6 +610,9 @@ def diff_relation(
         if refusal is not None:
             refusals.append(refusal)
 
+    # Whether a declared index is still being built, so a retired one may still serve its scan.
+    building_declared = False
+
     for index in shape.indexes:
         if partitioned:
             warnings.extend(_partitioned_index(relation, index, catalog))
@@ -556,6 +621,11 @@ def diff_relation(
         created, warned = _declared_index(relation, index, catalog)
         statements.extend(created)
         warnings.extend(warned)
+        building_declared = building_declared or bool(warned)
+
+    if partitioned:
+        warnings.extend(_missing_partitions(relation, catalog))
+        notes.extend(_missing_default_partition(relation, catalog))
 
     refusals.extend(_conflicting_uniques(relation, catalog))
 
@@ -564,6 +634,9 @@ def diff_relation(
 
         if partitioned:
             warnings.extend(_without_concurrently(drop) for drop in drops)
+
+        elif building_declared:
+            warnings.extend(_held_until_built(drop) for drop in drops)
 
         else:
             statements.extend(drops)

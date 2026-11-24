@@ -34,9 +34,9 @@ in one `READ ONLY`, `REPEATABLE READ` transaction, so its output describes one m
 role the DSN names must have `USAGE` on the schemas and no write privilege: that role, not
 the transaction, keeps the diff from writing.
 
-`--check` prints nothing and only sets the exit code. `--keep-retired` leaves out every index
-with a retired shape's keys: no drop, no refusal and no warning for it. A retired column's
-note still prints.
+`--check` prints no SQL and only sets the exit code; warnings still go to stderr.
+`--keep-retired` leaves out every index with a retired shape's keys: no drop, no refusal and
+no warning for it. A retired column's note still prints.
 
 ## What the diff prints
 
@@ -58,6 +58,9 @@ note still prints.
 | Declared index invalid while a build may be running | A warning, and nothing for that index |
 | A retired index that is a retired match | `DROP INDEX CONCURRENTLY <found name>`, after every create |
 | A retired match that is invalid while a build may be running | A warning, and no drop |
+| A retired match while a declared index on the table is still being built | A warning with the drop commented: the retired index may still serve the scan |
+| A partitioned table forze declares, with no partition at all | A warning with its `DEFAULT` partition's `CREATE TABLE` commented: every insert fails |
+| A partitioned table whose partitions are all yours, none `DEFAULT` | A note with the same statement commented |
 | An index with a retired shape's keys that is not a retired match | A refusal naming the index and the condition it failed |
 | A retired column present | A note with the `DROP COLUMN` commented |
 | A column or index neither declared nor retired | Nothing |

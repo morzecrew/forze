@@ -233,6 +233,19 @@ class TestEveryDeclaration:
 
 
 class TestRules:
+    @pytest.mark.parametrize("since", [None, "1.1.0"], ids=["shipped", "added-later"])
+    @pytest.mark.parametrize("default", ["NULL", " null "])
+    def test_a_not_null_column_defaulting_to_null_is_refused(
+        self, since: str | None, default: str
+    ) -> None:
+        # ADD COLUMN … NOT NULL DEFAULT NULL fails on a table that holds rows.
+        column = OwnedColumn(name="b", type="text", nullable=False, default=default, since=since)
+
+        with pytest.raises(CoreException) as caught:
+            _shape(columns=(OwnedColumn(name="a", type="text", nullable=False), column))
+
+        assert caught.value.code == "postgres_owned_shape_invalid"
+
     def test_a_column_added_later_as_not_null_without_a_default_is_refused(self) -> None:
         late = OwnedColumn(name="b", type="text", nullable=False, since="1.1.0")
 
@@ -398,7 +411,14 @@ class TestDeliveryLog:
     def _catalog(self, kind: Any, *indexes: IndexShapeInfo) -> CatalogRelation:
         shape = self._relation().shape
 
-        return CatalogRelation(kind=kind, columns=_columns_of(shape), indexes=indexes)
+        # A partitioned table as forze creates it: with its DEFAULT partition.
+        return CatalogRelation(
+            kind=kind,
+            columns=_columns_of(shape),
+            indexes=indexes,
+            partitions=1,
+            default_partition=True,
+        )
 
     def test_sql_creates_the_keyless_partitioned_table_and_its_default_partition(self) -> None:
         statements = split_sql(render_sql([self._relation()], version="9.9.9"))
@@ -458,6 +478,48 @@ class TestDeliveryLog:
         assert diff_outcome([delta]) == "refusal"
         assert "-- DROP INDEX app.log_route;" in text
         assert "-- retired in 0.25.0: unused" in text
+
+    @pytest.mark.parametrize(
+        "name",
+        ["l" * 63, "l" * 55 + "_default", "ж" * 31],
+        ids=["63-bytes", "ends-in-the-suffix", "multibyte"],
+    )
+    def test_the_default_partition_name_stays_distinct_within_63_bytes(self, name: str) -> None:
+        relation = attrs.evolve(self._relation(), name=name)
+        statement = split_sql(render_sql([relation], version="9.9.9"))[1]
+        partition = statement.removeprefix("CREATE TABLE app.").split(" PARTITION OF ")[0]
+        bare = partition.strip('"')
+
+        assert len(bare.encode()) <= 63
+        assert bare != name
+        assert bare.removesuffix("_default").removesuffix("_default1") in name
+
+    def test_a_partitioned_log_with_no_partition_gets_a_warning(self) -> None:
+        catalog = attrs.evolve(
+            self._catalog("partitioned_table", _found(("event_id",), name="log_event")),
+            partitions=0,
+            default_partition=False,
+        )
+
+        delta = diff_relation(self._relation(), catalog)
+        text = render_diff([delta], version="9.9.9")
+
+        assert diff_outcome([delta]) == "refusal"
+        assert "-- CREATE TABLE app.log_default PARTITION OF app.log DEFAULT;" in text
+
+    def test_a_partitioned_log_without_a_default_partition_gets_a_note(self) -> None:
+        catalog = attrs.evolve(
+            self._catalog("partitioned_table", _found(("event_id",), name="log_event")),
+            partitions=3,
+            default_partition=False,
+        )
+
+        delta = diff_relation(self._relation(), catalog)
+
+        assert diff_outcome([delta]) == "in_sync"
+        assert "-- CREATE TABLE app.log_default PARTITION OF app.log DEFAULT;" in render_diff(
+            [delta], version="9.9.9"
+        )
 
     def test_a_view_under_the_log_is_still_refused(self) -> None:
         delta = diff_relation(self._relation(), self._catalog("view"))
@@ -589,6 +651,26 @@ class TestKeepRetired:
 
         assert diff_outcome([diff_relation(self._run(), catalog)]) == "delta"
         assert diff_relation(self._run(), catalog, keep_retired=True).blocks == ()
+
+    def test_a_retired_index_is_kept_while_a_declared_one_is_still_being_built(self) -> None:
+        # The retired scan serves the recovery scan until its replacement is usable.
+        replacement = ("status", "name", "created_at")
+        catalog = self._catalog(_found(("status", "created_at"), name="old_scan"))
+        catalog = attrs.evolve(
+            catalog,
+            indexes=tuple(
+                attrs.evolve(index, valid=False) if index.keys == replacement else index
+                for index in catalog.indexes
+            ),
+            building=True,
+        )
+
+        delta = diff_relation(self._run(), catalog)
+        text = render_diff([delta], version="9.9.9")
+
+        assert delta.statements == ()
+        assert "DROP INDEX CONCURRENTLY app.old_scan;" not in text.replace("-- DROP", "")
+        assert "old_scan" in text
 
     def test_an_ambiguous_retired_index_is_not_refused_when_retired_indexes_are_kept(self) -> None:
         ambiguous = attrs.evolve(_found(("status", "created_at"), name="app_scan"), unique=True)
