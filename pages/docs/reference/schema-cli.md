@@ -11,32 +11,42 @@ page is the contract CI relies on. Forze prints SQL and never runs it.
 
 ```text
 forze schema sql   --deps MODULE:ATTR
-forze schema diff  --deps MODULE:ATTR [--check]
+forze schema diff  --deps MODULE:ATTR [--check] [--keep-retired]
 ```
 
 `--deps` names a `PostgresDepsModule`, or a sequence holding exactly one. Both commands
-cover the owned tables it configures: `durable_run`, `durable_step` and `durable_schedule`.
+cover the store tables it configures: `durable_run`, `durable_step` and `durable_schedule`;
+each route of `outboxes`, with its `delivery_log`; `hlc_checkpoint`; each route of
+`inboxes`, `idempotencies` and `counters`; `principal_epochs`; and `rotating_credentials`.
+Routes that name one table are one table, with every column and index any of their configs
+declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 `diff` then exits `11`: a relation it never compared cannot be reported in sync.
 
 `sql` reads no database. It prints each table, then its required indexes, then its
 recommended ones, under a header naming the forze version, the table and its adapter. A
-tenant-aware table also gets the `tenant_id`-leading variant of each scan index.
+tenant-aware table also gets the `tenant_id`-leading variant of each scan index. A
+partitioned table, the delivery log, also gets its `DEFAULT` partition; the other
+partitions are yours.
 
 `diff` reads its DSN from `FORZE_SCHEMA_DSN` and refuses `--dsn`. It reads every relation
 in one `READ ONLY`, `REPEATABLE READ` transaction, so its output describes one moment. The
 role the DSN names must have `USAGE` on the schemas and no write privilege: that role, not
 the transaction, keeps the diff from writing.
 
-`--check` prints nothing and only sets the exit code.
+`--check` prints no SQL and only sets the exit code; warnings still go to stderr.
+`--keep-retired` leaves out every index with a retired shape's keys: no drop, no refusal and
+no warning for it. A retired column's note still prints.
 
 ## What the diff prints
 
 | Found in the catalog | Printed |
 |---|---|
 | Table missing | `CREATE TABLE`, then every declared index, without `CONCURRENTLY` |
-| A view, a partitioned table or another non-plain table under the name | A refusal; a partitioned table takes no `CREATE INDEX CONCURRENTLY` |
+| A view, a partitioned table forze declares plain, or another non-plain table under the name | A refusal; a partitioned table takes no `CREATE INDEX CONCURRENTLY` |
+| A partitioned table where forze declares one (the delivery log), or a plain table | The comparison below. On a partitioned table, a declared index that is missing or invalid is a warning with its `CREATE INDEX` commented, since building it locks every partition |
 | Primary key on other columns than declared | A refusal naming both key lists |
+| A primary key on a table forze declares none on | Nothing: it is the application's |
 | Primary key on the declared columns in another order | A note with an index on the declared leading column commented, unless a full index already leads with it: writes work, a scan on that column does not use the key |
 | Column missing, nullable or with a literal default | `ALTER TABLE … ADD COLUMN` |
 | Column missing, `NOT NULL` with no literal default | A refusal, the `ADD COLUMN` commented |
@@ -48,6 +58,9 @@ the transaction, keeps the diff from writing.
 | Declared index invalid while a build may be running | A warning, and nothing for that index |
 | A retired index that is a retired match | `DROP INDEX CONCURRENTLY <found name>`, after every create |
 | A retired match that is invalid while a build may be running | A warning, and no drop |
+| A retired match while a declared index on the table is still being built | A warning with the drop commented: the retired index may still serve the scan |
+| A partitioned table forze declares, with no partition at all | A warning with its `DEFAULT` partition's `CREATE TABLE` commented: every insert fails |
+| A partitioned table whose partitions are all yours, none `DEFAULT` | A note with the same statement commented |
 | An index with a retired shape's keys that is not a retired match | A refusal naming the index and the condition it failed |
 | A retired column present | A note with the `DROP COLUMN` commented |
 | A column or index neither declared nor retired | Nothing |
@@ -74,7 +87,9 @@ it says to drop that key first. The diff still prints forze's own index when it 
 
 Keys and predicates are compared after normalizing: casts on literals and whitespace dropped,
 keywords and bare names case-insensitive, `AND` and `OR` compared as a tree. A cast on a
-column is kept, since it can change the value. In a predicate, a cast to plain `text` on a
+column is kept, since it can change the value, and so is a cast on a literal whose type
+carries a modifier: Postgres stores `'pendingX'::character(7)` unfolded, and it truncates.
+Forze writes its own literals bare. In a predicate, a cast to plain `text` on a
 `text` or `varchar` column is dropped, with the parentheses around the column: there
 Postgres stores `status = 'pending'` as `((status)::text = 'pending'::text)`. On any other
 column the cast is kept, since it changes how values compare. A `citext` column compared
@@ -97,8 +112,10 @@ another role's build.
 - Every comment is one line. Line breaks and control characters in a catalog name become
   spaces.
 - Indexes are created unnamed, as the reference pages print them.
-- A non-empty diff opens with two lines: the output covers shape only, and `CONCURRENTLY`
-  cannot run in a transaction.
+- A non-empty diff opens with three lines: the output covers shape only, `CONCURRENTLY`
+  cannot run in a transaction, and the file must be applied by a tool that stops at its first
+  error. Retired drops come after the creates that replace them, so a runner that carried on
+  past a failed create would drop the index the create was to replace.
 
 ## Exit codes
 

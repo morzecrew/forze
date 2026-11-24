@@ -27,13 +27,9 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
     or claims its key when there is none, until the transaction ends. :meth:`hold` creates the
     row when absent and reads it ``FOR SHARE``. So a raise and an issue serialize, whichever
     creates the row, and a revocation that raises before it scans the sessions finds every
-    session issued under the old epoch. The table is provided by the application; expected
-    schema::
-
-        CREATE TABLE <relation> (
-            principal_id uuid   PRIMARY KEY,
-            epoch        bigint NOT NULL
-        );
+    session issued under the old epoch. The application applies the table, declared by
+    :func:`forze_postgres.adapters.store_schema.principal_epoch_shape`, which ``forze schema
+    sql`` prints.
 
     Never delete a row while a token might carry its epoch: a missing row reads as ``0``.
 

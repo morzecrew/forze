@@ -41,6 +41,7 @@ _RUN_COLUMNS: Final = (
         name="coalesce_key",
         type="text",
         required=False,
+        since="0.17.0",
         comment="only enqueue(coalesce_key=...) reads it, so add it before the first such call",
     ),
     OwnedColumn(name="input", type="jsonb"),
@@ -55,38 +56,43 @@ _RUN_COLUMNS: Final = (
     OwnedColumn(
         name="cancel_requested_at",
         type="timestamptz",
-        comment="since 0.6.0: starting a run, the recovery scan and every read return it",
+        since="0.6.0",
+        comment="starting a run, the recovery scan and every read return it",
     ),
     OwnedColumn(
         name="cancel_refused_at",
         type="timestamptz",
-        comment="since 0.6.0: starting a run, the recovery scan and every read return it",
+        since="0.6.0",
+        comment="starting a run, the recovery scan and every read return it",
     ),
 )
 
 _RECOVERY_SCAN: Final = OwnedIndex(
     keys=("status", "name", "created_at"),
-    comment="recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status and name",
+    since="0.18.0",
+    comment="the recovery scan (claim_abandoned) filters on status, and on name for some functions",
 )
 
 _TENANT_RECOVERY_SCAN: Final = OwnedIndex(
     keys=("tenant_id", "status", "name", "created_at"),
-    comment="recommended since 0.18.0: on a shared tagged table a bound scan also filters tenant_id",
+    since="0.18.0",
+    comment="on a shared tagged table a bound scan also filters tenant_id",
 )
 
 _PURGE: Final = OwnedIndex(
     keys=("status", "updated_at"),
-    comment="recommended where runs are purged: purge_finished filters on status and updated_at",
+    since="0.17.0",
+    comment="where runs are purged, purge_finished filters on status and updated_at",
 )
 
 _LISTING: Final = OwnedIndex(
     keys=("created_at DESC", "run_id DESC"),
-    comment="recommended: the admin listing (list_runs) orders newest first and seeks on it",
+    comment="the admin listing (list_runs) orders newest first and seeks on it",
 )
 
 _TENANT_LISTING: Final = OwnedIndex(
     keys=("tenant_id", "created_at DESC", "run_id DESC"),
-    comment="recommended: on a shared tagged table a bound listing also filters tenant_id",
+    comment="on a shared tagged table a bound listing also filters tenant_id",
 )
 
 _RUN_REQUIRED: Final = (
@@ -101,6 +107,7 @@ _RUN_REQUIRED: Final = (
         unique=True,
         where="status = 'pending' AND attempts = 0",
         required=True,
+        since="0.17.0",
         comment="enqueue(coalesce_key=...) joins the one unclaimed pending run per key",
     ),
 )
@@ -108,14 +115,16 @@ _RUN_REQUIRED: Final = (
 _RUN_RETIRED: Final = (
     Retired(
         shape=OwnedIndex(keys=("status", "created_at"), comment="the 0.17 recovery scan"),
-        comment="retired in 0.18.0, replaced by (status, name, created_at)",
+        retired_in="0.18.0",
+        comment="replaced by (status, name, created_at)",
     ),
     Retired(
         shape=OwnedIndex(
             keys=("tenant_id", "status", "created_at"),
             comment="the 0.17 bound recovery scan",
         ),
-        comment="retired in 0.18.0, replaced by (tenant_id, status, name, created_at)",
+        retired_in="0.18.0",
+        comment="replaced by (tenant_id, status, name, created_at)",
     ),
 )
 
@@ -134,6 +143,7 @@ def durable_run_shape(config: PostgresDurableRunConfig) -> OwnedRelationShape:
 
     return OwnedRelationShape(
         owner="PostgresDurableRunStore",
+        since="0.5.0",
         columns=_RUN_COLUMNS,
         primary_key=("run_id",),
         indexes=(*_RUN_REQUIRED, *scans),
@@ -155,6 +165,7 @@ def durable_step_shape(config: PostgresDurableStepConfig) -> OwnedRelationShape:
 
     return OwnedRelationShape(
         owner="PostgresDurableFunctionStepAdapter",
+        since="0.5.0",
         columns=(
             OwnedColumn(name="run_id", type="text", nullable=False),
             OwnedColumn(name="step_id", type="text", nullable=False),
@@ -178,16 +189,17 @@ def durable_schedule_shape(config: PostgresDurableScheduleConfig) -> OwnedRelati
     due = OwnedIndex(
         keys=("next_fire_at",),
         where="enabled",
-        comment="recommended: claim_due scans enabled schedules due now, oldest first",
+        comment="claim_due scans enabled schedules due now, oldest first",
     )
     tenant_due = OwnedIndex(
         keys=("tenant_id", "next_fire_at"),
         where="enabled",
-        comment="recommended: on a shared tagged table a bound scheduler also filters tenant_id",
+        comment="on a shared tagged table a bound scheduler also filters tenant_id",
     )
 
     return OwnedRelationShape(
         owner="PostgresDurableScheduleStore",
+        since="0.5.0",
         columns=(
             OwnedColumn(name="schedule_id", type="text", nullable=False),
             OwnedColumn(name="name", type="text", nullable=False),

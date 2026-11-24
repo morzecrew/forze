@@ -72,17 +72,9 @@ class PostgresOutboxStore[M: BaseModel](
     relay (or a deployment that pins each ``ordering_key`` to one relay, e.g. partition
     affinity). Within one relay's claim, rows are emitted in ``hlc``/``created_at`` order.
 
-    **Recommended index.** Back :meth:`claim_pending` / :meth:`reclaim_stale_processing`
-    (``WHERE outbox_route = … AND status = 'pending' AND (available_at IS NULL OR
-    available_at <= now()) [AND tenant_id = …] ORDER BY [hlc NULLS LAST,] created_at`` under
-    ``FOR UPDATE SKIP LOCKED``) — pick the shape matching the route's config::
-
-        -- base
-        CREATE INDEX ON <relation> (outbox_route, status, created_at);
-        -- with hlc_ordering enabled (the ORDER BY leads with hlc)
-        CREATE INDEX ON <relation> (outbox_route, status, hlc, created_at);
-        -- on a shared tagged table (the claim filters tenant_id) — lead with it
-        CREATE INDEX ON <relation> (tenant_id, outbox_route, status, created_at);
+    **Schema.** The table and its claim index are declared once, by
+    :func:`forze_postgres.adapters.store_schema.outbox_shape` for the route's config, which
+    ``forze schema sql`` prints and ``forze schema diff`` checks.
 
     **Consume storage.** With ``storage="consume"`` a relay pass runs in one transaction
     (:meth:`pass_scope`). :meth:`claim_pending` locks its rows without updating them and

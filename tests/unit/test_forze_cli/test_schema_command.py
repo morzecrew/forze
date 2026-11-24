@@ -15,7 +15,7 @@ pytest.importorskip("typer")
 
 from typer.testing import CliRunner
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_cli import schema as schema_cli
 from forze_cli.app import app
 from forze_postgres.kernel.catalog.owned import (
@@ -36,13 +36,17 @@ runner = CliRunner()
 def _patch_deltas(
     monkeypatch: pytest.MonkeyPatch, catalog: CatalogRelation | Exception | None
 ) -> None:
-    async def read(dsn: str, relations: Sequence[BoundOwnedRelation]) -> list[RelationDelta]:
+    async def read(
+        dsn: str, relations: Sequence[BoundOwnedRelation], *, keep_retired: bool = False
+    ) -> list[RelationDelta]:
         assert dsn == "postgresql://reader@db/app"
 
         if isinstance(catalog, Exception):
             raise catalog
 
-        return [diff_relation(relation, catalog) for relation in relations]
+        return [
+            diff_relation(relation, catalog, keep_retired=keep_retired) for relation in relations
+        ]
 
     monkeypatch.setattr(schema_cli, "_read_deltas", read)
     monkeypatch.setenv(schema_cli.DSN_ENV, "postgresql://reader@db/app")
@@ -53,7 +57,8 @@ class TestSql:
         result = runner.invoke(app, ["schema", "sql", "--deps", _DEPS])
 
         assert result.exit_code == 0, result.output
-        assert result.stdout.count("CREATE TABLE") == 3
+        # Twelve tables, and the delivery log's DEFAULT partition.
+        assert result.stdout.count("CREATE TABLE") == 13
         assert "CREATE INDEX ON public.durable_run (status, name, created_at);" in result.stdout
 
     def test_a_sequence_holding_one_deps_module_is_accepted(self) -> None:
@@ -125,7 +130,8 @@ class TestDiff:
         result = runner.invoke(app, ["schema", "diff", "--deps", _DEPS])
 
         assert result.exit_code == schema_cli.EXIT_DELTA
-        assert result.stdout.count("CREATE TABLE") == 3
+        # Twelve tables, and the delivery log's DEFAULT partition.
+        assert result.stdout.count("CREATE TABLE") == 13
 
     def test_a_refusal_exits_11(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_deltas(monkeypatch, CatalogRelation(kind="view"))
@@ -217,7 +223,9 @@ class TestDiff:
     ) -> None:
         _patch_deltas(monkeypatch, None)
 
-        async def nothing(dsn: str, relations: Sequence[BoundOwnedRelation]) -> list[RelationDelta]:
+        async def nothing(
+            dsn: str, relations: Sequence[BoundOwnedRelation], *, keep_retired: bool = False
+        ) -> list[RelationDelta]:
             return []
 
         monkeypatch.setattr(schema_cli, "_read_deltas", nothing)
@@ -236,6 +244,34 @@ class TestDiff:
 
         assert result.exit_code == schema_cli.EXIT_CONFIG
         assert "Cannot load --deps" in result.stderr
+
+    @pytest.mark.parametrize("command", ["sql", "diff"])
+    def test_two_stores_on_one_table_are_a_configuration_error(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _patch_deltas(monkeypatch, None)
+
+        result = runner.invoke(
+            app, ["schema", command, "--deps", "tests.support.schema_cli:shared_by_two_stores"]
+        )
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert "share one owned table" in result.stderr
+
+    def test_an_error_binding_that_is_not_configuration_is_not_reported_as_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_postgres
+
+        def broken(deps: object) -> None:
+            raise exc.internal("binding broke")
+
+        monkeypatch.setattr(forze_postgres, "owned_relations", broken)
+
+        result = runner.invoke(app, ["schema", "sql", "--deps", _DEPS])
+
+        assert result.exit_code == schema_cli.EXIT_INTERNAL
+        assert "Cannot bind" not in result.stderr
 
 
 @pytest.mark.parametrize(("platform", "selector"), [("win32", True), ("linux", False)])

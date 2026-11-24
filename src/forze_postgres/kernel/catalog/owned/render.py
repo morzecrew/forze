@@ -5,8 +5,9 @@ Every identifier goes through :func:`.quoting.quote_ident` and every comment thr
 declarations, never read from a catalog.
 """
 
+import hashlib
 from collections.abc import Iterable, Sequence
-from typing import final
+from typing import Final, final
 
 import attrs
 
@@ -83,13 +84,59 @@ def create_table(relation: BoundOwnedRelation) -> str:
         if constraints:
             line = f"{name.ljust(name_width)} {column.type.ljust(type_width)} {constraints}"
 
-        lines.append(f"    {line},")
+        lines.append(f"    {line}")
 
-    key = ", ".join(quote_ident(column) for column in shape.primary_key)
-    lines.append(f"    PRIMARY KEY ({key})")
-    body = "\n".join(lines)
+    if shape.primary_key:
+        key = ", ".join(quote_ident(column) for column in shape.primary_key)
+        lines.append(f"    PRIMARY KEY ({key})")
 
-    return f"CREATE TABLE {qualified(relation.schema, relation.name)} (\n{body}\n);"
+    body = ",\n".join(lines)
+    tail = (
+        f" PARTITION BY RANGE ({quote_ident(shape.partitioned_by)})"
+        if shape.partitioned_by is not None
+        else ""
+    )
+
+    return f"CREATE TABLE {qualified(relation.schema, relation.name)} (\n{body}\n){tail};"
+
+
+_IDENTIFIER_BYTES: Final = 63
+"""Postgres's longest identifier (``NAMEDATALEN - 1``); a longer one is truncated."""
+
+
+def default_partition_name(parent: str, *, hashed: bool = False) -> str:
+    """``<parent>_default`` when it fits one identifier.
+
+    A longer name, or any name with *hashed*, is cut on a character boundary and keeps eight
+    hex digits of the full name's hash before ``_default``. So two long names that share a
+    prefix still get two partitions, and none gets its parent's own name back. *hashed* is
+    for a short name whose plain form another table already holds.
+    """
+
+    name = f"{parent}_default"
+
+    if not hashed and len(name.encode()) <= _IDENTIFIER_BYTES:
+        return name
+
+    digest = hashlib.sha256(parent.encode()).hexdigest()[:8]
+    suffix = f"_{digest}_default"
+    room = _IDENTIFIER_BYTES - len(suffix)
+
+    return parent.encode()[:room].decode(errors="ignore") + suffix
+
+
+def default_partition(relation: BoundOwnedRelation) -> Block:
+    """The ``DEFAULT`` partition of a partitioned table, which takes a row no partition of the
+    application's covers. Without a partition every insert fails."""
+
+    parent = qualified(relation.schema, relation.name)
+    name = relation.default_partition or default_partition_name(relation.name)
+    partition = qualified(relation.schema, name)
+
+    return Block(
+        comments=("the partition for rows no other partition covers; add yours beside it",),
+        statement=f"CREATE TABLE {partition} PARTITION OF {parent} DEFAULT;",
+    )
 
 
 def create_index(
@@ -114,14 +161,16 @@ def create_index(
 
 
 def install_blocks(relation: BoundOwnedRelation) -> list[Block]:
-    """The table, then each declared index, for a database that has none of it."""
+    """The table, its ``DEFAULT`` partition when it is partitioned, then each declared index,
+    for a database that has none of it."""
 
     blocks = [Block(statement=create_table(relation))]
 
+    if relation.shape.partitioned_by is not None:
+        blocks.append(default_partition(relation))
+
     blocks.extend(
-        Block(
-            comments=(index.comment,), statement=create_index(relation, index, concurrently=False)
-        )
+        Block(comments=(index.label,), statement=create_index(relation, index, concurrently=False))
         for index in relation.shape.indexes
     )
 

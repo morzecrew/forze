@@ -5,12 +5,13 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from psycopg import sql
 
 from forze_postgres.adapters.principal_epoch import PostgresPrincipalEpochStore
+from forze_postgres.adapters.store_schema import principal_epoch_shape
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 from tests.support.revocation_states_conformance import (
     EPOCH_BATTERY,
     EpochCheck,
@@ -25,10 +26,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 @pytest.fixture
 async def harness(pg_client: PostgresClient) -> EpochHarness:
     table = f"principal_epochs_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            "CREATE TABLE {table} (principal_id uuid PRIMARY KEY, epoch bigint NOT NULL)"
-        ).format(table=sql.Identifier("public", table))
+    await create_owned_table(
+        pg_client,
+        principal_epoch_shape(PostgresPrincipalEpochConfig(relation=UNUSED_RELATION)),
+        "public",
+        table,
     )
 
     return EpochHarness(

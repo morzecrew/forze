@@ -25,15 +25,9 @@ class PostgresInboxStore(TenancyMixin, InboxPort):
 
     Marks a message processed in the caller's transaction via
     ``INSERT ... ON CONFLICT DO NOTHING`` — so the mark and the handler's writes
-    commit atomically (exactly-once effect). The table is provided by the
-    application; expected schema::
-
-        CREATE TABLE <relation> (
-            inbox_route  text NOT NULL,
-            message_id   text NOT NULL,
-            processed_at timestamptz NOT NULL,
-            PRIMARY KEY (inbox_route, message_id)
-        );
+    commit atomically (exactly-once effect). The application applies the table, declared by
+    :func:`forze_postgres.adapters.store_schema.inbox_shape`, which ``forze schema sql``
+    prints.
 
     A tenant-aware store stores ``inbox_route`` as ``t:<tenant_id>:<inbox_route>``, so tenants
     sharing one table never dedup each other's messages.

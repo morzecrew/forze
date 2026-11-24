@@ -12,10 +12,15 @@ from forze_postgres.adapters.counter import (
     PostgresCounterAdapter,
     PostgresCounterAdminAdapter,
 )
+from forze_postgres.adapters.store_schema import counter_shape
 from forze_postgres.execution.deps.configs import PostgresCounterConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
+
+_SHAPE = counter_shape(PostgresCounterConfig(relation=UNUSED_RELATION))
+_NO_EXPIRY = frozenset({"expires_at"})
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -23,18 +28,8 @@ async def counter_table(pg_client: PostgresClient) -> str:
     """Create a dedicated counters table and return its name."""
 
     table = f"counters_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                tenant_id TEXT   NOT NULL,
-                suffix    TEXT   NOT NULL,
-                value     BIGINT NOT NULL,
-                PRIMARY KEY (tenant_id, suffix)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    # Without the optional expires_at column: these tests cover counters with no ttl.
+    await create_owned_table(pg_client, _SHAPE, "public", table, omit=_NO_EXPIRY)
     return table
 
 
@@ -280,12 +275,7 @@ async def test_namespace_tier_resolves_a_per_tenant_relation(
     tables = {a: f"ns_a_{uuid4().hex[:8]}", b: f"ns_b_{uuid4().hex[:8]}"}
 
     for name in tables.values():
-        await pg_client.execute(
-            sql.SQL(
-                "CREATE TABLE {t} (tenant_id TEXT NOT NULL, suffix TEXT NOT NULL, "
-                "value BIGINT NOT NULL, PRIMARY KEY (tenant_id, suffix))"
-            ).format(t=sql.Identifier("public", name))
-        )
+        await create_owned_table(pg_client, _SHAPE, "public", name, omit=_NO_EXPIRY)
 
     def _counter(tenant: object) -> PostgresCounterAdapter:
         # tenant_aware=False (namespace tier), but a resolver keys the table by tenant.

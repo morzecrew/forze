@@ -872,6 +872,45 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def partitions(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> tuple[int, bool]:
+        """How many partitions *relation* has, and whether one of them is its ``DEFAULT``.
+
+        Uncached, like :meth:`indexes`: a schema diff asks once per relation. A relation that
+        is not partitioned has none.
+        """
+
+        schema = self.__normalize_schema(schema)
+
+        stmt = sql.SQL(
+            """
+            SELECT count(*), coalesce(bool_or(pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'), false)
+            FROM pg_inherits i
+            JOIN pg_class c ON c.oid = i.inhrelid
+            WHERE i.inhparent = (
+                SELECT p.oid
+                FROM pg_class p
+                JOIN pg_namespace n ON n.oid = p.relnamespace
+                WHERE n.nspname = {schema}
+                  AND p.relname = {relation}
+                LIMIT 1
+            )
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        # An aggregate always returns its one row.
+        count, has_default = await self.client.fetch_one(
+            stmt, [schema, relation], row_factory="tuple"
+        ) or (0, False)
+
+        return int(count), bool(has_default)
+
+    # ....................... #
+
     async def exclusion_constraints(
         self,
         *,

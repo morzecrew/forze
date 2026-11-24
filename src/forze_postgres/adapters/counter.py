@@ -239,21 +239,15 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     survives the caller's rollback; otherwise the same value could be handed out twice
     (Redis parity: a counter value is burned the moment it is returned).
 
-    The table is provided by the application; expected schema::
+    The application applies the table, declared by
+    :func:`forze_postgres.adapters.store_schema.counter_shape`, which ``forze schema sql``
+    prints. ``tenant_id`` is ``''`` when no tenant is bound, and ``suffix`` is
+    ``'<len>:<route>'`` followed by ``''`` or ``'s:<suffix>'``: it folds the spec's route
+    into its key (see :func:`_encode_suffix`), so several counter specs may share one table
+    without merging.
 
-        CREATE TABLE <relation> (
-            tenant_id  text        NOT NULL,   -- '' = no tenant bound
-            suffix     text        NOT NULL,   -- '<len>:<route>' + ('' | 's:<suffix>')
-            value      bigint      NOT NULL,
-            expires_at timestamptz,            -- optional; NULL = never expires
-            PRIMARY KEY (tenant_id, suffix)
-        );
-
-    The ``suffix`` column folds the spec's route into its key (see :func:`_encode_suffix`),
-    so several counter specs may share one table without merging.
-
-    ``expires_at`` is **optional and additive**: ``ALTER TABLE <relation> ADD COLUMN
-    expires_at timestamptz;`` is the whole migration. Without it every call works as before
+    ``expires_at`` is **optional and additive**: nullable, so ``forze schema diff`` adds it
+    with no rewrite, and ``NULL`` never expires. Without it every call works as before
     except one that passes a ``ttl``, which is refused with ``configuration``. With it a
     lapsed row reads as absent and the next increment overwrites it from zero; the row stays
     until :meth:`PostgresCounterAdminAdapter.purge_expired` or a scheduled ``DELETE``

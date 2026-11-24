@@ -12,10 +12,10 @@ from uuid import uuid4
 
 import attrs
 import pytest
-from psycopg import sql
 
 from forze.application.contracts.hlc import HlcCheckpointPort
 from forze_postgres.adapters.hlc_checkpoint import PostgresHlcCheckpointStore
+from forze_postgres.adapters.store_schema import hlc_checkpoint_shape
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import PostgresHlcCheckpointConfig
 from forze_postgres.kernel.client import PostgresClient
@@ -25,6 +25,7 @@ from tests.support.hlc_checkpoint_conformance import (
     HlcCheckpointHarness,
     WriteGate,
 )
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -34,17 +35,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 @pytest.fixture
 async def hlc_table(pg_client: PostgresClient) -> str:
     table = f"hlc_checkpoint_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                node_key text   NOT NULL,
-                hlc      bigint NOT NULL,
-                PRIMARY KEY (node_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    shape = hlc_checkpoint_shape(PostgresHlcCheckpointConfig(relation=UNUSED_RELATION))
+    await create_owned_table(pg_client, shape, "public", table)
 
     return table
 

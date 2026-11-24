@@ -4,9 +4,10 @@ icon: lucide/database-zap
 summary: Get the SQL for the Postgres tables forze owns from forze schema, review it, and catch a missing migration in CI
 ---
 
-Some Postgres tables belong to forze rather than to your domain. Today these are the
-durable run, step and schedule tables. Your migration tool creates and changes them, as it
-does every other table. `forze schema` writes the SQL so you stop transcribing it from the
+Some Postgres tables belong to forze rather than to your domain: its store tables, for
+durable execution, the outbox and its delivery log, the HLC checkpoint, the inbox,
+idempotency claims, counters, principal epochs and rotating credentials. Your migration
+tool creates and changes them, as it does every other table. `forze schema` writes the SQL so you stop transcribing it from the
 docs on each upgrade. **Forze prints the SQL and never runs it**: not at startup, not from
 the CLI. You review the file and apply it with Flyway or your own runner.
 
@@ -55,8 +56,9 @@ $ forze schema sql --deps app.wire:postgres > migrations/V1__forze_tables.sql
 ```
 
 The file holds each table, then its indexes, each with a one-line comment saying why it
-exists. The same SQL, for the default relation names, is on the
-[durable execution schema](../reference/durable-schema.md) page.
+exists. The same SQL, for example relation names, is on the
+[durable execution](../reference/durable-schema.md), [outbox and inbox](../reference/outbox-schema.md)
+and [store](../reference/store-schema.md) schema pages.
 
 ## Upgrade forze
 
@@ -77,18 +79,21 @@ exists. The same SQL, for the default relation names, is on the
     ```sql
     -- Shape only: data rewrites are announced as **Migration:** SQL in CHANGELOG.md.
     -- CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).
+    -- Stop at the first error (psql: -v ON_ERROR_STOP=1): a drop below a failed create removes the index it replaces.
 
     -- forze 0.18.0 · app.durable_run (PostgresDurableRunStore)
 
-    -- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status and name
+    -- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status, and on name for some functions
     CREATE INDEX CONCURRENTLY ON app.durable_run (status, name, created_at);
 
-    -- retired in 0.18.0, replaced by (status, name, created_at)
+    -- retired in 0.18.0: replaced by (status, name, created_at)
     DROP INDEX CONCURRENTLY app.idx_durable_run_status;
     ```
 
     The drop names the index your database holds, here one a migration named by hand.
-    New indexes come first and drops last.
+    New indexes come first and drops last. To keep retired indexes for now, pass
+    `--keep-retired`: the diff then says nothing about any index with a retired shape's
+    keys.
 
 4. Read every `REFUSED` and `WARNING` comment. The diff never prints a statement that
    rewrites a table or might drop something of yours. It refuses instead, and says why:
@@ -103,13 +108,19 @@ exists. The same SQL, for the default relation names, is on the
 
     Columns and indexes forze does not declare are never touched.
 
-5. Apply the file outside a transaction. `CREATE INDEX CONCURRENTLY` cannot run in one.
-   With Flyway, add a script config file beside the migration:
+5. Apply the file outside a transaction, `CREATE INDEX CONCURRENTLY` cannot run in one, and
+   with a tool that stops at the first error. A retired drop comes after the create that
+   replaces it, so a runner that carried on past a failed create would drop the index the
+   create was to replace. Flyway stops by default; add a script config file beside the
+   migration:
 
     ```properties
     # migrations/V42__forze_upgrade.sql.conf
     executeInTransaction=false
     ```
+
+    With `psql`, pass `-v ON_ERROR_STOP=1`. The next diff reads a failed create's invalid
+    index and prints its drop and recreate.
 
 6. Deploy the new forze version after the migration has run.
 
@@ -139,8 +150,8 @@ A forze bump with no migration then fails the job with `10`. The other codes (`2
 
 ## Limits
 
-- **Durable tables only.** The outbox, inbox, idempotency, counter and identity tables
-  still take their DDL from their pages.
+- **Store tables only.** The identity, audit and other document tables still take their DDL
+  from their pages.
 - **One table per relation.** A relation given as a tenant-scoped resolver names no single
   table, so both commands skip it with a warning on stderr, and `diff` exits `11`. Diff each
   tenant's schema through a deps module that names it.

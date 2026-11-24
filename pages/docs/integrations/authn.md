@@ -171,15 +171,10 @@ Wire `states` as `RedisDepsModule(revocation_states=...)`, `epochs` as
 breaker, so a Redis outage stops costing every verification its `timeout` (50 ms by
 default). Bind it to the reads only: an open breaker on the writes would fail every attempt
 of a revocation's write-through at once. The states route is resolved by `RevocationStatesSpec`
-under `RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Create the epochs
-table yourself and never delete its rows:
-
-```sql
-CREATE TABLE authn_principal_epochs (
-    principal_id uuid   PRIMARY KEY,
-    epoch        bigint NOT NULL
-);
-```
+under `RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Apply the epochs
+table yourself, as `forze schema sql` prints it or as
+[Store table schema](../reference/store-schema.md#principal-epochs) shows it, and never
+delete its rows.
 
 - **Without `key_mac`, Redis is trusted for sessions.** The session states and epochs then
   carry no MAC, so whoever can write the states' namespace can restore a `live` state or an

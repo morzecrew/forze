@@ -412,12 +412,14 @@ entries (keep every breaking/migration/public-API fact).
 
 **Edit only `[Unreleased]`.** Never rewrite an already-released version section.
 
-**A change to a table forze owns edits its declaration.** The durable tables are declared in
-`src/forze_postgres/adapters/durable/schema.py`, the one copy of their DDL, which
-`forze schema` renders and the integration tests create. Change a column or an index there,
-in the same PR as the adapter change that needs it. A shape forze stops declaring moves to
-`retired`, with a comment saying when and why, so `forze schema diff` can drop it. The
-entry names the table and tells readers to run `forze schema diff`. A change to how values
+**A change to a table forze owns edits its declaration.** The store tables are declared in
+`src/forze_postgres/adapters/durable/schema.py` and `src/forze_postgres/adapters/store_schema.py`,
+the one copy of their DDL, which `forze schema` renders and the integration tests create.
+Change a column or an index there, in the same PR as the adapter change that needs it, and
+give it the release it arrives in as `since`; a column added after its table's first
+release must be nullable or have a literal default. A shape forze stops declaring moves to
+`retired`, with `retired_in` and a comment saying why, so `forze schema diff` can drop it.
+The entry names the table and tells readers to run `forze schema diff`. A change to how values
 are stored changes no shape, so the diff cannot see it: its entry carries a **Migration:**
 statement guarded so a second run is a no-op (RFC 0080 §5.5).
 

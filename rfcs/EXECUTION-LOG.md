@@ -8770,3 +8770,429 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds thirteen entries, D-319 to D-331: twelve `spec-gap` and
 one `discovery`.
+
+# Unit 33 · RFC 0080 P2a — the store tables
+
+Branch `feat/postgres-owned-store-tables`, cut from `main` after #949. The first slice of RFC
+0080 P2 per §12, as the maintainer accepted its plan on 2026-11-24:
+- the §5.1 declarations of the other eight store tables, with their config switches;
+- structured `since` and `retired_in`, and the declaration-level rule over them;
+- `--keep-retired`;
+- the integration suites created from the render;
+- the page test over every store table.
+
+The plan split P2 into this slice, then `--tenant` with the §5.4 startup step (rows 11, 13
+and 14), and then the framework-owned document specs, which wait for an amendment to §5.4.
+
+Rows 1, 2, 3 and 16 (`LOCKED`) hold as written, and D-341 closes them out. Rows 4 to 6, 8, 15
+to 17 and 19 to 26 hold as written. Row 24 is departed from by D-333 and row 10 by D-339.
+The plan listed D-332 to D-338 before any code was written, with a recommendation each, and
+the maintainer accepted them. D-339 answers #950's review of row 10. The rest change no
+decision:
+
+- The inbox joins the outbox page, retitled "Outbox and inbox table schema".
+- A new `reference/store-schema.md` prints the idempotency, counter, principal-epoch and
+  rotating-credential tables. The authn page and the rotating-credentials recipe link to it
+  instead of keeping a copy.
+- A page's SQL block fenced with a title holds the application's own statements, such as
+  partition upkeep, and the page test skips it (`tests/unit/test_store_schema_docs.py:137`).
+
+**Drift count: 0.** Ten entries, D-332 to D-341: eight `spec-gap` (D-332, D-333, D-334,
+D-336, D-337, D-338 and D-339 fill gaps or depart, and D-335 settles the claim index by
+measurement), one `discovery` (D-340) and one close-out.
+
+## D-332 — Routes that name one table bind it once, with the union of their shapes
+
+- **Touches:** §5.1 (`owned_relations` pairs "each configured relation with the shape for
+  that config"); unlisted.
+- **Found:** several outbox, inbox, idempotency or counter routes may name one table, each
+  with its own config, so one table can have more than one shape. One outbox route with
+  `hlc_ordering` and one without, say.
+- **Built:**
+  - `owned_relations` binds each physical table once. The route is the joined route names,
+    and the shape is their union (`src/forze_postgres/execution/deps/owned.py:93`,
+    `src/forze_postgres/kernel/catalog/owned/shapes.py:272`).
+  - A column one route's switch leaves out stays while another route declares it.
+  - A column or an index either side requires is required.
+  - Routes that disagree on what the table is are refused as
+    `postgres_owned_relation_shared`: another adapter, release, key or partitioning, or one
+    column declared two ways.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:449`, `:482`,
+  `:494`, `:503`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Routes that name one table bind it once. Its shape
+  is the union of theirs, and two different stores on one table are refused.
+- **Action:** decided.
+
+## D-333 — The delivery log is a partitioned table forze declares
+
+- **Touches:** row 24 (`ASSUMED`, accepted: "A relation that is not a plain table is
+  refused"), §5.1.
+- **Found:** the page has always made the delivery log range-partitioned on
+  `published_at`, with no key, and Postgres builds no index `CONCURRENTLY` on a partitioned
+  table.
+- **Built:**
+  - A shape may name `partitioned_by` and declare no primary key
+    (`src/forze_postgres/kernel/catalog/owned/shapes.py:211`).
+  - `sql` prints `PARTITION BY RANGE` and the `DEFAULT` partition, since without a partition
+    every insert fails (`src/forze_postgres/kernel/catalog/owned/render.py:94`, `:102`).
+  - The diff accepts a partitioned or a plain table for such a shape, and reads a
+    partitioned table's catalog (`src/forze_postgres/kernel/catalog/owned/diff.py:101`,
+    `:490`).
+  - On a partitioned table, a missing or invalid declared index, or a retired drop, is a
+    warning with its statement commented (`:262`, `:293`).
+  - A key the application adds to a keyless table is its own.
+- **Evidence:**
+  - `tests/unit/test_forze_postgres/test_owned_store_schema.py:402`, `:416`, `:428`.
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:118`, red on
+    Postgres 18 before `read_catalog` read a partitioned table, and `:195`.
+- **Class:** `spec-gap`. The page printed the partitioning before code.
+- **Proposed row (RFC 0080):** `ASSUMED`. Row 24, plus: a table forze declares partitioned
+  is compared as a partitioned or a plain table, and on a partitioned one every index
+  statement is a warning.
+- **Action:** departed.
+
+## D-334 — Consume storage keeps `processing_at`
+
+- **Touches:** §5.1 ("It drops `processing_at` only when stale reclaim is also off");
+  unlisted as a row.
+- **Found:** `reclaim_stale_after` is a setting of the relay in `forze_kits`, not of
+  `PostgresOutboxConfig`, so the shape cannot see whether reclaim runs.
+- **Built:**
+  - `storage="consume"` leaves out `published_at` only. `processing_at` stays declared,
+    nullable, so adding it back is catalog-only
+    (`src/forze_postgres/adapters/store_schema.py:115`, `:118`).
+  - The page's consume migration drops `published_at` alone.
+- **Why:** dropping the column while reclaim runs fails every pass, and the default relay has
+  reclaim on. Keeping a nullable column the relay may not read costs nothing.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:321`;
+  `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:173` adds the column
+  back to a 0.24.1 table that followed the old migration.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. `storage="consume"` leaves out `published_at`
+  and keeps `processing_at`.
+- **Action:** decided.
+
+## D-335 — The claim index is the one that returns the claim in order
+
+- **Touches:** §3 (the docstring's and the page's claim indexes disagree); unlisted.
+- **Found:**
+  - The docstring printed `(outbox_route, status, created_at)` and, for `hlc_ordering`,
+    `(…, hlc, created_at)`.
+  - The page printed `(…, available_at, created_at)` and `(…, available_at, hlc, created_at, id)`.
+- **Built:**
+  - The plain claim declares `(outbox_route, status, created_at)`.
+  - `hlc_ordering` declares `(outbox_route, status, hlc, created_at, id)` instead, the
+    claim's own order.
+  - A tagged table adds the `tenant_id`-leading variant of each.
+  - The page's two shapes and the docstring's `hlc` shape are retired in 0.25.0
+    (`src/forze_postgres/adapters/store_schema.py:34`, `:44`, `:56`).
+- **Why:** measured with `EXPLAIN (ANALYZE, BUFFERS)` of the claim on Postgres 18, over 400k
+  rows and 4 routes.
+  - `(…, created_at)` reads 95 buffers in steady state and 16 under a backlog, with no sort.
+  - The page's index reads 3,353 and 5,303: the `OR` on `available_at` leaves Postgres
+    sorting every pending row of the route.
+  - For `hlc`, `(…, hlc, created_at, id)` needs no sort, the docstring's needs an
+    incremental one, and the page's a full one.
+- **Evidence:**
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:852` asserts the
+    plan has no `Sort`, and fails with the page's index in place.
+  - `:173` builds the new indexes and drops the old ones on a 0.24.1 table.
+  - The integration suites pass on the new index.
+- **Class:** `spec-gap`. The plan named measurement as the way to settle it.
+- **Proposed row (RFC 0080):** `ASSUMED`. The outbox claim index is
+  `(outbox_route, status, created_at)`, or `(outbox_route, status, hlc, created_at, id)` with
+  `hlc_ordering`; the shapes the page and docstring printed are retired.
+- **Action:** decided.
+
+## D-336 — A column only a feature reads, with no switch, is always declared
+
+- **Touches:** §5.1 (`required=False`); unlisted.
+- **Found:** the idempotency `owner` and the counter `expires_at` are read when present,
+  through lazy probes, and no config says whether a deployment uses them.
+- **Built:**
+  - Both are declared on every config, nullable and not required
+    (`src/forze_postgres/adapters/store_schema.py:266`, `:295`).
+  - The probes stay (§8).
+  - The counter purge index is not declared, since the store's own purge needs none.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:185`; the
+  integration suites create a table without them with `omit`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. A column only an opt-in feature reads, with no
+  config switch, is declared nullable and not required on every config.
+- **Action:** decided.
+
+## D-337 — `since` is optional, `retired_in` required, and the rule is enforced when built
+
+- **Touches:** §5.1 rule 3 ("checked by a unit test over `since`"); unlisted.
+- **Built:**
+  - A shape names its table's first release. A column or an index names its own only when
+    it arrived later, and is printed with it.
+  - A `Retired` names `retired_in`.
+  - A shape whose later column is `NOT NULL` with no literal default is refused when it is
+    built, as is a `since` before the table's or one not `X.Y.Z`
+    (`src/forze_postgres/kernel/catalog/owned/shapes.py:45`, `:218`, `:303`).
+  - Each value is backfilled from the first tag whose tree holds it.
+- **Why:** a refusal at construction catches a bad declaration in every test that builds it,
+  not only in the one that walks them.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:216`, `:235`,
+  `:265`, `:575`, `:582`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. `since` is optional and `retired_in` required. A
+  shape that adds a column unsafely after its first release is refused when it is built.
+- **Action:** decided.
+
+## D-338 — `--keep-retired` leaves out the whole retired-index section
+
+- **Touches:** §9 ("In P2, `--keep-retired` leaves drops out"); unlisted.
+- **Built:**
+  - With `--keep-retired`, no drop, refusal or warning prints for any index with a retired
+    shape's keys (`src/forze_postgres/kernel/catalog/owned/diff.py:473`, `:565`).
+  - A retired column's note still prints, since it asks nothing.
+- **Why:** a refusal that says why an index will not be dropped is noise when nothing is
+  dropped, and would keep `--check` at `11`.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:560`, `:566`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. `--keep-retired` prints nothing for any index with
+  a retired shape's keys.
+- **Action:** decided.
+
+## D-339 — A declared literal carries no cast, and a modifier cast is kept
+
+- **Touches:** row 10 (`ASSUMED`, accepted: "Every cast is kept except two kinds: a cast on
+  a literal, …").
+- **Found:** in review on #950.
+  - A declared `ts > '2024-01-01 12:00:00'::date` normalized to the same tree as a catalog
+    `ts > '2024-01-01 12:00:00'::timestamp`, though the first bound is midnight.
+  - Postgres 18 folds such a cast into the literal it stores (`'2024-01-01'::date`). It keeps
+    a modifier unfolded, though: `'pendingX'::character(7)`, which truncates.
+- **Built:**
+  - An `OwnedIndex` whose key or predicate casts a literal is refused when built
+    (`src/forze_postgres/kernel/catalog/owned/shapes.py:30`, `:132`).
+  - A cast on a literal whose type has a modifier is kept
+    (`src/forze_postgres/kernel/catalog/owned/matching.py:143`, `:172`).
+  - No predicate forze declares casts anything.
+- **Evidence:**
+  - `tests/unit/test_forze_postgres/test_owned_store_schema.py:279`, `:290`.
+  - `tests/unit/test_forze_postgres/test_owned_schema.py:319`, `:320`, which matched before
+    the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Row 10, narrowed: a declared literal carries no
+  cast, and a catalog cast on a literal is dropped only when its type has no modifier.
+- **Action:** departed.
+
+## D-340 — `read_catalog` read nothing of a partitioned table
+
+- **Touches:** D-333.
+- **Found:** a fresh render read back on Postgres 18 refused every column of the delivery
+  log. `read_catalog` returned early for any kind but `table`.
+- **Built:** a partitioned table's columns, key and indexes are read too
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:101`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:118`, red
+  before the change.
+- **Class:** `discovery`.
+- **Proposed row (RFC 0080):** D-333's row covers it.
+- **Action:** decided.
+
+## D-341 — Close-out: no DDL runs, the declaration is the copy, the delta is live, names are quoted
+
+- **Touches:** rows 1, 2, 3 and 16 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:**
+  - **Row 1.** The store tables are only printed. `diff` still reads in one `READ ONLY`
+    transaction and executes nothing.
+  - **Row 2.** The store DDL lives in its declarations
+    (`src/forze_postgres/adapters/store_schema.py:86`). The adapters' docstrings point at
+    them, and `CONTRIBUTING.md` → Changelog requires a shape change to edit them, with
+    `since`.
+  - **Row 3.** The delta is computed from `read_catalog`, partitioned tables included.
+  - **Row 16.** Every store identifier goes through `quote_ident`, through the P1 renderer.
+- **Evidence:**
+  - `tests/unit/test_store_schema_docs.py:89`, `:101`: the pages print the render.
+  - `tests/unit/test_store_schema_docs.py:127`: the adapters carry no `CREATE TABLE`.
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:173`: a 0.24.1
+    database converges.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 33 holds ten entries, D-332 to D-341: eight `spec-gap`, one
+`discovery` and one close-out.
+
+# Unit 34 · RFC 0080 P2a review — partitions, held drops and NULL defaults
+
+Branch `feat/postgres-owned-store-tables` (#951): fixes from the PR's review.
+- D-342 and D-343 narrow D-333's partitioned log.
+- D-344 extends row 17.
+- D-345 narrows D-337's rule.
+
+The rest change no decision:
+- Routes that cannot share their table now exit `78`, a configuration error, from both
+  commands, not `1` with a traceback (`src/forze_cli/schema.py:122`,
+  `tests/unit/test_forze_cli/test_schema_command.py:249`).
+- `--check` is described as printing no SQL, since warnings still go to stderr.
+- The outbox claim indexes name their release, `0.5.0`.
+- The recovery scan's comment says it filters on `name` only for a worker that claims some
+  functions.
+- The page counts the tagged table's claim twin.
+
+**Drift count: 0.** Four entries, D-342 to D-345, all `spec-gap`.
+
+## D-342 — The default partition's name fits one identifier and differs from its table's
+
+- **Touches:** D-333 (proposed).
+- **Found:** in review on #951. `<name>_default` for a 63-byte table name came back from
+  Postgres truncated to the table's own name, so the second `CREATE TABLE` failed.
+- **Built:** the name is cut on a character boundary to leave room for `_default` within 63
+  bytes. A name the cut would turn back into the table's own takes `_default1` instead
+  (`src/forze_postgres/kernel/catalog/owned/render.py:106`, `:114`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:487`, red before
+  the change, over a 63-byte name, a name ending in the suffix, and a multibyte one.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-333's row, plus: the `DEFAULT` partition's name fits 63
+  bytes and is never its table's.
+- **Action:** decided.
+
+## D-343 — A partitioned log with no partition is never read as in sync
+
+- **Touches:** D-333 (proposed), which compared a partitioned table's columns and indexes
+  only.
+- **Found:** in review on #951. A log with its index and no partition read as in sync, and
+  every insert into it then fails.
+- **Built:**
+  - The catalog read counts a partitioned table's partitions and whether one is its
+    `DEFAULT` (`src/forze_postgres/kernel/catalog/introspect/introspector.py:875`,
+    `src/forze_postgres/kernel/catalog/owned/diff.py:95`).
+  - No partition at all is a warning, with the `DEFAULT` partition's `CREATE TABLE`
+    commented (`diff.py:320`).
+  - Partitions that are all the application's, none `DEFAULT`, get a note with the same
+    statement commented, since an application may run without the net (`:337`).
+  - The diff never creates a partition, since doing so locks the table.
+- **Evidence:**
+  - `tests/unit/test_forze_postgres/test_owned_store_schema.py:497`, `:510`, red before the
+    change.
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:216` on Postgres 18.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-333's row, plus: a partitioned table with no partition is a
+  warning, and one with no `DEFAULT` a note.
+- **Action:** decided.
+
+## D-344 — A retired index stays while a declared one is still being built
+
+- **Touches:** row 17 (`ASSUMED`, accepted).
+- **Found:** in review on #951. While a declared index was invalid under a running build, the
+  diff warned and printed nothing for it, yet still dropped a valid retired index. The old
+  claim index could then go before its replacement was usable.
+- **Built:** while any declared index on the table is held back by a running build, every
+  retired drop is a warning with its statement commented
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:308`, `:614`, `:638`). When a build
+  failed earlier, the replacement is still recreated before the drop.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:655`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 17, plus: while a declared index on the table may still be
+  building, no retired index on it is dropped.
+- **Action:** departed.
+
+## D-345 — A `NOT NULL` column may not default to `NULL`
+
+- **Touches:** D-337 (proposed), row 6 (`ASSUMED`).
+- **Found:** in review on #951. `default="NULL"` is a literal, so a later `NOT NULL` column
+  with it passed the rule. The diff would then print `ADD COLUMN … NOT NULL DEFAULT NULL`,
+  which fails on a table with rows.
+- **Built:**
+  - A column fills existing rows only when it is nullable or has a literal default other
+    than `NULL` (`src/forze_postgres/kernel/catalog/owned/shapes.py:45`).
+  - A `NOT NULL` column defaulting to `NULL` is refused when its shape is built, whatever
+    its release (`:263`).
+  - The rule and the diff's `ADD COLUMN` both apply the same test (`:328`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:238`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-337's row, plus: a `NOT NULL` column's default is never
+  `NULL`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 holds four entries, D-342 to D-345, all `spec-gap`.
+
+## D-346 — A shortened partition name keeps a hash of its table's full name
+
+- **Touches:** D-342 (proposed).
+- **Found:** in review on #951. D-342 cut a long name to the room `_default` leaves. Two logs
+  in one schema whose names share their first 55 bytes then got one partition name, so the
+  second `CREATE TABLE` failed.
+- **Built:** a name that fits keeps `<name>_default`. A longer one is cut on a character
+  boundary and keeps eight hex digits of the full name's SHA-256 before `_default`
+  (`src/forze_postgres/kernel/catalog/owned/render.py:107`). It replaces D-342's
+  `_default1` fallback, since a hashed name cannot come back as its parent's.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:502`; D-342's
+  cut gives both names `aaa…a_default`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-342's row, narrowed: a shortened name keeps a hash of the
+  full one.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds five entries, D-342 to D-346, all `spec-gap`.
+
+## D-347 — The diff's file is applied by a tool that stops at its first error
+
+- **Touches:** D-344 (proposed); §5.3 and row 4 (`ASSUMED`, accepted), whose retired drops
+  come after every create in one file.
+- **Found:** in review on #951. When a replacement's `CREATE INDEX CONCURRENTLY` fails and
+  the runner carries on, as `psql` does unless `ON_ERROR_STOP` is set, the retired drop below
+  it still runs. The table then keeps an invalid replacement and loses the index that served
+  the scan.
+- **Built:**
+  - The retired drop stays in the same file, after the creates, as §5.3 decided.
+  - The diff's preamble gains a third line: stop at the first error, with
+    `psql -v ON_ERROR_STOP=1` named (`src/forze_postgres/kernel/catalog/owned/diff.py:46`).
+  - The how-to's apply step requires such a tool. Flyway stops by default
+    (`pages/docs/running-in-prod/upgrading-forze-tables.md:122`).
+  - The next diff reads the failed create's invalid index and prints its drop and recreate.
+- **Why:** deferring every retired drop to a second run would make each index swap two
+  migrations, against §5.3's one file. Stopping at the first error is what every migration
+  tool the survey found already does (§2).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:966`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. The diff's file is applied by a tool that stops at
+  its first error, which its preamble and the how-to state.
+- **Action:** decided.
+
+## D-348 — The default partition never takes another bound table's name
+
+- **Touches:** D-346 (proposed).
+- **Found:** in review on #951. An outbox named `events_default` beside its delivery log
+  `events` gave the log's `DEFAULT` partition the outbox's name, so the install failed.
+- **Built:**
+  - Binding keeps `<name>_default` where no bound table holds it. Otherwise it gives the
+    relation D-346's hashed form (`src/forze_postgres/execution/deps/owned.py:124`).
+  - `BoundOwnedRelation.default_partition` carries the chosen name
+    (`src/forze_postgres/kernel/catalog/owned/shapes.py:390`).
+  - Bound tables holding both forms are refused as `postgres_owned_partition_name_taken`.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:502`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-346's row, plus: the name is never one another bound table
+  holds.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds seven entries, D-342 to D-348, all `spec-gap`.
+
+## D-349 — Binding reserves each partition name it hands out
+
+- **Touches:** D-348 (proposed).
+- **Found:** in review on #951. D-348 checked a partition name against the bound tables only.
+  - The log `events`, beside an outbox `events_default`, took the hashed
+    `events_<hash>_default`.
+  - The log `events_<hash>` then took the same name as its plain one, so the second
+    `CREATE TABLE` failed.
+- **Built:**
+  - Binding hands out names in bound order, against one set holding the bound tables and
+    each partition name already taken. Each chosen name joins the set
+    (`src/forze_postgres/execution/deps/owned.py:120`, `:126`).
+  - A plain name is still kept where it is free.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:523`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-348's row, plus: no two partitions bound together take one
+  name.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds eight entries, D-342 to D-349, all `spec-gap`.

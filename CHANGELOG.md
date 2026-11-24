@@ -19,9 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Providers can declare what they resolve.** `Requirement(key, route, remedy)` and `DeclaresRequirements` in `forze.application.contracts.deps`, and `ProviderStore.providers()` to walk a store's registrations.
 
-- **`forze schema` prints the SQL for the durable tables.** `sql` prints the `CREATE` statements and `diff` what a database lacks, read via a role in `FORZE_SCHEMA_DSN`, exiting 0, 10 or 11 (`--check` for CI); forze never runs it. New: `owned_relations`, `OwnedRelationShape`.
+- **`forze schema` prints the SQL for forze's store tables**, from durable runs to outboxes, delivery logs, inboxes and counters. `sql` prints the `CREATE` statements and `diff` what a database lacks, read via a role in `FORZE_SCHEMA_DSN`, exiting 0, 10 or 11 (`--check`, `--keep-retired`); forze never runs it.
 
 ### Changed
+
+- **The Postgres outbox claim index is `(outbox_route, status, created_at)`**, or `(outbox_route, status, hlc, created_at, id)` with `hlc_ordering`. Run `forze schema diff`: it builds the new index and drops the one the docs printed.
 
 - **`eligibility="allow_all"` is a production posture finding** (**Breaking**): under a `ProductionPosture`, an unset environment included, each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it. Constructing the module logs a warning.
 

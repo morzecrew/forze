@@ -223,6 +223,7 @@ nav = [
             "reference/mapping.md",
             "reference/outbox-schema.md",
             "reference/durable-schema.md",
+            "reference/store-schema.md",
             "reference/fastapi-routes.md",
             "reference/realtime-protocol.md",
             "reference/ops-cli.md",

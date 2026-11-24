@@ -38,9 +38,11 @@ from forze_postgres.adapters.counter import (
     PostgresCounterAdapter,
     PostgresCounterAdminAdapter,
 )
+from forze_postgres.adapters.store_schema import counter_shape
 from forze_postgres.execution.deps.configs import PostgresCounterConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 # ----------------------- #
 
@@ -50,13 +52,9 @@ TTL = timedelta(hours=1)
 
 async def _create(pg_client: PostgresClient, *, with_expiry: bool) -> str:
     table = f"counter_exp_{uuid4().hex[:8]}"
-    expiry = ", expires_at timestamptz" if with_expiry else ""
-    await pg_client.execute(
-        sql.SQL(
-            "CREATE TABLE {t} (tenant_id text NOT NULL, suffix text NOT NULL, "
-            "value bigint NOT NULL" + expiry + ", PRIMARY KEY (tenant_id, suffix))"
-        ).format(t=sql.Identifier("public", table))
-    )
+    shape = counter_shape(PostgresCounterConfig(relation=UNUSED_RELATION))
+    omit = frozenset() if with_expiry else frozenset({"expires_at"})
+    await create_owned_table(pg_client, shape, "public", table, omit=omit)
     return table
 
 

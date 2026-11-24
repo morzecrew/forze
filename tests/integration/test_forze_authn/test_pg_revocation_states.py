@@ -56,6 +56,7 @@ from forze_identity.authn.services import (
     ApiKeyService,
     PasswordConfig,
 )
+from forze_postgres.adapters.store_schema import principal_epoch_shape
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
@@ -70,6 +71,7 @@ from tests.integration.test_forze_authn.test_pg_authn_integration import (
 )
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
 from tests.support.execution_context import context_from_deps
+from tests.support.owned_schema import UNUSED_RELATION, create_owned_table
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -204,10 +206,11 @@ async def _stacks(
     suffix = uuid4().hex[:12]
     epochs = f"authn_epochs_{suffix}"
     await create_authn_tables(pg_client, suffix=suffix)
-    await pg_client.execute(
-        sql.SQL(
-            "CREATE TABLE {table} (principal_id uuid PRIMARY KEY, epoch bigint NOT NULL)"
-        ).format(table=sql.Identifier("public", epochs))
+    await create_owned_table(
+        pg_client,
+        principal_epoch_shape(PostgresPrincipalEpochConfig(relation=UNUSED_RELATION)),
+        "public",
+        epochs,
     )
 
     def build(down: bool) -> _Stack:

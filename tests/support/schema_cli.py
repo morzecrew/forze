@@ -7,6 +7,8 @@ from forze_postgres.execution.deps.configs import (
     PostgresDurableRunConfig,
     PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
+    PostgresInboxConfig,
+    PostgresOutboxConfig,
 )
 from tests.support.schema_snapshots import deps
 
@@ -27,6 +29,13 @@ tenant_scoped = PostgresDepsModule(
     durable_step=PostgresDurableStepConfig(relation=("public", "durable_step")),
 )
 """A run table resolved per tenant, which P1 skips with a warning."""
+
+shared_by_two_stores = PostgresDepsModule(
+    client=PostgresClient(),
+    outboxes={"events": PostgresOutboxConfig(relation=("public", "messages"))},
+    inboxes={"events": PostgresInboxConfig(relation=("public", "messages"))},
+)
+"""An outbox and an inbox on one table, which binding refuses as a configuration error."""
 
 CLI_SCHEMA: Final = "forze_schema_cli"
 """The schema the CLI's integration test creates its tables in, apart from every other test."""
