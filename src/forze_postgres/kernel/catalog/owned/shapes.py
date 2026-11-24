@@ -386,3 +386,7 @@ class BoundOwnedRelation:
 
     shape: OwnedRelationShape
     """The shape the route's config declares."""
+
+    default_partition: str | None = None
+    """The name of a partitioned table's ``DEFAULT`` partition, where ``<name>_default``
+    would take the name of another table the deps module binds. ``None`` takes that name."""

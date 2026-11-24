@@ -104,17 +104,18 @@ _IDENTIFIER_BYTES: Final = 63
 """Postgres's longest identifier (``NAMEDATALEN - 1``); a longer one is truncated."""
 
 
-def default_partition_name(parent: str) -> str:
+def default_partition_name(parent: str, *, hashed: bool = False) -> str:
     """``<parent>_default`` when it fits one identifier.
 
-    A longer name is cut on a character boundary and keeps eight hex digits of the full
-    name's hash before ``_default``. So two long names that share a prefix still get two
-    partitions, and none gets its parent's own name back.
+    A longer name, or any name with *hashed*, is cut on a character boundary and keeps eight
+    hex digits of the full name's hash before ``_default``. So two long names that share a
+    prefix still get two partitions, and none gets its parent's own name back. *hashed* is
+    for a short name whose plain form another table already holds.
     """
 
     name = f"{parent}_default"
 
-    if len(name.encode()) <= _IDENTIFIER_BYTES:
+    if not hashed and len(name.encode()) <= _IDENTIFIER_BYTES:
         return name
 
     digest = hashlib.sha256(parent.encode()).hexdigest()[:8]
@@ -129,7 +130,8 @@ def default_partition(relation: BoundOwnedRelation) -> Block:
     application's covers. Without a partition every insert fails."""
 
     parent = qualified(relation.schema, relation.name)
-    partition = qualified(relation.schema, default_partition_name(relation.name))
+    name = relation.default_partition or default_partition_name(relation.name)
+    partition = qualified(relation.schema, name)
 
     return Block(
         comments=("the partition for rows no other partition covers; add yours beside it",),

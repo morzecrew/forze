@@ -16,6 +16,7 @@ from typing import Protocol, final
 import attrs
 
 from forze.application.contracts.resolution import RelationSpec
+from forze.base.exceptions import exc
 
 from ...adapters.durable.schema import (
     durable_run_shape,
@@ -33,6 +34,7 @@ from ...adapters.store_schema import (
     rotating_credentials_shape,
 )
 from ...kernel.catalog.owned import BoundOwnedRelation, OwnedRelationShape
+from ...kernel.catalog.owned.render import default_partition_name
 from .configs import PostgresOutboxConfig
 from .module import PostgresDepsModule
 
@@ -114,7 +116,42 @@ def _bind(entries: Iterable[_Entry]) -> OwnedRelations:
             found, route=f"{found.route}, {route}", shape=found.shape.union(shape)
         )
 
-    return OwnedRelations(bound=tuple(tables.values()), skipped=tuple(skipped))
+    bound = tuple(_name_default_partition(relation, tables) for relation in tables.values())
+
+    return OwnedRelations(bound=bound, skipped=tuple(skipped))
+
+
+def _name_default_partition(
+    relation: BoundOwnedRelation,
+    tables: Mapping[tuple[str, str], BoundOwnedRelation],
+) -> BoundOwnedRelation:
+    """*relation* with a ``DEFAULT`` partition name no other bound table holds.
+
+    ``<name>_default`` is kept where it is free. Where another table already holds it, such
+    as an outbox ``events_default`` beside the log ``events``, the hashed form is taken.
+
+    :raises CoreException: ``configuration``, code ``postgres_owned_partition_name_taken``,
+        when bound tables hold both forms.
+    """
+
+    if relation.shape.partitioned_by is None:
+        return relation
+
+    taken = {name for schema, name in tables if schema == relation.schema}
+
+    if default_partition_name(relation.name) not in taken:
+        return relation
+
+    name = default_partition_name(relation.name, hashed=True)
+
+    if name in taken:
+        raise exc.configuration(
+            f"Every name for the DEFAULT partition of {relation.schema}.{relation.name} is "
+            "taken by another table the deps module binds; rename one of them.",
+            code="postgres_owned_partition_name_taken",
+        )
+
+    return attrs.evolve(relation, default_partition=name)
 
 
 def owned_relations(deps: PostgresDepsModule) -> OwnedRelations:

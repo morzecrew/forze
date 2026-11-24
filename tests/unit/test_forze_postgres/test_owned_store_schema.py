@@ -499,6 +499,27 @@ class TestDeliveryLog:
     def test_a_short_name_keeps_its_plain_default_partition_name(self) -> None:
         assert default_partition_name("outbox_delivered") == "outbox_delivered_default"
 
+    def test_the_default_partition_never_takes_another_bound_tables_name(self) -> None:
+        # The outbox holds events_default, so the log's partition takes the hashed form.
+        deps = PostgresDepsModule(
+            client=PostgresClient(),
+            outboxes={
+                "events": _outbox(
+                    relation=("app", "events_default"),
+                    storage="consume",
+                    delivery_log=("app", "events"),
+                )
+            },
+        )
+
+        text = render_sql(owned_relations(deps).bound, version="9.9.9")
+        partitions = [s for s in split_sql(text) if " PARTITION OF " in s]
+
+        assert partitions == [
+            f"CREATE TABLE app.{default_partition_name('events', hashed=True)} "
+            "PARTITION OF app.events DEFAULT"
+        ]
+
     def test_two_long_names_sharing_a_prefix_get_two_partitions(self) -> None:
         # Cutting both to the same prefix would make the second CREATE TABLE fail.
         assert default_partition_name("a" * 55 + "x") != default_partition_name("a" * 55 + "y")
