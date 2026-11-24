@@ -902,12 +902,10 @@ class PostgresIntrospector:
             """
         ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
 
-        row = await self.client.fetch_one(stmt, [schema, relation], row_factory="tuple")
-
-        if row is None:
-            return 0, False
-
-        count, has_default = row
+        # An aggregate always returns its one row.
+        count, has_default = await self.client.fetch_one(
+            stmt, [schema, relation], row_factory="tuple"
+        ) or (0, False)
 
         return int(count), bool(has_default)
 

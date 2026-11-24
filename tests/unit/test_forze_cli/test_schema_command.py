@@ -15,7 +15,7 @@ pytest.importorskip("typer")
 
 from typer.testing import CliRunner
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_cli import schema as schema_cli
 from forze_cli.app import app
 from forze_postgres.kernel.catalog.owned import (
@@ -257,6 +257,21 @@ class TestDiff:
 
         assert result.exit_code == schema_cli.EXIT_CONFIG
         assert "share one owned table" in result.stderr
+
+    def test_an_error_binding_that_is_not_configuration_is_not_reported_as_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_postgres
+
+        def broken(deps: object) -> None:
+            raise exc.internal("binding broke")
+
+        monkeypatch.setattr(forze_postgres, "owned_relations", broken)
+
+        result = runner.invoke(app, ["schema", "sql", "--deps", _DEPS])
+
+        assert result.exit_code == schema_cli.EXIT_INTERNAL
+        assert "Cannot bind" not in result.stderr
 
 
 @pytest.mark.parametrize(("platform", "selector"), [("win32", True), ("linux", False)])

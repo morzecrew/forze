@@ -108,7 +108,7 @@ async def read_catalog(
     if kind not in ("table", "partitioned_table"):
         return CatalogRelation(kind=kind)
 
-    partitions, default_partition = (
+    partitions, has_default = (
         await introspector.partitions(schema=schema, relation=name)
         if kind == "partitioned_table"
         else (0, False)
@@ -121,7 +121,7 @@ async def read_catalog(
         indexes=await introspector.indexes(schema=schema, relation=name),
         building=await introspector.index_build_in_progress(schema=schema, relation=name),
         partitions=partitions,
-        default_partition=default_partition,
+        default_partition=has_default,
     )
 
 
