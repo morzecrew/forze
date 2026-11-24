@@ -126,9 +126,9 @@ exits by what it found:
 
 | Exit | Meaning |
 |---|---|
-| `0` | In sync: the migrations cover this forze version. |
+| `0` | Nothing to apply: the migrations cover this forze version. |
 | `10` | Statements are missing: write the migration. |
-| `11` | A refusal or warning needs a person. |
+| `11` | A refusal or warning needs a person, or a relation was skipped. |
 
 ```console
 $ forze schema diff --deps app.wire:postgres --check
@@ -142,6 +142,6 @@ A forze bump with no migration then fails the job with `10`. The other codes (`2
 - **Durable tables only.** The outbox, inbox, idempotency, counter and identity tables
   still take their DDL from their pages.
 - **One table per relation.** A relation given as a tenant-scoped resolver names no single
-  table, so both commands skip it with a warning on stderr. Diff each tenant's schema
-  through a deps module that names it.
+  table, so both commands skip it with a warning on stderr, and `diff` exits `11`. Diff each
+  tenant's schema through a deps module that names it.
 - **Postgres only.**

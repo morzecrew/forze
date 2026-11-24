@@ -16,7 +16,8 @@ forze schema diff  --deps MODULE:ATTR [--check]
 
 `--deps` names a `PostgresDepsModule`, or a sequence holding exactly one. Both commands
 cover the owned tables it configures: `durable_run`, `durable_step` and `durable_schedule`.
-A relation given as a tenant-scoped resolver is skipped, with a warning on stderr.
+A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
+`diff` then exits `11`: a relation it never compared cannot be reported in sync.
 
 `sql` reads no database. It prints each table, then its required indexes, then its
 recommended ones, under a header naming the forze version, the table and its adapter. A
@@ -84,14 +85,17 @@ another role's build.
 
 | Code | Meaning |
 |---|---|
-| `0` | In sync; nothing printed |
-| `10` | Statements were printed |
-| `11` | A refusal or a warning needs a person; wins over `10` |
+| `0` | Nothing to apply; a note may still print |
+| `10` | Statements to apply |
+| `11` | A refusal, a warning or a skipped relation needs a person; wins over `10` |
 | `1` | Internal error |
 | `2` | Usage error, such as `--dsn` passed |
 | `75` | The database could not be reached or read; safe to retry |
-| `78` | Configuration: `--deps` does not load or name one `PostgresDepsModule`, `FORZE_SCHEMA_DSN` is unset or does not parse, the role lacks access, or the `postgres` extra is missing |
+| `78` | Configuration: `--deps` does not load or name one `PostgresDepsModule`, `FORZE_SCHEMA_DSN` is unset or does not parse, the server refuses the login, the role lacks access, or the `postgres` extra is missing |
 
 A DSN that does not parse is reported without its text, which may hold a password.
 
-A note, such as a retired column still present, changes no exit code.
+The codes say what the diff found, whether or not `--check` printed it. A note, such as a
+retired column still present, changes no exit code. A refused login is told from an
+unreachable server by the server's message, so a server that localizes its messages
+exits `75` for both.

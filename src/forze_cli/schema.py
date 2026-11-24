@@ -5,25 +5,29 @@ reads a live catalog and prints the forward statements that bring it to the inst
 version. Forze never runs either: the output goes into the application's next migration file,
 applied by its own tool (RFC 0080 row 1).
 
-Exit codes are a contract for CI:
+Exit codes are a contract for CI. They say what the diff found, whether or not it printed:
 
-* ``0``: in sync, nothing printed;
-* ``10``: statements were printed;
-* ``11``: something needs a person (a refusal or a warning), which wins over ``10``;
+* ``0``: nothing to apply. A note, such as a retired column still present, may still print;
+* ``10``: statements to apply;
+* ``11``: something needs a person, which wins over ``10``: a refusal, a warning, or a
+  relation skipped because it is resolved per tenant;
 * ``2``: a usage error, such as the DSN passed as a flag;
 * ``75``: the database could not be reached or read, safe to retry;
 * ``78``: a configuration error: ``--deps`` does not load or name a ``PostgresDepsModule``,
-  the DSN is unset or does not parse, the role lacks access, or the ``postgres`` extra is
-  missing;
+  the DSN is unset or does not parse, the server refuses the login, the role lacks access,
+  or the ``postgres`` extra is missing;
 * ``1``: an internal error.
+
+``--check`` prints nothing and keeps the code.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Final, NoReturn
+import sys
+from collections.abc import Coroutine, Sequence
+from typing import TYPE_CHECKING, Any, Final, NoReturn
 
 import typer
 
@@ -77,6 +81,7 @@ def _fail(message: str, code: int) -> NoReturn:
 
 
 def _load_deps(ref: str) -> PostgresDepsModule:
+    from forze.base.exceptions import CoreException, ExceptionKind
     from forze_postgres import PostgresDepsModule
 
     try:
@@ -84,6 +89,13 @@ def _load_deps(ref: str) -> PostgresDepsModule:
 
     except (ImportError, AttributeError, ValueError) as error:
         _fail(f"Cannot load --deps {ref!r}: {error}", EXIT_CONFIG)
+
+    # A deps module refuses a bad configuration as it is built, which is while it imports.
+    except CoreException as error:
+        if error.kind is not ExceptionKind.CONFIGURATION:
+            raise
+
+        _fail(f"Cannot load --deps {ref!r}: {error.summary}", EXIT_CONFIG)
 
     if isinstance(obj, PostgresDepsModule):
         return obj
@@ -169,11 +181,24 @@ async def _read_deltas(
         await client.close()
 
 
+_LOGIN_REFUSED: Final = (
+    "authentication failed",
+    "no pg_hba.conf entry",
+    "does not exist",
+    "permission denied for database",
+    "is not permitted to log in",
+)
+"""Server messages that refuse a login rather than fail to reach it. psycopg gives a failed
+connection no SQLSTATE, so the message is the only signal; a server whose messages are
+localized matches none of these, and its refusals stay ``75``."""
+
+
 async def _probe(dsn: str) -> None:
     """Connect once, so a bad DSN fails at once and says why rather than as a pool timeout.
 
     A connection string psycopg cannot parse is reported without its text, which may hold the
-    password. A refused connection keeps libpq's message, which names the host and user only.
+    password. A failed connection keeps libpq's message, which names the host and user only,
+    and exits ``78`` when the server refused the login, since retrying cannot fix that.
     """
 
     import psycopg
@@ -182,22 +207,41 @@ async def _probe(dsn: str) -> None:
     try:
         conninfo_to_dict(dsn)
 
-    except psycopg.ProgrammingError:
+    except psycopg.Error:
         _fail(f"{DSN_ENV} is not a valid Postgres connection string.", EXIT_CONFIG)
 
     try:
         connection = await psycopg.AsyncConnection.connect(dsn, connect_timeout=10)
 
     except psycopg.OperationalError as error:
-        _fail(f"Cannot connect with {DSN_ENV}: {str(error).strip()}", EXIT_TEMPFAIL)
+        message = str(error).strip()
+        refused = any(marker in message.lower() for marker in _LOGIN_REFUSED)
+        _fail(
+            f"Cannot connect with {DSN_ENV}: {message}", EXIT_CONFIG if refused else EXIT_TEMPFAIL
+        )
 
     await connection.close()
 
 
+def _run[T](coroutine: Coroutine[Any, Any, T]) -> T:
+    """Run *coroutine* on a loop psycopg can use: a selector loop on Windows, where the
+    default proactor loop is refused."""
+
+    if sys.platform == "win32":
+        return asyncio.run(coroutine, loop_factory=asyncio.SelectorEventLoop)
+
+    return asyncio.run(coroutine)
+
+
 def _exit_for(error: CoreException) -> int:
     from forze.base.exceptions import ExceptionKind, exception_egress_policy
+    from forze_postgres.kernel.client.errors import PRIVILEGE_DENIED_CODE
 
     kind = error.kind
+
+    # The client maps a missing grant to ``internal``; for the diff it is the role's setup.
+    if error.code == PRIVILEGE_DENIED_CODE:
+        return EXIT_CONFIG
 
     if kind in (ExceptionKind.AUTHENTICATION, ExceptionKind.AUTHORIZATION):
         return EXIT_CONFIG
@@ -219,7 +263,10 @@ def diff_command(
     check: bool = typer.Option(
         False,
         "--check",
-        help="Print nothing; exit 0 when in sync, 10 on a delta, 11 when a person is needed.",
+        help=(
+            "Print nothing; exit 0 when there is nothing to apply, 10 on a delta, 11 when a "
+            "person is needed."
+        ),
     ),
     dsn: str | None = typer.Option(None, "--dsn", hidden=True),
 ) -> None:
@@ -242,7 +289,7 @@ def diff_command(
     relations = _relations(deps)
 
     try:
-        deltas = asyncio.run(_read_deltas(url, relations.bound))
+        deltas = _run(_read_deltas(url, relations.bound))
 
     except CoreException as error:
         _fail(f"Cannot read the catalog: {error.summary}", _exit_for(error))
@@ -252,7 +299,8 @@ def diff_command(
 
     outcome = diff_outcome(deltas)
 
-    if outcome == "refusal":
+    # A skipped relation was never compared, so the diff cannot say it is in sync.
+    if outcome == "refusal" or relations.skipped:
         raise typer.Exit(code=EXIT_REFUSAL)
 
     if outcome == "delta":

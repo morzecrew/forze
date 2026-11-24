@@ -24,6 +24,7 @@ from forze_postgres.kernel.catalog.owned import (
     RelationDelta,
     diff_relation,
 )
+from forze_postgres.kernel.client.errors import PRIVILEGE_DENIED_CODE
 
 pytestmark = pytest.mark.unit
 
@@ -152,6 +153,8 @@ class TestDiff:
             (CoreException.infrastructure("Database unavailable."), 75),
             (CoreException.authorization("Permission denied."), 78),
             (CoreException.internal("Relation has no columns."), 1),
+            (CoreException.internal("Denied.", code=PRIVILEGE_DENIED_CODE), 78),
+            (CoreException.configuration("Cache partition required."), 78),
         ],
     )
     def test_a_failed_catalog_read_maps_to_its_exit_code(
@@ -182,3 +185,79 @@ class TestDiff:
         assert result.exit_code == code
         assert schema_cli.DSN_ENV in result.stderr
         assert "hunter2secret" not in result.output
+
+    @pytest.mark.parametrize(
+        ("message", "code"),
+        [
+            ('FATAL:  password authentication failed for user "reader"', 78),
+            ('FATAL:  database "app" does not exist', 78),
+            ('FATAL:  no pg_hba.conf entry for host "10.0.0.1", user "reader"', 78),
+            ("FATAL:  sorry, too many clients already", 75),
+            ("FATAL:  the database system is starting up", 75),
+        ],
+    )
+    def test_a_refused_login_is_configuration_and_a_busy_server_is_retryable(
+        self, monkeypatch: pytest.MonkeyPatch, message: str, code: int
+    ) -> None:
+        import psycopg
+
+        async def connect(*args: object, **kwargs: object) -> None:
+            raise psycopg.OperationalError(f"connection failed: {message}")
+
+        monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect)
+        monkeypatch.setenv(schema_cli.DSN_ENV, "postgresql://reader@db/app")
+
+        result = runner.invoke(app, ["schema", "diff", "--deps", _DEPS])
+
+        assert result.exit_code == code
+        assert message in result.stderr
+
+    def test_a_skipped_relation_is_never_reported_in_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _patch_deltas(monkeypatch, None)
+
+        async def nothing(dsn: str, relations: Sequence[BoundOwnedRelation]) -> list[RelationDelta]:
+            return []
+
+        monkeypatch.setattr(schema_cli, "_read_deltas", nothing)
+
+        result = runner.invoke(
+            app, ["schema", "diff", "--deps", "tests.support.schema_cli:tenant_scoped", "--check"]
+        )
+
+        assert result.exit_code == schema_cli.EXIT_REFUSAL
+        assert "skipped durable_run" in result.stderr
+
+    def test_a_deps_module_that_refuses_its_configuration_on_import_exits_78(self) -> None:
+        result = runner.invoke(
+            app, ["schema", "sql", "--deps", "tests.support.schema_cli_broken:deps"]
+        )
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert "Cannot load --deps" in result.stderr
+
+
+@pytest.mark.parametrize(("platform", "selector"), [("win32", True), ("linux", False)])
+def test_the_diff_runs_on_a_loop_psycopg_accepts(
+    monkeypatch: pytest.MonkeyPatch, platform: str, selector: bool
+) -> None:
+    # psycopg refuses Windows' default proactor loop.
+    import asyncio
+    import sys
+
+    seen: dict[str, object] = {}
+
+    def run(coroutine: object, **kwargs: object) -> str:
+        coroutine.close()  # type: ignore[attr-defined]
+        seen.update(kwargs)
+        return "ran"
+
+    async def work() -> str:
+        return "unused"
+
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(asyncio, "run", run)
+
+    assert schema_cli._run(work()) == "ran"
+    assert (seen.get("loop_factory") is asyncio.SelectorEventLoop) is selector
