@@ -21,6 +21,7 @@ from forze.base.exceptions import exc
 from ...kernel.catalog.owned import BoundOwnedRelation, RelationDelta, diff_relation, read_catalog
 from ...kernel.catalog.owned.quoting import one_line, qualified
 from ...kernel.catalog.owned.render import Block
+from ...kernel.client.value_objects import PostgresTransactionOptions
 from ..deps.keys import PostgresIntrospectorDepKey
 from ..deps.owned import OwnedRelations
 from .capabilities import POSTGRES_CLIENT_CAPABILITY
@@ -33,6 +34,7 @@ REFUSED_FINDINGS: Final = frozenset(
         "type_family",
         "refuses_null",
         "required_index_missing",
+        "required_index_building",
         "primary_key",
         "conflict_target",
         "not_a_table",
@@ -40,8 +42,12 @@ REFUSED_FINDINGS: Final = frozenset(
     }
 )
 """What stops startup, beside a missing table: anything with which the adapter's reads or
-writes fail. A table missing an optional column or a recommended index, a column narrower
+writes fail, a required index still being built included, since ``ON CONFLICT`` never infers
+an invalid one. A table missing an optional column or a recommended index, a column narrower
 than declared, or an index forze has retired only warns."""
+
+_SNAPSHOT: Final = PostgresTransactionOptions(read_only=True, isolation="repeatable_read")
+"""The catalog read in one snapshot, as ``forze schema diff`` reads it."""
 
 # ....................... #
 
@@ -122,9 +128,14 @@ class PostgresOwnedSchemaValidationHook(LifecycleHook):
         deltas: list[RelationDelta | None] = []
 
         try:
-            for relation in bound:
-                catalog = await read_catalog(introspector, relation)
-                deltas.append(None if catalog is None else diff_relation(relation, catalog))
+            # Before any connection: a routed client has none to give without a tenant.
+            introspector.require_partition()
+
+            # One snapshot, so a migration running beside startup is seen whole or not at all.
+            async with introspector.client.transaction(options=_SNAPSHOT):
+                for relation in bound:
+                    catalog = await read_catalog(introspector, relation)
+                    deltas.append(None if catalog is None else diff_relation(relation, catalog))
 
         except exc as e:
             if getattr(e, "code", None) == "introspection_partition_required":

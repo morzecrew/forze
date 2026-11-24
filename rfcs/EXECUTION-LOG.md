@@ -9313,3 +9313,81 @@ one departure the plan recorded (D-352, `spec-gap`) and one close-out.
 
 **Drift count: 0.** Unit 35 holds five entries, D-350 to D-354: four `spec-gap` and one
 close-out.
+
+# Unit 36 · RFC 0080 P2b review — what the startup step reads, and when
+
+Branch `feat/postgres-owned-schema-startup` (#953): fixes from the PR's review.
+- D-355 narrows rows 23 and 25, the column comparison.
+- D-356 extends row 14.
+- D-357 and D-358 settle when and how the step reads the catalog.
+
+One review suggestion was declined: a narrower column refusing startup, against row 14 as
+the maintainer accepted it on 2026-11-25, under which a narrower column warns and the diff
+still exits `11`.
+
+**Drift count: 0.** Four entries, D-355 to D-358, all `spec-gap`.
+
+## D-355 — A column's width and its nullability are reported apart
+
+- **Touches:** rows 23 and 25 (`ASSUMED`, accepted).
+- **Found:** in review on #953. A nullable column found narrower and `NOT NULL`, such as
+  `idempotency_key varchar(36) NOT NULL`, returned only the width finding, which startup
+  grades as a warning. Every keyless `enqueue` then fails on the `NULL` it writes.
+- **Built:** the column comparison returns a type-family refusal alone, or else a width
+  finding and a nullability finding, each on its own
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:196`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:235`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Rows 23 and 25, plus: a column narrower than declared is also
+  checked for nullability.
+- **Action:** decided.
+
+## D-356 — A required index still being built refuses startup
+
+- **Touches:** row 14 (`ASSUMED`, amended 2026-11-25), row 17.
+- **Found:** in review on #953. A required index invalid under a running build was graded a
+  warning. `ON CONFLICT` never infers an invalid index, so the adapter's writes fail until
+  the build ends.
+- **Built:** such an index's finding is `required_index_building`, which refuses; a
+  recommended one still building only warns (`src/forze_postgres/kernel/catalog/owned/diff.py:285`,
+  `src/forze_postgres/execution/lifecycle/owned_schema.py:37`). The diff still prints
+  nothing for it, as row 17 says.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:254`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 14, plus: a required index still being built refuses.
+- **Action:** decided.
+
+## D-357 — The partition is checked before the first catalog read
+
+- **Touches:** D-351 (accepted as row 13), which skips the step without a partition.
+- **Found:** in review on #953. With a routed client and no tenant at startup, `find_relation`,
+  uncached, went to the client before anything checked the partition. The client refused
+  with `tenant_required`, so the intended skip never ran and startup failed.
+- **Built:**
+  - `PostgresIntrospector.require_partition()` checks the partition, and `find_relation`
+    calls it like the cached reads (`src/forze_postgres/kernel/catalog/introspect/introspector.py:189`).
+  - The step calls it before opening any connection, then skips
+    (`src/forze_postgres/execution/lifecycle/owned_schema.py:132`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:329`: the check
+  is skipped with no transaction opened.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 13, plus: without the introspector's partition, the step
+  is skipped before any read.
+- **Action:** decided.
+
+## D-358 — Startup reads the catalog in one snapshot
+
+- **Touches:** row 24 (`ASSUMED`, accepted: "one diff reads one snapshot").
+- **Found:** in review on #953. The step read each relation in separate queries, so a
+  migration running beside startup could be seen half applied and refuse a deploy that would
+  have passed a moment later.
+- **Built:** the step reads every relation in one `READ ONLY`, `REPEATABLE READ` transaction,
+  as `forze schema diff` does (`src/forze_postgres/execution/lifecycle/owned_schema.py:49`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:302`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 24's one snapshot, extended to the startup step.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 36 holds four entries, D-355 to D-358, all `spec-gap`.

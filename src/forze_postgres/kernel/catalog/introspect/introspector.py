@@ -186,6 +186,16 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    def require_partition(self) -> None:
+        """Check that a read can run now: when reads are partitioned by a key, such as the
+        bound tenant, that key is bound.
+
+        :raises CoreException: ``internal``, code ``introspection_partition_required``, when
+            it is not.
+        """
+
+        self._partition()
+
     def _partition(self) -> str:
         if self.cache_partition_key is None:
             return ""
@@ -288,8 +298,11 @@ class PostgresIntrospector:
         """The kind of *relation*, or ``None`` when it does not exist.
 
         Uncached, unlike :meth:`get_relation`: a missing relation is an answer here rather
-        than an error, and a schema diff asks once per relation.
+        than an error, and a schema diff asks once per relation. Like the cached reads, it
+        needs the partition when reads are partitioned (:meth:`require_partition`).
         """
+
+        self.require_partition()
 
         return await self._read_relation_kind(self.__normalize_schema(schema), relation)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -9,7 +11,7 @@ import attrs
 import pytest
 
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_postgres import (
     PostgresClient,
     PostgresDepsModule,
@@ -33,6 +35,7 @@ from forze_postgres.kernel.catalog.owned import (
     CatalogRelation,
     diff_relation,
 )
+from forze_postgres.kernel.client.value_objects import PostgresTransactionOptions
 from tests.support.execution_context import context_from_deps
 
 pytestmark = pytest.mark.unit
@@ -98,6 +101,78 @@ def _catalog(relation: BoundOwnedRelation, **columns: PostgresType | None) -> Ca
     )
 
 
+def _two_tables() -> Any:
+    return owned_relations(
+        PostgresDepsModule(
+            client=PostgresClient(),
+            inboxes={"events": PostgresInboxConfig(relation=("app", "inbox"))},
+            counters={"orders": PostgresCounterConfig(relation=("app", "counters"))},
+        )
+    )
+
+
+def _run_shape() -> Any:
+    from forze_postgres.adapters.durable.schema import durable_run_shape
+    from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+
+    return durable_run_shape(PostgresDurableRunConfig(relation=("app", "runs")))
+
+
+class _Client:
+    """Records the transactions the hook opens."""
+
+    def __init__(self) -> None:
+        self.options: list[PostgresTransactionOptions | None] = []
+
+    @asynccontextmanager
+    async def transaction(
+        self, *, options: PostgresTransactionOptions | None = None
+    ) -> AsyncIterator[None]:
+        self.options.append(options)
+        yield None
+
+
+class _Introspector:
+    """An introspector over one recorded catalog, every relation missing by default."""
+
+    def __init__(
+        self,
+        *,
+        partition: bool = True,
+        catalog: CatalogRelation | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.client = _Client()
+        self.partition = partition
+        self.catalog = catalog
+        self.error = error
+
+    def require_partition(self) -> None:
+        if not self.partition:
+            raise exc.internal("no partition", code="introspection_partition_required")
+
+    async def find_relation(self, **_: Any) -> str | None:
+        if self.error is not None:
+            raise self.error
+
+        return None if self.catalog is None else "table"
+
+    async def get_column_types(self, **_: Any) -> Any:
+        assert self.catalog is not None
+        return self.catalog.columns
+
+    async def get_primary_key_columns(self, **_: Any) -> Any:
+        assert self.catalog is not None
+        return self.catalog.primary_key
+
+    async def indexes(self, **_: Any) -> Any:
+        assert self.catalog is not None
+        return self.catalog.indexes
+
+    async def index_build_in_progress(self, **_: Any) -> bool:
+        return False
+
+
 # ....................... #
 
 
@@ -157,6 +232,50 @@ class TestGrade:
 
         assert len(findings.refusals) == 1 and "NOT NULL" in findings.refusals[0]
 
+    def test_a_narrower_column_that_refuses_null_is_refused(self) -> None:
+        # A width warning must not hide a column that refuses the NULL forze writes.
+        relation = BoundOwnedRelation(
+            route="durable_run", schema="app", name="runs", shape=_run_shape()
+        )
+        narrow_not_null = PostgresType(
+            base="varchar", is_array=False, not_null=True, formatted="character varying(36)"
+        )
+
+        findings = grade(
+            [relation],
+            [diff_relation(relation, _catalog(relation, idempotency_key=narrow_not_null))],
+        )
+
+        assert any(
+            "idempotency_key" in line and "NOT NULL" in line for line in findings.refusals
+        )
+        assert any("narrower" in line for line in findings.warnings)
+
+    def test_a_required_index_still_being_built_is_refused(self) -> None:
+        # ON CONFLICT never infers an invalid index, so writes fail until the build ends.
+        relation = BoundOwnedRelation(
+            route="inboxes.events",
+            schema="app",
+            name="runs",
+            shape=_run_shape(),
+        )
+        catalog = _catalog(relation)
+        unique = _pkey(("idempotency_key",))
+        catalog = attrs.evolve(
+            catalog,
+            indexes=(
+                *catalog.indexes,
+                attrs.evolve(
+                    unique, name="building", primary=False, owns_constraint=False, valid=False
+                ),
+            ),
+            building=True,
+        )
+
+        findings = grade([relation], [diff_relation(relation, catalog)])
+
+        assert any("idempotency_key" in line for line in findings.refusals)
+
     def test_the_refused_findings_are_each_produced_by_the_diff(self) -> None:
         # A code the diff never sets would refuse nothing; keep the set and the diff in step.
         import inspect
@@ -189,11 +308,8 @@ class TestWiring:
             )
         )
 
-        class _Missing:
-            async def find_relation(self, **_: Any) -> None:
-                return None
-
-        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: _Missing()}))
+        introspector = _Introspector()
+        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: introspector}))
 
         with pytest.raises(CoreException) as caught:
             await PostgresOwnedSchemaValidationHook(relations=relations)(ctx)
@@ -205,6 +321,60 @@ class TestWiring:
                 "app.counters is missing (PostgresCounterAdapter).",
             ]
         }
+        # Every relation is read in one read-only snapshot.
+        assert introspector.client.options == [
+            PostgresTransactionOptions(read_only=True, isolation="repeatable_read")
+        ]
+
+    async def test_without_its_partition_the_check_is_skipped_before_any_read(self) -> None:
+        # A routed client has no connection to give before a tenant is bound.
+        introspector = _Introspector(partition=False)
+        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: introspector}))
+
+        await PostgresOwnedSchemaValidationHook(relations=_two_tables())(ctx)
+
+        assert introspector.client.options == []
+
+    async def test_an_error_other_than_a_missing_partition_is_raised(self) -> None:
+        introspector = _Introspector(error=exc.infrastructure("catalog unreachable"))
+        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: introspector}))
+
+        with pytest.raises(CoreException) as caught:
+            await PostgresOwnedSchemaValidationHook(relations=_two_tables())(ctx)
+
+        assert "catalog unreachable" in str(caught.value)
+
+    async def test_skipped_routes_and_warnings_are_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_postgres.execution.lifecycle import owned_schema
+
+        logged: list[str] = []
+
+        class _Logger:
+            def warning(self, message: str, *args: object) -> None:
+                logged.append(message % args)
+
+        monkeypatch.setattr(owned_schema, "logger", _Logger())
+        relations = owned_relations(
+            PostgresDepsModule(
+                client=PostgresClient(),
+                counters={
+                    "orders": PostgresCounterConfig(relation=("app", "counters")),
+                    "scoped": PostgresCounterConfig(relation=lambda tenant: ("t", "counters")),
+                },
+            )
+        )
+        relation = relations.bound[0]
+        catalog = _catalog(relation, expires_at=None)
+        ctx = context_from_deps(
+            Deps.plain({PostgresIntrospectorDepKey: _Introspector(catalog=catalog)})
+        )
+
+        await PostgresOwnedSchemaValidationHook(relations=relations)(ctx)
+
+        assert any("skips route 'counters.scoped'" in line for line in logged)
+        assert any("ADD COLUMN expires_at" in line for line in logged)
 
 
 class TestTenants:

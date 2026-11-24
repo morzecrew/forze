@@ -197,7 +197,10 @@ def _compare_column(
     relation: BoundOwnedRelation,
     column: OwnedColumn,
     found: PostgresType,
-) -> Block | None:
+) -> list[Block]:
+    """Refusals for one column: its type family, or else its width and its nullability, each
+    reported on its own, since a narrower column may also refuse the NULL forze writes."""
+
     table = qualified(relation.schema, relation.name)
     name = quote_ident(column.name)
     declared, actual = type_family(column.type), catalog_type_family(found)
@@ -205,38 +208,47 @@ def _compare_column(
     if declared != actual:
         found_type = quote_ident(found.base) + ("[]" if found.is_array else "")
 
-        return _refusal(
-            f"column {name} of {table} is {found_type}, but forze declares {column.type}.",
-            "A type change rewrites the table, so the diff never prints one.",
-            finding="type_family",
-        )
+        return [
+            _refusal(
+                f"column {name} of {table} is {found_type}, but forze declares {column.type}.",
+                "A type change rewrites the table, so the diff never prints one.",
+                finding="type_family",
+            )
+        ]
+
+    refusals: list[Block] = []
 
     if narrower(column.type, found):
         found_type = quote_ident(found.formatted or found.base)
-
-        return _refusal(
-            f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
-            "A value the adapter writes may not fit; widen the column.",
-            finding="narrower",
+        refusals.append(
+            _refusal(
+                f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
+                "A value the adapter writes may not fit; widen the column.",
+                finding="narrower",
+            )
         )
 
     if not column.nullable and not found.not_null:
-        return _refusal(
-            f"column {name} of {table} admits NULL, but forze declares it NOT NULL.",
-            "Setting it scans the table and fails on any NULL row; clear those first.",
-            commented=(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;",),
-            finding="admits_null",
+        refusals.append(
+            _refusal(
+                f"column {name} of {table} admits NULL, but forze declares it NOT NULL.",
+                "Setting it scans the table and fails on any NULL row; clear those first.",
+                commented=(f"ALTER TABLE {table} ALTER COLUMN {name} SET NOT NULL;",),
+                finding="admits_null",
+            )
         )
 
     if column.nullable and found.not_null:
-        return _refusal(
-            f"column {name} of {table} is NOT NULL, but forze declares it nullable.",
-            "The adapter writes NULL to it, and the column refuses those writes.",
-            commented=(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL;",),
-            finding="refuses_null",
+        refusals.append(
+            _refusal(
+                f"column {name} of {table} is NOT NULL, but forze declares it nullable.",
+                "The adapter writes NULL to it, and the column refuses those writes.",
+                commented=(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL;",),
+                finding="refuses_null",
+            )
         )
 
-    return None
+    return refusals
 
 
 def _declared_index(
@@ -268,7 +280,9 @@ def _declared_index(
                 f"index {names} on {describe_keys(index.keys)} is invalid while an index "
                 f"build may be running on {qualified(relation.schema, relation.name)}, so "
                 "nothing is printed for it. Run the diff again once the build ends.",
-                finding="index_building",
+                # ON CONFLICT never infers an invalid index, so a required one still being
+                # built leaves the adapter's writes failing until the build ends.
+                finding="required_index_building" if index.required else "index_building",
             )
         ]
 
@@ -624,10 +638,7 @@ def diff_relation(
             (statements if block.statement is not None else refusals).append(block)
             continue
 
-        refusal = _compare_column(relation, column, found)
-
-        if refusal is not None:
-            refusals.append(refusal)
+        refusals.extend(_compare_column(relation, column, found))
 
     # Whether a declared index is still being built, so a retired one may still serve its scan.
     building_declared = False
