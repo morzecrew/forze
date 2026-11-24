@@ -8558,3 +8558,25 @@ keeps D-311. The rest change no decision:
 - **Class:** `discovery`.
 - **Proposed row (RFC 0080):** D-311's row stands.
 - **Action:** decided.
+
+## D-323 — Within a type family, a narrower column is refused
+
+- **Touches:** D-314 (proposed), §5.3 ("Column type family differs").
+- **Found:** in review on #949. `smallint` passed as the declared `integer` for `attempts`,
+  and a `varchar(36)` `run_id` as `text`, though a value forze writes may not fit either: a
+  scoped key is `{tenant_id}:{key}`. `PostgresType.base` drops `varchar`'s length, so the diff
+  could not see it.
+- **Built:** `PostgresType` carries the catalog's `format_type()` text, modifier included
+  (`src/forze_postgres/kernel/catalog/introspect/types.py:26`). A column of the declared family
+  but narrower is refused: a smaller integer, or a text type with a length limit
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:367`,
+  `src/forze_postgres/kernel/catalog/owned/diff.py:191`). A wider one passes.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:508`, red before the change;
+  `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:558` on Postgres 18.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-314's row, plus: a column narrower than declared
+  within its family is refused.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 32 now holds five entries, D-319 to D-323: four `spec-gap` and one
+`discovery`.

@@ -51,7 +51,10 @@ the transaction, keeps the diff from writing.
 | A column or index neither declared nor retired | Nothing |
 
 Type families: `text`, `varchar`, `char` and `citext` are one; `smallint`, `integer` and
-`bigint` are one; every other type is its own.
+`bigint` are one; every other type is its own. Within a family, a narrower column than
+declared is refused, since a value the adapter writes may not fit: a smaller integer, or a
+text type with a length limit (`varchar(36)`, `char(8)`). A wider one is the application's
+call.
 
 An index **matches** a declared one when it is a b-tree over the same keys in the same order
 and direction, with the same uniqueness and predicate, and default operator classes and

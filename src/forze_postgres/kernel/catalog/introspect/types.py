@@ -23,6 +23,11 @@ class PostgresType:
     not_null: bool
     """Whether the column carries a ``NOT NULL`` constraint."""
 
+    formatted: str = ""
+    """``format_type()`` as the catalog spells it, modifier included (``character
+    varying(36)``), which :attr:`base` normalizes away for some types. Empty when the type was
+    not read from a catalog."""
+
 
 # ....................... #
 

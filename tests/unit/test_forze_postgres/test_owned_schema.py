@@ -478,19 +478,48 @@ class TestDiff:
         assert "ALTER" not in _text(delta)
 
     @pytest.mark.parametrize(
-        ("column", "base"), [("status", "citext"), ("status", "varchar(64)"), ("attempts", "int8")]
+        ("column", "base", "formatted"),
+        [
+            ("status", "citext", "citext"),
+            ("status", "varchar", "character varying"),
+            ("attempts", "int8", "bigint"),
+        ],
     )
     def test_a_column_of_the_same_family_is_the_applications_call(
-        self, column: str, base: str
+        self, column: str, base: str, formatted: str
     ) -> None:
         relation = _run()
         catalog = _in_sync(relation)
         columns = {
             **catalog.columns,
-            column: PostgresType(base=base, is_array=False, not_null=True),
+            column: PostgresType(base=base, is_array=False, not_null=True, formatted=formatted),
         }
 
         assert diff_relation(relation, attrs.evolve(catalog, columns=columns)).blocks == ()
+
+    @pytest.mark.parametrize(
+        ("column", "base", "formatted"),
+        [
+            ("attempts", "int2", "smallint"),
+            ("run_id", "varchar", "character varying(36)"),
+            ("status", "character(8)", "character(8)"),
+        ],
+    )
+    def test_a_narrower_column_of_the_same_family_is_refused(
+        self, column: str, base: str, formatted: str
+    ) -> None:
+        # A value forze writes may not fit: smallint overflows, varchar(36) cuts a scoped key.
+        relation = _run()
+        catalog = _in_sync(relation)
+        columns = {
+            **catalog.columns,
+            column: PostgresType(base=base, is_array=False, not_null=True, formatted=formatted),
+        }
+
+        delta = diff_relation(relation, attrs.evolve(catalog, columns=columns))
+
+        assert diff_outcome([delta]) == "refusal"
+        assert formatted in _text(delta)
 
     def test_a_declared_nullable_column_found_not_null_is_refused(self) -> None:
         # enqueue(input_json=None) writes NULL, which the stricter column refuses.

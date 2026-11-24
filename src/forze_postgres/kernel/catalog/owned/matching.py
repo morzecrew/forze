@@ -357,6 +357,32 @@ def type_family(type_name: str) -> str:
     return f"{family}[]" if array else family
 
 
+_INTEGER_BYTES: Final = {"int2": 2, "int4": 4, "int8": 8}
+
+_LENGTH_LIMITED: Final = re.compile(
+    r"(?:character varying|varchar|character|char|bpchar)\s*\(\s*\d+\s*\)", re.IGNORECASE
+)
+
+
+def narrower(declared: str, found: PostgresType) -> bool:
+    """Whether *found*, of *declared*'s family, can refuse a value forze writes: a smaller
+    integer, or a text type with a length limit (``character`` alone is one character)."""
+
+    if found.is_array:
+        return False
+
+    want = normalize_pg_type(strip_type_modifier(declared))
+    have = normalize_pg_type(strip_type_modifier(found.base))
+
+    if want in _INTEGER_BYTES and have in _INTEGER_BYTES:
+        return _INTEGER_BYTES[have] < _INTEGER_BYTES[want]
+
+    if type_family(declared) == "text":
+        return have in ("char", "bpchar") or _LENGTH_LIMITED.match(found.formatted) is not None
+
+    return False
+
+
 def catalog_type_family(column: PostgresType) -> str:
     """The family of a catalog column type."""
 

@@ -421,7 +421,12 @@ class PostgresIntrospector:
             else:
                 base = normalize_pg_type(str(r["full_type"]))
 
-            out[col] = PostgresType(base=base, is_array=is_array, not_null=not_null)
+            out[col] = PostgresType(
+                base=base,
+                is_array=is_array,
+                not_null=not_null,
+                formatted=str(r["full_type"]),
+            )
 
         self.__column_lane.store(key, out)
 

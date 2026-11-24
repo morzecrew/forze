@@ -549,3 +549,25 @@ async def test_a_relation_that_is_not_a_plain_table_is_refused(
     assert diff_outcome(deltas) == "refusal"
     assert _statements(text) == []
     assert f"is {said}, not a plain table" in text
+
+
+@pytest.mark.parametrize(
+    ("column", "narrow"),
+    [("run_id", "varchar(36)"), ("attempts", "smallint"), ("status", "char(8)")],
+)
+async def test_a_column_narrower_than_declared_is_refused(
+    dsn: str, admin, schema: str, column: str, narrow: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    await admin.execute(
+        sql.SQL(cast(LiteralString, f"ALTER TABLE {{}} ALTER COLUMN {{}} TYPE {narrow}")).format(
+            sql.Identifier(schema, "durable_run"), sql.Identifier(column)
+        )
+    )
+
+    deltas = await _diff(dsn, relations)
+
+    assert diff_outcome(deltas) == "refusal"
+    assert "narrower than forze's" in render_diff(deltas, version="9.9.9")

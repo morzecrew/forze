@@ -19,6 +19,7 @@ from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationK
 from .matching import (
     catalog_type_family,
     describe_keys,
+    narrower,
     retired_mismatch,
     same_keys,
     satisfies,
@@ -181,6 +182,14 @@ def _compare_column(
         return _refusal(
             f"column {name} of {table} is {found_type}, but forze declares {column.type}.",
             "A type change rewrites the table, so the diff never prints one.",
+        )
+
+    if narrower(column.type, found):
+        found_type = quote_ident(found.formatted or found.base)
+
+        return _refusal(
+            f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
+            "A value the adapter writes may not fit; widen the column.",
         )
 
     if not column.nullable and not found.not_null:
