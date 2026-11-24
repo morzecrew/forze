@@ -8,6 +8,12 @@ PR as the adapter change that needs it.
 A tenant-aware table on a static relation is a shared tagged table, so a bound scan also
 filters ``tenant_id``: its shape adds the ``tenant_id``-leading variants of the scan indexes.
 It keeps the plain ones, which the unbound recovery scan reads.
+
+The stores filter a bound scan by tenant whatever ``tenant_aware`` says, so the flag is a
+proxy for "scans here run bound". Declaring the variants on every static table instead would
+make ``forze schema diff --check`` fail for each single-tenant deployment until it built
+indexes nothing reads. A deployment that binds tenants without the flag can create them
+itself; the diff leaves an index it does not declare alone.
 """
 
 from typing import Final

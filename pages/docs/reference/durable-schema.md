@@ -77,8 +77,11 @@ CREATE INDEX ON public.durable_run (tenant_id, created_at DESC, run_id DESC);
 ```
 
 Without them, the recovery scan, the purge and the listing scan and sort the whole table
-as it grows. A table that is not tenant-aware, or that lives in a per-tenant schema, needs
-no `tenant_id` variant.
+as it grows. `forze schema` declares the `tenant_id` variants for a tenant-aware table on a
+static relation. The store filters a bound scan by tenant whether or not the table is
+tenant-aware, so if you bind tenants without `tenant_aware=True`, create the variants
+yourself; the diff leaves an index it does not declare alone. A table in a per-tenant
+schema needs none.
 
 The two recovery-scan indexes replaced `(status, created_at)` and
 `(tenant_id, status, created_at)` in 0.18.0. A scan of every function costs the same on
