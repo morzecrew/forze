@@ -261,3 +261,12 @@ def test_the_diff_runs_on_a_loop_psycopg_accepts(
 
     assert schema_cli._run(work()) == "ran"
     assert (seen.get("loop_factory") is asyncio.SelectorEventLoop) is selector
+
+
+def test_a_bug_in_the_deps_module_keeps_its_traceback() -> None:
+    from forze.base.exceptions import CoreException
+
+    result = runner.invoke(app, ["schema", "sql", "--deps", "tests.support.schema_cli_crash:deps"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, CoreException)

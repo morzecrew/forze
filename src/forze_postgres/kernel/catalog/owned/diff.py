@@ -43,6 +43,13 @@ PREAMBLE: Final = (
 )
 """The two lines every non-empty diff opens with."""
 
+_KIND_NAMES: Final = {
+    "view": "a view",
+    "materialized_view": "a materialized view",
+    "partitioned_table": "a partitioned table",
+}
+"""How a refusal names a relation that is not a plain table."""
+
 DiffOutcome = Literal["in_sync", "delta", "refusal"]
 """What a diff found: nothing to do, statements to apply, or something for a person."""
 
@@ -301,7 +308,8 @@ def diff_relation(
             relation=relation,
             refusals=(
                 _refusal(
-                    f"{table} is a {catalog.kind.replace('_', ' ')}, not a plain table.",
+                    f"{table} is {_KIND_NAMES.get(catalog.kind, 'another kind of relation')}, "
+                    "not a plain table.",
                     "The diff compares nothing else on it.",
                 ),
             ),

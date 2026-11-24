@@ -34,6 +34,7 @@ from forze_postgres.kernel.catalog.owned import (
     BoundOwnedRelation,
     CatalogRelation,
     OwnedColumn,
+    OwnedIndex,
     OwnedRelationShape,
     RelationDelta,
     Retired,
@@ -45,7 +46,7 @@ from forze_postgres.kernel.catalog.owned import (
     render_diff,
     render_sql,
 )
-from forze_postgres.kernel.catalog.owned.matching import normalize_expression
+from forze_postgres.kernel.catalog.owned.matching import declared_key, normalize_expression
 from tests.support.sql_statements import split_sql
 
 pytestmark = pytest.mark.unit
@@ -229,6 +230,26 @@ class TestDeclarations:
     def test_a_literal_default_is_constant(self, default: str) -> None:
         assert is_constant_default(default)
 
+    @pytest.mark.parametrize(
+        ("columns", "primary_key"),
+        [
+            ((OwnedColumn(name="a", type="text"), OwnedColumn(name="a", type="text")), ("a",)),
+            ((OwnedColumn(name="a", type="text"),), ("b",)),
+            ((OwnedColumn(name="a", type="text"),), ()),
+        ],
+        ids=["column-twice", "key-on-undeclared-column", "no-key"],
+    )
+    def test_an_inconsistent_shape_is_refused_at_construction(
+        self, columns: tuple[OwnedColumn, ...], primary_key: tuple[str, ...]
+    ) -> None:
+        with pytest.raises(CoreException) as caught:
+            OwnedRelationShape(owner="X", columns=columns, primary_key=primary_key, indexes=())
+
+        assert caught.value.code == "postgres_owned_shape_invalid"
+
+    def test_no_relation_renders_nothing(self) -> None:
+        assert render_sql([], version="9.9.9") == ""
+
 
 class TestOwnedRelations:
     def test_the_tenant_switch_adds_the_tenant_leading_variants_and_keeps_the_plain_ones(
@@ -295,11 +316,32 @@ class TestMatching:
             ("a = 1 AND (b = 2 AND c = 3)", "((a = 1) AND (b = 2) AND (c = 3))"),
             ("x = 'a'::character varying", "x='a'"),
             ("ts < '2020-01-01'::timestamp with time zone", "ts < '2020-01-01'"),
+            ("x = 'a'::character varying(10)", "x = 'a'"),
+            ("tags && '{a}'::text[]", "tags && '{a}'"),
+            ("x = 'a'::public.citext", "x = 'a'"),
             ('"status" = 1', "STATUS = 1"),
         ],
     )
     def test_spellings_that_differ_only_in_form_are_equal(self, left: str, right: str) -> None:
         assert normalize_expression(left) == normalize_expression(right)
+
+    @pytest.mark.parametrize(
+        ("key", "descending", "nulls_first"),
+        [
+            ("created_at", False, False),
+            ("created_at DESC", True, True),
+            ("created_at DESC NULLS LAST", True, False),
+            ("created_at NULLS FIRST", False, True),
+            ("created_at ASC", False, False),
+        ],
+    )
+    def test_a_declared_key_reads_its_direction_and_nulls_order_as_postgres_does(
+        self, key: str, descending: bool, nulls_first: bool
+    ) -> None:
+        assert declared_key(key) == (normalize_expression("created_at"), descending, nulls_first)
+
+    def test_unbalanced_parentheses_are_compared_as_written(self) -> None:
+        assert normalize_expression("(a = 1") != normalize_expression("a = 1")
 
 
 class TestQuoting:
@@ -742,6 +784,24 @@ class TestDiff:
 
         assert diff_outcome([delta]) == "in_sync"
         assert "-- ALTER TABLE bi.durable_run DROP COLUMN legacy;" in _text(delta)
+
+    def test_an_index_that_serves_a_declared_shape_is_never_dropped_as_retired(self) -> None:
+        # A shape retired as non-unique and declared again as unique: the unique index stays.
+        relation = _run()
+        shape = attrs.evolve(
+            relation.shape,
+            indexes=(
+                *relation.shape.indexes,
+                OwnedIndex(keys=("status", "created_at"), unique=True, comment="declared"),
+            ),
+        )
+        relation = attrs.evolve(relation, shape=shape)
+        catalog = _with(
+            _in_sync(_run()),
+            add=[_found(("status", "created_at"), name="kept", unique=True)],
+        )
+
+        assert diff_relation(relation, catalog).blocks == ()
 
     def test_declared_shapes_are_checked_against_the_index_type(self) -> None:
         # A hash index on the declared keys is not the declared b-tree.

@@ -519,3 +519,33 @@ async def test_the_cli_exits_by_what_the_diff_found(
     in_sync = await invoke("diff")
     assert in_sync.exit_code == 0, in_sync.output
     assert in_sync.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("definition", "said"),
+    [
+        ("CREATE VIEW {} AS SELECT 1 AS run_id", "a view"),
+        ("CREATE MATERIALIZED VIEW {} AS SELECT 1 AS run_id", "a materialized view"),
+        (
+            "CREATE TABLE {} (run_id text, PRIMARY KEY (run_id)) PARTITION BY HASH (run_id)",
+            "a partitioned table",
+        ),
+        ("CREATE SEQUENCE {}", "another kind of relation"),
+    ],
+    ids=["view", "materialized-view", "partitioned", "sequence"],
+)
+async def test_a_relation_that_is_not_a_plain_table_is_refused(
+    dsn: str, admin, schema: str, definition: str, said: str
+) -> None:
+    await _create_schema(admin, schema)
+    await admin.execute(
+        sql.SQL(cast(LiteralString, definition)).format(sql.Identifier(schema, "durable_run"))
+    )
+    run = next(r for r in owned_relations(_deps(schema)).bound if r.route == "durable_run")
+
+    deltas = await _diff(dsn, (run,))
+    text = render_diff(deltas, version="9.9.9")
+
+    assert diff_outcome(deltas) == "refusal"
+    assert _statements(text) == []
+    assert f"is {said}, not a plain table" in text

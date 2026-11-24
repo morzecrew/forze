@@ -146,13 +146,6 @@ class OwnedRelationShape:
                     code="postgres_owned_shape_invalid",
                 )
 
-    # ....................... #
-
-    def column(self, name: str) -> OwnedColumn | None:
-        """The declared column called *name*, if any."""
-
-        return next((column for column in self.columns if column.name == name), None)
-
 
 # ....................... #
 
