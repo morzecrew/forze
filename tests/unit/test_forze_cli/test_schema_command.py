@@ -245,6 +245,19 @@ class TestDiff:
         assert result.exit_code == schema_cli.EXIT_CONFIG
         assert "Cannot load --deps" in result.stderr
 
+    @pytest.mark.parametrize("command", ["sql", "diff"])
+    def test_two_stores_on_one_table_are_a_configuration_error(
+        self, command: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _patch_deltas(monkeypatch, None)
+
+        result = runner.invoke(
+            app, ["schema", command, "--deps", "tests.support.schema_cli:shared_by_two_stores"]
+        )
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert "share one owned table" in result.stderr
+
 
 @pytest.mark.parametrize(("platform", "selector"), [("win32", True), ("linux", False)])
 def test_the_diff_runs_on_a_loop_psycopg_accepts(

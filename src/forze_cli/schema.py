@@ -18,7 +18,8 @@ Exit codes are a contract for CI. They say what the diff found, whether or not i
   or the ``postgres`` extra is missing;
 * ``1``: an internal error.
 
-``--check`` prints nothing and keeps the code. ``--keep-retired`` leaves retired indexes out.
+``--check`` prints no SQL and keeps the code; warnings still go to stderr. ``--keep-retired``
+leaves retired indexes out.
 """
 
 from __future__ import annotations
@@ -119,9 +120,20 @@ def _load_deps(ref: str) -> PostgresDepsModule:
 
 
 def _relations(ref: str) -> OwnedRelations:
+    from forze.base.exceptions import CoreException, ExceptionKind
     from forze_postgres import owned_relations
 
-    relations = owned_relations(_load_deps(ref))
+    deps = _load_deps(ref)
+
+    # Routes that cannot share their table are refused as they are bound.
+    try:
+        relations = owned_relations(deps)
+
+    except CoreException as error:
+        if error.kind is not ExceptionKind.CONFIGURATION:
+            raise
+
+        _fail(f"Cannot bind --deps {ref!r}: {error.summary}", EXIT_CONFIG)
 
     for route in relations.skipped:
         typer.echo(
