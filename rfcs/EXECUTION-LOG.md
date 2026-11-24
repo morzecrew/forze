@@ -9391,3 +9391,22 @@ still exits `11`.
 - **Action:** decided.
 
 **Drift count: 0.** Unit 36 holds four entries, D-355 to D-358, all `spec-gap`.
+
+## D-359 — A required index rebuilt beside a valid one only warns
+
+- **Touches:** D-356 (this unit), which it narrows.
+- **Found:** in review on #953. D-356 refused startup whenever a required index was invalid
+  while a build may be running, even with a valid match beside it. During a
+  `CREATE INDEX CONCURRENTLY` that replaces an index, the old one still serves `ON CONFLICT`,
+  so a working application could not restart.
+- **Built:** the finding is `required_index_building` only when no valid index matches;
+  otherwise it is `index_building`, a warning
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:287`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema_startup.py:279`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-356's row, narrowed: a required index still being built
+  refuses only when no valid index matches it.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 36 holds five entries, D-355 to D-359, all `spec-gap`.

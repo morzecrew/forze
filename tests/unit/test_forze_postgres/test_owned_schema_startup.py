@@ -276,6 +276,30 @@ class TestGrade:
 
         assert any("idempotency_key" in line for line in findings.refusals)
 
+    def test_a_required_index_rebuilt_beside_a_valid_one_only_warns(self) -> None:
+        # The valid index still serves ON CONFLICT while its replacement builds.
+        relation = BoundOwnedRelation(
+            route="durable_run", schema="app", name="runs", shape=_run_shape()
+        )
+        catalog = _catalog(relation)
+        unique = attrs.evolve(
+            _pkey(("idempotency_key",)), primary=False, owns_constraint=False
+        )
+        catalog = attrs.evolve(
+            catalog,
+            indexes=(
+                *catalog.indexes,
+                attrs.evolve(unique, name="serving"),
+                attrs.evolve(unique, name="building", valid=False),
+            ),
+            building=True,
+        )
+
+        findings = grade([relation], [diff_relation(relation, catalog)])
+
+        assert not any("idempotency_key" in line for line in findings.refusals)
+        assert any("idempotency_key" in line for line in findings.warnings)
+
     def test_the_refused_findings_are_each_produced_by_the_diff(self) -> None:
         # A code the diff never sets would refuse nothing; keep the set and the diff in step.
         import inspect

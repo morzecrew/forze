@@ -281,8 +281,12 @@ def _declared_index(
                 f"build may be running on {qualified(relation.schema, relation.name)}, so "
                 "nothing is printed for it. Run the diff again once the build ends.",
                 # ON CONFLICT never infers an invalid index, so a required one still being
-                # built leaves the adapter's writes failing until the build ends.
-                finding="required_index_building" if index.required else "index_building",
+                # built with no valid match leaves the adapter's writes failing until it ends.
+                finding=(
+                    "required_index_building"
+                    if index.required and not present
+                    else "index_building"
+                ),
             )
         ]
 

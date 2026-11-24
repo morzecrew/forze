@@ -155,7 +155,8 @@ refuses to start, with `postgres_owned_schema_invalid` naming every table, when 
 cannot serve its adapter:
 
 - a missing table, or a missing required column or index;
-- a required index still being built, which `ON CONFLICT` cannot use yet;
+- a required index still being built with no valid one beside it, since `ON CONFLICT` cannot
+  use it yet;
 - a column of another type family;
 - a column that is `NOT NULL` where forze writes `NULL`;
 - a primary key on other columns, or a deferrable one;
