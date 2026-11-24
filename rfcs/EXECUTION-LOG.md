@@ -8669,3 +8669,29 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds nine entries, D-319 to D-327: eight `spec-gap` and one
 `discovery`.
+
+## D-328 — A cast to `text` is dropped only on a `text` or `varchar` column
+
+- **Touches:** D-326 (proposed), which dropped every predicate cast to plain `text`.
+- **Found:** in review on #949. On a `citext` column the cast changes how values compare:
+  `status::text = 'pending'` no longer ignores case. Confirmed on Postgres 18: altering
+  `status` to `citext` rewrites forze's own coalesce predicate as
+  `((status)::text = 'pending'::text)`, and the adapter's `ON CONFLICT (coalesce_key) WHERE
+  status = 'pending' AND attempts = 0` then fails with "there is no unique or exclusion
+  constraint matching the ON CONFLICT specification". D-326 read that index as present.
+- **Built:** the cast is dropped only when it applies to a column whose type compares as
+  `text` does, `text` or `varchar`, read from the catalog
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:96`, `:308`,
+  `src/forze_postgres/kernel/catalog/owned/diff.py:221`). On `citext`, `char` or anything else
+  it is kept, so such an index does not match and forze's is printed.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:673` on
+  Postgres 18 asserts that the diff reads in sync exactly when the adapter's coalescing insert
+  works, before and after the diff is applied;
+  `tests/unit/test_forze_postgres/test_owned_schema.py:692`, red before the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-326's row, narrowed: the cast is dropped only on a
+  `text` or `varchar` column.
+- **Action:** departed.
+
+**Drift count: 0.** Unit 32 now holds ten entries, D-319 to D-328: nine `spec-gap` and one
+`discovery`.

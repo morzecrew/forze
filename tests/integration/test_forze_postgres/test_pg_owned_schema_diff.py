@@ -668,3 +668,50 @@ async def test_a_nulls_not_distinct_index_on_the_idempotency_key_is_refused(
 
     assert diff_outcome(deltas) == "refusal"
     assert f"-- DROP INDEX CONCURRENTLY {schema}.app_nnd;" in render_diff(deltas, version="9.9.9")
+
+
+async def test_on_a_citext_status_the_diff_agrees_with_what_on_conflict_infers(
+    dsn: str, admin, schema: str
+) -> None:
+    # A ::text cast on citext changes how values compare, so it is not dropped there.
+    try:
+        await admin.execute("CREATE EXTENSION IF NOT EXISTS citext")
+
+    except psycopg.Error:
+        pytest.skip("the citext extension is not available")
+
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    table = sql.Identifier(schema, "durable_run")
+    await admin.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN status TYPE public.citext").format(table)
+    )
+
+    async def coalesce(run_id: str) -> bool:
+        # The adapter's coalescing conflict target; False when Postgres infers no arbiter.
+        try:
+            await admin.execute(
+                sql.SQL(
+                    "INSERT INTO {} (run_id, name, status, coalesce_key, created_at, updated_at) "
+                    "VALUES (%s, 'fn', 'pending', %s, now(), now()) "
+                    "ON CONFLICT (coalesce_key) WHERE status = 'pending' AND attempts = 0 "
+                    "DO NOTHING"
+                ).format(table),
+                (run_id, run_id),
+            )
+
+        except psycopg.errors.InvalidColumnReference:
+            return False
+
+        return True
+
+    deltas = await _diff(dsn, relations)
+    text = render_diff(deltas, version="9.9.9")
+
+    assert (diff_outcome(deltas) == "in_sync") is await coalesce("before"), text
+
+    await _run(admin, text)
+
+    assert await coalesce("after")
+    assert diff_outcome(await _diff(dsn, relations)) == "in_sync"

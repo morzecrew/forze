@@ -16,7 +16,7 @@ duplicates a scan index. A retired one read as different is refused rather than 
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from ..introspect.types import IndexShapeInfo, PostgresType
@@ -93,16 +93,37 @@ def _unwrap_columns(tokens: list[str]) -> list[str]:
     return out
 
 
-def _tokens(text: str, *, predicate: bool = False) -> list[str]:
+def _cast_operand(out: list[str]) -> str | None:
+    """The column a cast about to be read applies to, when it is a bare or parenthesized one."""
+
+    tail = [piece for piece in out[-4:] if piece != " "]
+
+    if tail and tail[-1][:1].isalpha():
+        return tail[-1]
+
+    if len(tail) >= 3 and tail[-3] == "(" and tail[-1] == ")" and tail[-2][:1].isalpha():
+        return tail[-2]
+
+    return None
+
+
+def _tokens(
+    text: str,
+    *,
+    predicate: bool = False,
+    text_columns: frozenset[str] = frozenset(),
+) -> list[str]:
     """*text* split into tokens, whitespace kept as single spaces.
 
     A cast on a literal is dropped: it is the type Postgres gives the constant when it stores
     the predicate (``'pending'::text``). A cast on a column or an expression is kept, because it
     can change the value: ``status::varchar(1)`` truncates.
 
-    In a *predicate* a cast to plain ``text`` is dropped as well, and a lone column in
-    parentheses is unwrapped: on a ``varchar`` column Postgres stores ``status = 'pending'`` as
-    ``((status)::text = 'pending'::text)``, comparing through ``text``'s operator.
+    In a *predicate*, a cast to plain ``text`` on one of *text_columns* is dropped as well, and a
+    lone column in parentheses is unwrapped: on a ``varchar`` column Postgres stores
+    ``status = 'pending'`` as ``((status)::text = 'pending'::text)``, comparing through
+    ``text``'s operator, which is the column's own. On any other column the cast changes how
+    values compare (``citext`` stops ignoring case), so it is kept.
     """
 
     raw = [(match.lastgroup, match.group()) for match in _TOKEN.finditer(text)]
@@ -115,7 +136,12 @@ def _tokens(text: str, *, predicate: bool = False) -> list[str]:
         position += 1
 
         if kind == "cast" and (
-            last in ("literal", "number") or (predicate and _is_plain_text_cast(raw, position))
+            last in ("literal", "number")
+            or (
+                predicate
+                and _is_plain_text_cast(raw, position)
+                and _cast_operand(out) in text_columns
+            )
         ):
             position = _skip_type(raw, position)
             continue
@@ -263,14 +289,33 @@ def _tree(tokens: list[str]) -> Tree:
     return "".join(piece for piece in tokens if piece != " ")
 
 
-def normalize_expression(text: str | None, *, predicate: bool = False) -> Tree | None:
+def normalize_expression(
+    text: str | None,
+    *,
+    predicate: bool = False,
+    text_columns: frozenset[str] = frozenset(),
+) -> Tree | None:
     """*text* in the normal form two spellings of one expression share, or ``None`` for no
-    expression. A *predicate* also drops casts to plain ``text`` (see :func:`_tokens`)."""
+    expression. A *predicate* also drops casts to plain ``text`` on *text_columns* (see
+    :func:`_tokens`)."""
 
     if text is None:
         return None
 
-    return _tree(_tokens(text, predicate=predicate))
+    return _tree(_tokens(text, predicate=predicate, text_columns=text_columns))
+
+
+def text_columns(columns: Mapping[str, PostgresType]) -> frozenset[str]:
+    """The columns a cast to plain ``text`` leaves as they are: ``text`` and ``varchar``,
+    whose comparisons are ``text``'s. ``char`` drops trailing blanks and ``citext`` ignores
+    case, so neither counts."""
+
+    return frozenset(
+        name
+        for name, column in columns.items()
+        if not column.is_array
+        and normalize_pg_type(strip_type_modifier(column.base)) in ("text", "varchar")
+    )
 
 
 # ....................... #
@@ -324,16 +369,24 @@ def same_keys(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     )
 
 
-def same_predicate(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
+def same_predicate(
+    declared: OwnedIndex,
+    index: IndexShapeInfo,
+    text_columns: frozenset[str] = frozenset(),
+) -> bool:
     """Whether *index* restricts to the declared rows: absent on both, or equal when
-    normalized."""
+    normalized, casts to ``text`` dropped only on *text_columns*."""
 
-    return normalize_expression(declared.where, predicate=True) == normalize_expression(
-        index.predicate, predicate=True
-    )
+    return normalize_expression(
+        declared.where, predicate=True, text_columns=text_columns
+    ) == normalize_expression(index.predicate, predicate=True, text_columns=text_columns)
 
 
-def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
+def satisfies(
+    declared: OwnedIndex,
+    index: IndexShapeInfo,
+    text_columns: frozenset[str] = frozenset(),
+) -> bool:
     """Whether *index* is the declared index: the same keys, uniqueness and predicate, with
     default operator classes and collations, and nulls distinct as Postgres has them by
     default. A unique one must also be immediate, since ``ON CONFLICT`` never takes a
@@ -346,7 +399,7 @@ def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     return (
         same_keys(declared, index)
         and index.unique == declared.unique
-        and same_predicate(declared, index)
+        and same_predicate(declared, index, text_columns)
         and index.default_opclasses
         and index.default_collations
         and not index.nulls_not_distinct
@@ -360,6 +413,7 @@ def conflicting_unique(
     index: IndexShapeInfo,
     *,
     nullable: bool,
+    text_columns: frozenset[str] = frozenset(),
 ) -> str | None:
     """What makes *index* break writes to the conflict target *target*, or ``None``.
 
@@ -376,7 +430,7 @@ def conflicting_unique(
     if {key for key, _, _ in catalog_keys(index)} != {declared_key(key)[0] for key in target.keys}:
         return None
 
-    if index.predicate is not None and not same_predicate(target, index):
+    if index.predicate is not None and not same_predicate(target, index, text_columns):
         return None
 
     if not index.immediate:
@@ -388,7 +442,11 @@ def conflicting_unique(
     return None
 
 
-def retired_mismatch(retired: OwnedIndex, index: IndexShapeInfo) -> str | None:
+def retired_mismatch(
+    retired: OwnedIndex,
+    index: IndexShapeInfo,
+    text_columns: frozenset[str] = frozenset(),
+) -> str | None:
     """Why *index*, which has *retired*'s keys, is not a retired match, or ``None`` when it is.
 
     A retired match is dropped under its catalog name, so every condition that tells an
@@ -401,7 +459,7 @@ def retired_mismatch(retired: OwnedIndex, index: IndexShapeInfo) -> str | None:
     if index.backs_constraint:
         return "a constraint is backed by it"
 
-    if not same_predicate(retired, index):
+    if not same_predicate(retired, index, text_columns):
         return "its predicate differs from the retired one"
 
     if index.included:

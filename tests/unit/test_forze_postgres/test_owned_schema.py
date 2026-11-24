@@ -678,19 +678,40 @@ class TestDiff:
         assert diff_outcome([delta]) == "refusal"
         assert drop in _text(delta)
 
-    def test_a_varchar_columns_predicate_matches_the_declared_one(self) -> None:
-        # On a varchar column Postgres 18 stores ((status)::text = 'pending'::text).
+    @pytest.mark.parametrize(
+        ("status_type", "predicate", "matches"),
+        [
+            # On varchar Postgres 18 stores the declared predicate through text's operator.
+            ("varchar", "(((status)::text = 'pending'::text) AND (attempts = 0))", True),
+            # On citext the declared predicate keeps citext's own, case-blind operator...
+            ("citext", "((status = 'pending'::citext) AND (attempts = 0))", True),
+            # ...and a ::text cast compares case by case: ON CONFLICT cannot infer that index.
+            ("citext", "(((status)::text = 'pending'::text) AND (attempts = 0))", False),
+        ],
+    )
+    def test_a_cast_to_text_counts_only_where_it_keeps_the_comparison(
+        self, status_type: str, predicate: str, matches: bool
+    ) -> None:
         relation = _run()
         keys = ("coalesce_key",)
         name = _index_named(relation, keys)
-        varchar_form = "(((status)::text = 'pending'::text) AND (attempts = 0))"
-        catalog = _with(
-            _in_sync(relation),
-            drop=[name],
-            add=[_found(keys, name=name, unique=True, predicate=varchar_form)],
+        catalog = _in_sync(relation)
+        catalog = attrs.evolve(
+            _with(
+                catalog,
+                drop=[name],
+                add=[_found(keys, name=name, unique=True, predicate=predicate)],
+            ),
+            columns={
+                **catalog.columns,
+                "status": PostgresType(base=status_type, is_array=False, not_null=True),
+            },
         )
 
-        assert diff_relation(relation, catalog).blocks == ()
+        delta = diff_relation(relation, catalog)
+
+        assert (delta.blocks == ()) is matches
+        assert any("coalesce_key" in s for s in _statements(delta)) is not matches
 
     def test_a_retired_index_still_being_built_is_not_dropped(self) -> None:
         relation = _run()

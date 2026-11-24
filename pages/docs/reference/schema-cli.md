@@ -72,9 +72,12 @@ when it is missing.
 
 Keys and predicates are compared after normalizing: casts on literals and whitespace dropped,
 keywords and bare names case-insensitive, `AND` and `OR` compared as a tree. A cast on a
-column is kept, since it can change the value. In a predicate, a cast to plain `text` and the
-parentheses around a lone column are dropped: on a `varchar` column Postgres stores
-`status = 'pending'` as `((status)::text = 'pending'::text)`.
+column is kept, since it can change the value. In a predicate, a cast to plain `text` on a
+`text` or `varchar` column is dropped, with the parentheses around the column: there
+Postgres stores `status = 'pending'` as `((status)::text = 'pending'::text)`. On any other
+column the cast is kept, since it changes how values compare. A `citext` column compared
+through `::text` stops ignoring case, and `ON CONFLICT` cannot infer such an index, so the
+diff prints forze's.
 
 A **retired match** has a retired shape's keys and is not unique, backs no constraint, has
 exactly the retired predicate, and has no `INCLUDE` columns, non-default operator classes or

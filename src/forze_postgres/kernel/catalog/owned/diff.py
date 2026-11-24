@@ -24,6 +24,7 @@ from .matching import (
     retired_mismatch,
     same_keys,
     satisfies,
+    text_columns,
     type_family,
 )
 from .quoting import qualified, quote_ident
@@ -217,7 +218,8 @@ def _declared_index(
 ) -> tuple[list[Block], list[Block]]:
     """Statements and warnings for one declared index."""
 
-    matches = [found for found in catalog.indexes if satisfies(index, found)]
+    casts = text_columns(catalog.columns)
+    matches = [found for found in catalog.indexes if satisfies(index, found, casts)]
     present = any(found.valid for found in matches)
     invalid = [found for found in matches if not found.valid]
     create = Block(
@@ -264,13 +266,17 @@ def _conflicting_uniques(
     shape = relation.shape
     table = qualified(relation.schema, relation.name)
     nullable = {column.name for column in shape.columns if column.nullable}
+    casts = text_columns(catalog.columns)
     primary = OwnedIndex(keys=shape.primary_key, unique=True, comment="the primary key")
     refusals: list[Block] = []
 
     for target in (*shape.indexes, primary):
         for found in catalog.indexes:
             reason = conflicting_unique(
-                target, found, nullable=any(key in nullable for key in target.keys)
+                target,
+                found,
+                nullable=any(key in nullable for key in target.keys),
+                text_columns=casts,
             )
 
             if reason is None:
@@ -303,6 +309,7 @@ def _retired_indexes(
     refusals: list[Block] = []
     warnings: list[Block] = []
     declared = relation.shape.indexes
+    casts = text_columns(catalog.columns)
 
     for retired in relation.shape.retired:
         shape = retired.shape
@@ -315,11 +322,11 @@ def _retired_indexes(
                 continue
 
             # An index that is also a declared shape serves forze today.
-            if any(satisfies(index, found) for index in declared):
+            if any(satisfies(index, found, casts) for index in declared):
                 continue
 
             name = qualified(found.schema, found.name)
-            mismatch = retired_mismatch(shape, found)
+            mismatch = retired_mismatch(shape, found, casts)
 
             # An invalid index may be another session's build still running (row 17).
             if mismatch is None and not found.valid and catalog.building:
