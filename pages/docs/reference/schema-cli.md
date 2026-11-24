@@ -112,8 +112,10 @@ another role's build.
 - Every comment is one line. Line breaks and control characters in a catalog name become
   spaces.
 - Indexes are created unnamed, as the reference pages print them.
-- A non-empty diff opens with two lines: the output covers shape only, and `CONCURRENTLY`
-  cannot run in a transaction.
+- A non-empty diff opens with three lines: the output covers shape only, `CONCURRENTLY`
+  cannot run in a transaction, and the file must be applied by a tool that stops at its first
+  error. Retired drops come after the creates that replace them, so a runner that carried on
+  past a failed create would drop the index the create was to replace.
 
 ## Exit codes
 

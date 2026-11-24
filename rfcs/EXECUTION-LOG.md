@@ -9131,3 +9131,46 @@ The rest change no decision:
 - **Action:** decided.
 
 **Drift count: 0.** Unit 34 now holds five entries, D-342 to D-346, all `spec-gap`.
+
+## D-347 — The diff's file is applied by a tool that stops at its first error
+
+- **Touches:** D-344 (proposed); §5.3 and row 4 (`ASSUMED`, accepted), whose retired drops
+  come after every create in one file.
+- **Found:** in review on #951. When a replacement's `CREATE INDEX CONCURRENTLY` fails and
+  the runner carries on, as `psql` does unless `ON_ERROR_STOP` is set, the retired drop below
+  it still runs. The table then keeps an invalid replacement and loses the index that served
+  the scan.
+- **Built:**
+  - The retired drop stays in the same file, after the creates, as §5.3 decided.
+  - The diff's preamble gains a third line: stop at the first error, with
+    `psql -v ON_ERROR_STOP=1` named (`src/forze_postgres/kernel/catalog/owned/diff.py:46`).
+  - The how-to's apply step requires such a tool. Flyway stops by default
+    (`pages/docs/running-in-prod/upgrading-forze-tables.md:122`).
+  - The next diff reads the failed create's invalid index and prints its drop and recreate.
+- **Why:** deferring every retired drop to a second run would make each index swap two
+  migrations, against §5.3's one file. Stopping at the first error is what every migration
+  tool the survey found already does (§2).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:966`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. The diff's file is applied by a tool that stops at
+  its first error, which its preamble and the how-to state.
+- **Action:** decided.
+
+## D-348 — The default partition never takes another bound table's name
+
+- **Touches:** D-346 (proposed).
+- **Found:** in review on #951. An outbox named `events_default` beside its delivery log
+  `events` gave the log's `DEFAULT` partition the outbox's name, so the install failed.
+- **Built:**
+  - Binding keeps `<name>_default` where no bound table holds it. Otherwise it gives the
+    relation D-346's hashed form (`src/forze_postgres/execution/deps/owned.py:124`).
+  - `BoundOwnedRelation.default_partition` carries the chosen name
+    (`src/forze_postgres/kernel/catalog/owned/shapes.py:390`).
+  - Bound tables holding both forms are refused as `postgres_owned_partition_name_taken`.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_store_schema.py:502`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-346's row, plus: the name is never one another bound table
+  holds.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 34 now holds seven entries, D-342 to D-348, all `spec-gap`.

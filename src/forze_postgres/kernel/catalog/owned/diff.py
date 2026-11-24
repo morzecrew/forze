@@ -46,8 +46,12 @@ from .shapes import BoundOwnedRelation, OwnedColumn, OwnedIndex, fills_rows
 PREAMBLE: Final = (
     "Shape only: data rewrites are announced as **Migration:** SQL in CHANGELOG.md.",
     "CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).",
+    (
+        "Stop at the first error (psql: -v ON_ERROR_STOP=1): a drop below a failed create "
+        "removes the index it replaces."
+    ),
 )
-"""The two lines every non-empty diff opens with."""
+"""The lines every non-empty diff opens with."""
 
 _KIND_NAMES: Final = {
     "view": "a view",

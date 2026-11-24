@@ -79,10 +79,11 @@ and [store](../reference/store-schema.md) schema pages.
     ```sql
     -- Shape only: data rewrites are announced as **Migration:** SQL in CHANGELOG.md.
     -- CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).
+    -- Stop at the first error (psql: -v ON_ERROR_STOP=1): a drop below a failed create removes the index it replaces.
 
     -- forze 0.18.0 · app.durable_run (PostgresDurableRunStore)
 
-    -- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status and name
+    -- recommended since 0.18.0: the recovery scan (claim_abandoned) filters on status, and on name for some functions
     CREATE INDEX CONCURRENTLY ON app.durable_run (status, name, created_at);
 
     -- retired in 0.18.0: replaced by (status, name, created_at)
@@ -107,13 +108,19 @@ and [store](../reference/store-schema.md) schema pages.
 
     Columns and indexes forze does not declare are never touched.
 
-5. Apply the file outside a transaction. `CREATE INDEX CONCURRENTLY` cannot run in one.
-   With Flyway, add a script config file beside the migration:
+5. Apply the file outside a transaction, `CREATE INDEX CONCURRENTLY` cannot run in one, and
+   with a tool that stops at the first error. A retired drop comes after the create that
+   replaces it, so a runner that carried on past a failed create would drop the index the
+   create was to replace. Flyway stops by default; add a script config file beside the
+   migration:
 
     ```properties
     # migrations/V42__forze_upgrade.sql.conf
     executeInTransaction=false
     ```
+
+    With `psql`, pass `-v ON_ERROR_STOP=1`. The next diff reads a failed create's invalid
+    index and prints its drop and recreate.
 
 6. Deploy the new forze version after the migration has run.
 

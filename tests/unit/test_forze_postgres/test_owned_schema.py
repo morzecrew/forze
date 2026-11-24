@@ -962,7 +962,9 @@ class TestDiff:
         ]
         assert text.startswith(
             "-- Shape only: data rewrites are announced as **Migration:** SQL in CHANGELOG.md.\n"
-            "-- CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).\n\n"
+            "-- CONCURRENTLY cannot run in a transaction (Flyway: executeInTransaction=false).\n"
+            "-- Stop at the first error (psql: -v ON_ERROR_STOP=1): a drop below a failed create "
+            "removes the index it replaces.\n\n"
             "-- forze 9.9.9 · bi.durable_run (PostgresDurableRunStore)\n"
         )
 
