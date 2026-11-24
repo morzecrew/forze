@@ -6,9 +6,11 @@ validation skips dynamic routes.
 """
 
 from collections.abc import Callable
-from typing import Any, final
+from typing import Protocol, final
 
 import attrs
+
+from forze.application.contracts.resolution import RelationSpec
 
 from ...adapters.durable.schema import (
     durable_run_shape,
@@ -36,26 +38,38 @@ class OwnedRelations:
 # ....................... #
 
 
+class _RoutedConfig(Protocol):
+    @property
+    def relation(self) -> RelationSpec: ...
+
+
+def _bind[C: _RoutedConfig](
+    route: str,
+    config: C | None,
+    shape: Callable[[C], OwnedRelationShape],
+    relations: OwnedRelations,
+) -> OwnedRelations:
+    """*relations* with *route* added, bound or skipped, or unchanged when it is not wired."""
+
+    if config is None:
+        return relations
+
+    relation = config.relation
+
+    if callable(relation):
+        return attrs.evolve(relations, skipped=(*relations.skipped, route))
+
+    schema, name = relation
+    bound = BoundOwnedRelation(route=route, schema=schema, name=name, shape=shape(config))
+
+    return attrs.evolve(relations, bound=(*relations.bound, bound))
+
+
 def owned_relations(deps: PostgresDepsModule) -> OwnedRelations:
     """Pair each owned relation *deps* configures with the shape its config declares."""
 
-    routes: tuple[tuple[str, Any, Callable[[Any], OwnedRelationShape]], ...] = (
-        ("durable_run", deps.durable_run, durable_run_shape),
-        ("durable_step", deps.durable_step, durable_step_shape),
-        ("durable_schedule", deps.durable_schedule, durable_schedule_shape),
-    )
-    bound: list[BoundOwnedRelation] = []
-    skipped: list[str] = []
+    relations = OwnedRelations(bound=(), skipped=())
+    relations = _bind("durable_run", deps.durable_run, durable_run_shape, relations)
+    relations = _bind("durable_step", deps.durable_step, durable_step_shape, relations)
 
-    for route, config, shape in routes:
-        if config is None:
-            continue
-
-        if callable(config.relation):
-            skipped.append(route)
-            continue
-
-        schema, name = config.relation
-        bound.append(BoundOwnedRelation(route=route, schema=schema, name=name, shape=shape(config)))
-
-    return OwnedRelations(bound=tuple(bound), skipped=tuple(skipped))
+    return _bind("durable_schedule", deps.durable_schedule, durable_schedule_shape, relations)
