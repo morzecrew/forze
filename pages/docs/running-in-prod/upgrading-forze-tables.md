@@ -162,8 +162,8 @@ PostgresLifecycleModule(client=pg, dsn="postgresql://…", owned_schema=owned_re
 Startup then runs the diff's comparison with the application's own connection, and executes
 nothing. It refuses to start, with `postgres_owned_schema_invalid` naming each table, when
 an adapter's reads or writes would fail: a table, required column or required index is
-missing, a column has another type family or refuses the `NULL` forze writes, or a key or
-unique index breaks the adapter's `ON CONFLICT`. It logs a warning for anything else, such as
+missing or still being built, a column has another type family or refuses the `NULL` forze
+writes, or a key or unique index breaks the adapter's `ON CONFLICT`. It logs a warning for anything else, such as
 a recommended index the migration has not built yet. The
 [Postgres integration](../integrations/postgres.md) page lists every case.
 

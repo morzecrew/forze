@@ -155,6 +155,7 @@ refuses to start, with `postgres_owned_schema_invalid` naming every table, when 
 cannot serve its adapter:
 
 - a missing table, or a missing required column or index;
+- a required index still being built, which `ON CONFLICT` cannot use yet;
 - a column of another type family;
 - a column that is `NOT NULL` where forze writes `NULL`;
 - a primary key on other columns, or a deferrable one;
@@ -164,7 +165,8 @@ cannot serve its adapter:
 
 It warns about everything else: an optional column or a recommended index missing, a column
 narrower than declared, or an index forze has retired. A relation on a per-tenant resolver is
-skipped with a warning.
+skipped with a warning. The step reads every table in one snapshot, and is skipped when the
+introspector needs a tenant that startup has not bound.
 
 Catalog warmup takes the search configs the deps module already holds. Pass its mappings, so a
 search added later is warmed too:
