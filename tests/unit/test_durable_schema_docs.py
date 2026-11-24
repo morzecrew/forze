@@ -1,9 +1,10 @@
-"""The durable schema page, the adapter docstrings and the integration tests' DDL agree.
+"""The durable schema page prints the render of forze's declarations.
 
-Applications copy their migrations from ``pages/docs/reference/durable-schema.md``, the
-adapters document the same schema on their classes, and the Postgres integration tests create
-it from ``tests/support/durable_schema.py``. Three copies drift unless something compares
-them: a column added to one and not the others would pass every test the adapters have.
+Applications copy their migrations from ``pages/docs/reference/durable-schema.md``. Its Postgres
+SQL must be what ``forze schema sql`` renders from the shapes the adapters declare, which is also
+what the integration tests create (``tests/support/durable_schema.py``), so the page cannot
+drift from the schema the adapters are tested against. The Mongo half has no declaration yet,
+so it is compared with the Mongo adapters' docstrings.
 """
 
 import re
@@ -22,12 +23,9 @@ from forze_postgres.adapters.durable import (
     PostgresDurableRunStore,
     PostgresDurableScheduleStore,
 )
-from tests.support.durable_schema import (
-    DURABLE_RUN_COALESCE_INDEX,
-    DURABLE_RUN_COLUMNS,
-    DURABLE_SCHEDULE_COLUMNS,
-    DURABLE_STEP_COLUMNS,
-)
+from forze_postgres.kernel.catalog.owned import BoundOwnedRelation
+from forze_postgres.kernel.catalog.owned.render import install_blocks
+from tests.support.durable_schema import DurableTable, durable_shape
 
 # ----------------------- #
 
@@ -35,38 +33,43 @@ _PAGE: Final[Path] = (
     Path(__file__).resolve().parents[2] / "pages" / "docs" / "reference" / "durable-schema.md"
 )
 
-_TABLE: Final[re.Pattern[str]] = re.compile(r"CREATE TABLE (\S+) \((.*?)\n\s*\);?", re.DOTALL)
-_INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE INDEX ON (\S+) (\(.*?\)(?: WHERE \w+)?);")
+_PAGE_TEXT: Final[str] = _PAGE.read_text(encoding="utf-8")
+_POSTGRES: Final[str] = _PAGE_TEXT.split("\n## Mongo\n")[0]
+
+_SQL_BLOCK: Final[re.Pattern[str]] = re.compile(r"```sql\n(.*?)```", re.DOTALL)
 _MONGO_INDEX: Final[re.Pattern[str]] = re.compile(r"db\.(\S+?)\.createIndex\(([^()]*)\)")
-_UNIQUE_INDEX: Final[re.Pattern[str]] = re.compile(
-    r"CREATE UNIQUE INDEX (?:CONCURRENTLY )?ON (\S+) (.*?);", re.DOTALL
-)
 
 
 def _words(text: str) -> str:
     return " ".join(text.split())
 
 
-def _tables(text: str) -> dict[str, str]:
-    return {name: _words(body) for name, body in _TABLE.findall(text)}
+def _statements(text: str) -> list[str]:
+    """Every statement in *text*'s SQL blocks, comments dropped and whitespace folded."""
+
+    body = re.sub(r"--[^\n]*", "", "\n".join(_SQL_BLOCK.findall(text)))
+
+    return [_words(statement) for statement in body.split(";") if statement.strip()]
 
 
-def _indexes(text: str) -> dict[str, list[str]]:
-    found: dict[str, list[str]] = {}
+def _rendered() -> list[str]:
+    out: list[str] = []
+    tables: tuple[tuple[DurableTable, str], ...] = (
+        ("run", "durable_run"),
+        ("step", "durable_step"),
+        ("schedule", "durable_schedule"),
+    )
 
-    for name, columns in _INDEX.findall(text):
-        found.setdefault(name, []).append(_words(columns))
+    for kind, name in tables:
+        relation = BoundOwnedRelation(
+            route=name, schema="public", name=name, shape=durable_shape(kind)
+        )
 
-    return found
+        for block in install_blocks(relation):
+            assert block.statement is not None
+            out.append(_words(block.statement.removesuffix(";")))
 
-
-def _unique_indexes(text: str) -> dict[str, list[str]]:
-    found: dict[str, list[str]] = {}
-
-    for name, definition in _UNIQUE_INDEX.findall(text):
-        found.setdefault(name, []).append(_words(definition))
-
-    return found
+    return out
 
 
 def _mongo_indexes(text: str) -> dict[str, list[str]]:
@@ -83,56 +86,24 @@ def _doc(adapter: type) -> str:
     return adapter.__doc__
 
 
-_PAGE_TEXT: Final[str] = _PAGE.read_text(encoding="utf-8")
-
-_SOURCES: Final[dict[str, str]] = {
-    "page": _PAGE_TEXT,
-    **{
-        adapter.__name__: _doc(adapter)
-        for adapter in (
-            PostgresDurableRunStore,
-            PostgresDurableFunctionStepAdapter,
-            PostgresDurableScheduleStore,
-            MongoDurableRunStore,
-            MongoDurableFunctionStepAdapter,
-            MongoDurableScheduleStore,
-        )
-    },
-}
-"""Every text the comparisons below read."""
-
 # ....................... #
 
 
-@pytest.mark.parametrize(
-    ("relation", "adapter", "columns"),
-    [
-        ("public.durable_run", PostgresDurableRunStore, DURABLE_RUN_COLUMNS),
-        ("public.durable_step", PostgresDurableFunctionStepAdapter, DURABLE_STEP_COLUMNS),
-        ("public.durable_schedule", PostgresDurableScheduleStore, DURABLE_SCHEDULE_COLUMNS),
-    ],
-    ids=["run", "step", "schedule"],
-)
-def test_each_postgres_table_reads_the_same_on_the_page_the_adapter_and_the_tests(
-    relation: str, adapter: type, columns: str
-) -> None:
-    page = _tables(_PAGE_TEXT)[relation]
-
-    assert _tables(_doc(adapter))["<relation>"] == page
-    assert _words(columns) == page
+def test_the_page_prints_the_render_of_the_postgres_declarations() -> None:
+    assert _statements(_POSTGRES) == _rendered()
 
 
 @pytest.mark.parametrize(
-    ("relation", "adapter"),
-    [
-        ("public.durable_run", PostgresDurableRunStore),
-        ("public.durable_schedule", PostgresDurableScheduleStore),
-    ],
+    "adapter",
+    [PostgresDurableRunStore, PostgresDurableFunctionStepAdapter, PostgresDurableScheduleStore],
 )
-def test_the_page_recommends_the_postgres_indexes_the_adapter_documents(
-    relation: str, adapter: type
+def test_the_postgres_adapters_point_at_their_declaration_instead_of_copying_it(
+    adapter: type,
 ) -> None:
-    assert _indexes(_PAGE_TEXT)[relation] == _indexes(_doc(adapter))["<relation>"]
+    doc = _doc(adapter)
+
+    assert "CREATE" not in doc
+    assert "forze_postgres.adapters.durable.schema." in doc
 
 
 @pytest.mark.parametrize(
@@ -149,32 +120,19 @@ def test_the_page_lists_the_mongo_indexes_the_adapter_documents(
     assert _mongo_indexes(_PAGE_TEXT)[collection] == _mongo_indexes(_doc(adapter))["<collection>"]
 
 
-def test_the_page_documents_every_postgres_table_it_names() -> None:
-    assert set(_tables(_PAGE_TEXT)) == {
-        "public.durable_run",
-        "public.durable_step",
-        "public.durable_schedule",
-    }
-    assert set(_indexes(_PAGE_TEXT)) == {"public.durable_run", "public.durable_schedule"}
+def test_the_page_documents_every_mongo_collection_it_names() -> None:
     assert set(_mongo_indexes(_PAGE_TEXT)) == {"durable_run", "durable_step", "durable_schedule"}
 
 
-@pytest.mark.parametrize("source", sorted(_SOURCES))
-def test_every_statement_in_every_source_is_one_the_comparisons_read(source: str) -> None:
-    # A statement the patterns cannot read (named, CONCURRENTLY, split over lines) would
-    # otherwise drop out of both sides of a comparison and pass unseen.
-    text = _SOURCES[source]
+@pytest.mark.parametrize(
+    "adapter", [MongoDurableRunStore, MongoDurableFunctionStepAdapter, MongoDurableScheduleStore]
+)
+def test_every_mongo_index_in_a_docstring_is_one_the_comparison_reads(adapter: type) -> None:
+    # An index the pattern cannot read would drop out of both sides and pass unseen.
+    text = _doc(adapter)
 
-    assert text.count("CREATE TABLE") == len(_TABLE.findall(text))
-    assert text.count("CREATE INDEX") == len(_INDEX.findall(text))
-    assert text.count("CREATE UNIQUE INDEX") == len(_UNIQUE_INDEX.findall(text))
     assert text.count("createIndex") == len(_MONGO_INDEX.findall(text))
 
 
-def test_the_coalesce_index_reads_the_same_on_the_page_the_adapter_and_the_tests() -> None:
-    page = _unique_indexes(_PAGE_TEXT)["public.durable_run"]
-    adapter = _unique_indexes(_doc(PostgresDurableRunStore))["<relation>"]
-    tests = _unique_indexes(DURABLE_RUN_COALESCE_INDEX + ";")["{table}"]
-
-    assert adapter == tests
-    assert page == adapter * 2  # the table's schema, then its migration
+def test_every_mongo_index_on_the_page_is_one_the_comparison_reads() -> None:
+    assert _PAGE_TEXT.count("createIndex") == len(_MONGO_INDEX.findall(_PAGE_TEXT))

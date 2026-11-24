@@ -750,6 +750,8 @@ media_type  # unused variable (src/forze_fastapi/realtime/sse.py:139) — read b
 metrics_union  # unused function (src/forze_fastapi/routes/health.py:229) — a route handler, registered by its decorator
 _.writer_step  # unused method (src/forze_fastapi/routes/_snapshots.py:374) — public API, called by applications
 compare_command  # unused function (src/forze_cli/load.py:124) — a Typer command callback
+sql_command  # unused function (src/forze_cli/schema.py:125) — a Typer command callback
+diff_command  # unused function (src/forze_cli/schema.py:217) — a Typer command callback
 _._check_margin  # unused method (src/forze_load/auth.py:129) — an attrs validator
 _._check_path  # unused method (src/forze_load/auth.py:152) — an attrs validator
 _.connection_created  # unused method (src/forze_mongo/kernel/client/client.py:154) — a pymongo ConnectionPoolListener callback

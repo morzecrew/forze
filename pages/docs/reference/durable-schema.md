@@ -1,14 +1,20 @@
 ---
 title: Durable execution schema
 icon: lucide/table
-summary: The application-owned durable run, step and schedule tables — columns, indexes and migrations, for Postgres and Mongo
+summary: The application-owned durable run, step and schedule tables — columns and indexes, for Postgres and Mongo
 ---
 
-The durable-execution tables are application-owned: you create and migrate them. This is
-the schema the run store, the step journal and the scheduler read and write. The wiring is
-in [Durable execution](../data-events/durable-execution.md).
+The durable-execution tables are application-owned: you apply their DDL with your
+migration tool. This is the schema the run store, the step journal and the scheduler read
+and write. The wiring is in [Durable execution](../data-events/durable-execution.md).
 
 ## Postgres
+
+Forze declares each Postgres table once, in code. `forze schema sql` prints the statements
+below for the relations your `PostgresDepsModule` names, and `forze schema diff` prints
+what an existing database is missing. [Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md)
+walks through both. The SQL on this page is that render, for a tenant-aware table named
+`public.durable_*`, and a test keeps it so.
 
 ### Runs
 
@@ -32,16 +38,18 @@ CREATE TABLE public.durable_run (
     updated_at          timestamptz NOT NULL,
     cancel_requested_at timestamptz,
     cancel_refused_at   timestamptz,
-    PRIMARY KEY (run_id),
-    UNIQUE (idempotency_key)
+    PRIMARY KEY (run_id)
 );
 
+CREATE UNIQUE INDEX ON public.durable_run (idempotency_key);
 CREATE UNIQUE INDEX ON public.durable_run (coalesce_key) WHERE status = 'pending' AND attempts = 0;
 ```
 
-- `UNIQUE (idempotency_key)` makes two submits of one key converge on a single run.
+- The unique index on `idempotency_key` makes two submits of one key converge on a single
+  run. A table created with a `UNIQUE (idempotency_key)` constraint has the same index, and
+  `forze schema diff` reads it as present.
 - The partial unique index on `coalesce_key` admits one unclaimed `pending` run per key,
-  which `enqueue(coalesce_key=...)` joins.
+  which `enqueue(coalesce_key=...)` joins. Only that call reads the column.
 - Both keys are stored as `{tenant_id}:{key}`, or `:{key}` untagged, so no key reaches
   another tenant's run. Records return the key as the caller passed it.
 - `attempts` is the fence token: each claim advances it under a row lock, and a terminal
@@ -69,14 +77,15 @@ CREATE INDEX ON public.durable_run (tenant_id, created_at DESC, run_id DESC);
 ```
 
 Without them, the recovery scan, the purge and the listing scan and sort the whole table
-as it grows.
+as it grows. A table that is not tenant-aware, or that lives in a per-tenant schema, needs
+no `tenant_id` variant.
 
-The two recovery-scan indexes replace `(status, created_at)` and
-`(tenant_id, status, created_at)`. A scan of every function costs the same on either:
-neither lets the claim read in `created_at` order, since it selects `pending` and
+The two recovery-scan indexes replaced `(status, created_at)` and
+`(tenant_id, status, created_at)` in 0.18.0. A scan of every function costs the same on
+either: neither lets the claim read in `created_at` order, since it selects `pending` and
 `running` rows and sorts them. On the old ones, a worker that claims only some functions
-would read every pending run of the others on each scan. On an existing table, create the new indexes (`CONCURRENTLY` on a live one)
-before such a worker starts, then drop the old ones.
+would read every pending run of the others on each scan. `forze schema diff` creates the
+new indexes before it drops the old ones, under whatever names your database gave them.
 
 ### Steps
 
@@ -129,35 +138,12 @@ CREATE INDEX ON public.durable_schedule (next_fire_at) WHERE enabled;
 CREATE INDEX ON public.durable_schedule (tenant_id, next_fire_at) WHERE enabled;
 ```
 
-### Migrations
-
-**Purging runs reads `updated_at`.** The column exists already; where you run the
-retention purge, add the `(status, updated_at)` index recommended above, built
-`CONCURRENTLY` so the table stays writable meanwhile.
-
-**Coalescing enqueue needs a column and an index.** Only `enqueue(coalesce_key=...)` reads
-them, so add both before the first such call; nothing else changes:
-
-```sql
-ALTER TABLE public.durable_run ADD COLUMN coalesce_key text;
-CREATE UNIQUE INDEX CONCURRENTLY ON public.durable_run (coalesce_key)
-    WHERE status = 'pending' AND attempts = 0;
-```
-
-**0.6.0 added run cancellation.** Both cancel columns are nullable with no default, so an
-existing `durable_run` table migrates with no rewrite:
-
-```sql
-ALTER TABLE public.durable_run
-    ADD COLUMN cancel_requested_at timestamptz,
-    ADD COLUMN cancel_refused_at   timestamptz;
-```
-
 !!! warning "Migrate before you deploy"
-    Starting a run, the recovery scan and every read return both columns, so against the
-    old schema each one raises `UndefinedColumn` and no body starts. A new enqueue still
-    inserts, so its run waits `pending` until the migration lands and the recovery scan
-    claims it; a re-submit of an existing key fails like a read.
+    The run store names every column but `coalesce_key` on its common paths. Against a
+    table missing one, starting a run, the recovery scan or a read can raise
+    `UndefinedColumn`, and no body starts. Apply `forze schema diff`'s output before the
+    forze version that needs it reaches production. Only `enqueue(coalesce_key=...)` names
+    `coalesce_key`, so a table without it serves every other call.
 
 ## Mongo
 

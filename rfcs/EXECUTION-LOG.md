@@ -8212,3 +8212,254 @@ revoke and its membership removal leaves a role pre-staged for a non-member. Row
 - **Action:** decided.
 
 **Drift count: 0.** Unit 30 now holds four entries, D-303 to D-306, all `spec-gap`.
+
+# Unit 31 · RFC 0080 P1 — `forze schema` for the durable tables
+
+Branch `feat/postgres-owned-schema`, cut from `main` after #948. RFC 0080 P1 per §12: the §5.1
+declarations of `durable_run`, `durable_step` and `durable_schedule`, `forze schema sql` (§5.2)
+and `forze schema diff` with `--check` (§5.3), the introspector's index listing, the durable
+tests created from the render, the page test, the how-to and the CONTRIBUTING rule. Rows 1, 2,
+3 and 16 (`LOCKED`) hold as written, and D-318 closes them out. Rows 5 to 9 and 15 hold as
+written. Rows 10 and 12 are decided by D-307 and D-308. Rows 4 and 17 are departed from by
+D-315 and D-316. The plan listed rows 10 and 12 and the unlisted decisions D-309 to D-314 before
+any code was written, and the maintainer accepted it.
+
+**Drift count: 0.** Twelve entries, D-307 to D-318: ten `spec-gap` (D-307 and D-308 settle the
+`OPEN` rows, D-309 to D-314 fill unlisted gaps, D-315 departs from `ASSUMED` row 4, and D-317
+fills cases the §5.3 table leaves out), one `discovery` (D-316, departing from row 17) and one
+close-out.
+
+## D-307 — Predicates and keys are matched as normalized text
+
+- **Touches:** row 10 (`OPEN`), §5.3, §9 ("A shape match that misses").
+- **RFC said:** match a declared predicate or expression against the catalog through a rendered
+  scratch index or through normalized text, settled by the integration test over every declared
+  predicate.
+- **Built:** normalized text (`src/forze_postgres/kernel/catalog/owned/matching.py:206`). Casts
+  are dropped, string literals kept, whitespace removed, keywords and bare names compared
+  case-insensitively, and `AND`/`OR` parsed into a tree, so wrapping parentheses and nesting do
+  not matter but grouping does. Keys compare as an expression plus the `indoption` direction and
+  nulls order (`:219`, `:246`).
+- **Why:** a scratch index needs `CREATE`, which both the read-only role (row 7) and the `READ
+  ONLY` transaction refuse. A miss in either direction is safe: a declared index read as absent
+  is printed again, and a retired one read as different is refused.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:126` matches
+  every declared predicate against what Postgres 18 deparses, and `:116` reads a fresh render
+  back in sync. `tests/unit/test_forze_postgres/test_owned_schema.py:281` keeps spellings that
+  differ in meaning apart.
+- **Class:** `spec-gap`. Row 10 left it to execution.
+- **Proposed row (RFC 0080):** `ASSUMED`. Declared predicates and keys are matched against the
+  catalog as normalized text, with `AND`/`OR` compared as a tree.
+- **Action:** decided.
+
+## D-308 — The diff exits 0, 10 or 11, and keeps RFC 0077's codes for everything else
+
+- **Touches:** row 12 (`OPEN`), §5.3 ("Exit codes").
+- **RFC said:** pick the numbers for in-sync, delta and refusal, aligned with RFC 0077's
+  contract.
+- **Built:** `0` in sync, `10` statements printed, `11` a refusal or a warning, which wins over
+  `10`. RFC 0077's `1`, `2` and `78` keep their meanings, and an unreachable database is `75`,
+  since the diff only reads (`src/forze_cli/schema.py:1-19`, `:197`). `78` also covers an unset
+  `FORZE_SCHEMA_DSN`, a DSN that does not parse (reported without its text, which may hold the
+  password), a role without access, and a missing `postgres` extra
+  (`src/forze_cli/_compat.py`). A connection is tried once before the pool opens, so a refused
+  one fails at once with `75` rather than as a pool timeout (`src/forze_cli/schema.py:172`). A
+  note, such as a retired column still present, changes no code.
+- **Why:** `10` and `11` sit outside every code RFC 0077 assigns, so a CI job tells a migration
+  gap from a crash. A warning counts with refusals because it marks state the diff could not
+  decide on.
+- **Evidence:** `tests/unit/test_forze_cli/test_schema_command.py:119`, `:129`, `:137`, `:157`;
+  `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:423` end to end.
+- **Class:** `spec-gap`. Row 12 left it to execution.
+- **Proposed row (RFC 0080):** `ASSUMED`. `forze schema diff` exits `0` in sync, `10` on a
+  delta and `11` on a refusal or warning; `1`, `2`, `75` and `78` keep RFC 0077's meanings.
+- **Action:** decided.
+
+## D-309 — The declarations are public API, and `owned_relations` reports what it skips
+
+- **Touches:** §5.1 (`owned_relations(deps) -> tuple[BoundOwnedRelation, ...]`); unlisted.
+- **Found:** the RFC names the types and the walker but not where they are exported, and its
+  sketched signature leaves the skipped tenant-scoped relations nowhere for the CLI to report.
+- **Built:** `OwnedColumn`, `OwnedIndex`, `Retired`, `OwnedRelationShape`, `BoundOwnedRelation`,
+  `OwnedRelations` and `owned_relations` are exported from `forze_postgres`
+  (`src/forze_postgres/__init__.py`). `owned_relations` returns `OwnedRelations(bound,
+  skipped)` (`src/forze_postgres/execution/deps/owned.py:26`, `:39`), and both commands print
+  each skipped route as a warning on stderr.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:245`;
+  `tests/unit/test_forze_cli/test_schema_command.py:83`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. The declaration types and `owned_relations` are
+  exported from `forze_postgres`; `owned_relations` returns the bound relations and the
+  skipped routes.
+- **Action:** decided.
+
+## D-310 — Identifiers are quoted by forze's own `quote_ident`, checked against the server's
+
+- **Touches:** row 16 (`LOCKED`), §5.3 ("`psycopg.sql.Identifier`, or the server's
+  `quote_ident()`"); unlisted.
+- **Found:** `forze schema sql` reads no database, so the server's `quote_ident()` is not there
+  to call, and `psycopg.sql.Identifier` quotes every name, which breaks the bare names §5.3
+  prints.
+- **Built:** `quote_ident` follows Postgres's rule: bare for lower-case letters, digits and
+  underscores that are not a reserved word, double-quoted with inner quotes doubled otherwise.
+  The reserved words are Postgres 18's `pg_get_keywords()` rows whose `catcode` is not `U`, a
+  superset of 16's and equal to 17's
+  (`src/forze_postgres/kernel/catalog/owned/quoting.py:19`, `:46`). Comments replace every
+  control character and line separator, not only CR and LF (`:73`). Row 16 holds.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:397`
+  compares it with the server over every keyword, and `:409` round-trips hostile schema and
+  table names through a real server. `tests/unit/test_forze_postgres/test_owned_schema.py:335`
+  parses a diff over hostile catalog names as exactly the statements meant. Returning names
+  bare fails eight tests.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Forze quotes identifiers with its own copy of
+  `quote_ident`'s rule and keyword list, tested against the server's.
+- **Action:** decided.
+
+## D-311 — A tenant-aware table adds the `tenant_id` variants and keeps the plain indexes
+
+- **Touches:** §5.1 ("a tenant-tagged table leads its scan indexes with `tenant_id`"); unlisted.
+- **Found:** "leads its scan indexes" reads as replacing them, but the unbound recovery scan
+  reads the plain ones on a tagged table, and §5.3's bi example prints both.
+- **Built:** a tenant-aware config on a static relation adds the `tenant_id`-leading variants
+  of the recovery scan, the listing and the due scan; the plain ones stay. Retired shapes are
+  declared whatever the config (`src/forze_postgres/adapters/durable/schema.py:119`, `:167`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:230`, `:242`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. A tenant-aware table's shape adds the
+  `tenant_id`-leading scan indexes beside the plain ones.
+- **Action:** decided.
+
+## D-312 — `UNIQUE (idempotency_key)` is a declared unique index
+
+- **Touches:** §5.1 (`OwnedRelationShape` has a primary key and indexes, no table constraints);
+  unlisted.
+- **Found:** the run table's DDL carried `UNIQUE (idempotency_key)` as a table constraint,
+  which the shape has no field for.
+- **Built:** a required unique index on `(idempotency_key)`, rendered as its own
+  `CREATE UNIQUE INDEX` (`src/forze_postgres/adapters/durable/schema.py`). A table created with
+  the constraint has a matching index, so only the fresh-install SQL on the page changes.
+  `ON CONFLICT (idempotency_key)` infers either.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:485`; the 0.24.1 snapshot,
+  created with the constraint, reads in sync
+  (`tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:155`).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. A unique table constraint is declared as a required
+  unique index, which an existing constraint's index matches by shape.
+- **Action:** decided.
+
+## D-313 — The first snapshots are transcribed from the page at 0.17.0 and 0.24.1
+
+- **Touches:** §6 ("Each release snapshots the rendered `sql` output"); unlisted.
+- **Found:** no release before this one has a declaration to render.
+- **Built:** `tests/support/schema_snapshots/0.17.0.sql` and `0.24.1.sql` hold the schema
+  statements of `pages/docs/reference/durable-schema.md` at those tags, migrations left out. The
+  release process in `CONTRIBUTING.md` gains the command that adds each later snapshot from the
+  render.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:155`, `:171`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Snapshots before this release are transcribed from the
+  reference page at each tag; each release then adds its own from `forze schema sql`.
+- **Action:** decided.
+
+## D-314 — Column types compare by family, through a map of DDL names
+
+- **Touches:** §5.3 ("Column type family differs"), §3 (`validate_schema_types.py:125`);
+  unlisted.
+- **Found:** the existing family helper maps Pydantic annotations to Postgres types, not one
+  DDL type name to another.
+- **Built:** both sides go through `normalize_pg_type` without modifiers, then a family map:
+  `text`, `varchar`, `char` and `citext` are one, and so are the integer widths
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:319`, `:333`).
+- **Why:** §4 leaves `citext` to the application, and a wider integer serves the adapter the
+  same.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:417`, `:433`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Column types compare by family: the text types are
+  one, the integer widths are one, every other type is its own.
+- **Action:** decided.
+
+## D-315 — A match also requires a b-tree with default operator classes
+
+- **Touches:** row 4 (`ASSUMED`), §5.3 ("A retired match needs all four conditions").
+- **Found:** the catalog tells apart more than the four conditions name. An index with the
+  retired keys may have `INCLUDE` columns or a non-default operator class, and a declared
+  unique index may be `NULLS NOT DISTINCT`, which would refuse a second run without a key.
+- **Built:** shapes match only on b-tree indexes. A retired match also has no `INCLUDE` columns
+  and default operator classes, or it is refused like the other four failures
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:292`). A declared index matches with
+  default operator classes and nulls distinct, and `INCLUDE` columns do not count against it
+  (`:274`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:571`, `:676`;
+  `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:210`.
+- **Class:** `spec-gap`. The catalog columns were readable before code.
+- **Proposed row (RFC 0080):** `ASSUMED`. Row 4, plus: a retired match is a b-tree with no
+  `INCLUDE` columns and default operator classes, and a declared index matches only a b-tree
+  with default operator classes and nulls distinct.
+- **Action:** departed.
+
+## D-316 — A build the role cannot see counts as one on the table
+
+- **Touches:** row 17 (`ASSUMED`), §9 ("A concurrent index build read as a failed one").
+- **Found:** `pg_stat_progress_create_index` shows another role's build with a `NULL` table
+  unless the reader has the privileges of `pg_read_all_stats`. Under the read-only role row 7
+  requires, the check would never see the migration role's build.
+- **Built:** a build in the database whose table reads as `NULL` counts as possibly on the
+  table, so the diff warns and prints nothing for an invalid index while any such build runs
+  (`src/forze_postgres/kernel/catalog/introspect/introspector.py:802`). The how-to offers
+  `pg_read_all_stats` and says what it also exposes. An invalid index beside a valid match is
+  dropped without a create.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:263` holds a
+  build in its wait for writers and runs the diff as a superuser and as the read-only role: both
+  warn. `tests/unit/test_forze_postgres/test_owned_schema.py:511`.
+- **Class:** `discovery`.
+- **Proposed row (RFC 0080):** `ASSUMED`. Row 17, plus: a build whose table the role cannot see
+  counts as one on every table, and an invalid index beside a valid match is only dropped.
+- **Action:** departed.
+
+## D-317 — The cases the §5.3 table leaves out
+
+- **Touches:** §5.3; unlisted.
+- **Found:** the table does not say how a primary key compares, what a view or a partitioned
+  table under the name gets, whether a new table's indexes are built `CONCURRENTLY`, or how many
+  snapshots one diff reads.
+- **Built:**
+  - The primary key compares as a set of columns, since `ON CONFLICT` infers either order.
+  - A view, a partitioned table or any other relation but a plain table gets a refusal, and
+    nothing else is compared. A partitioned table takes no `CREATE INDEX CONCURRENTLY`, so a
+    printed statement would fail.
+  - A missing table's indexes are created without `CONCURRENTLY`, as `sql` prints them, since
+    nothing reads the table yet.
+  - Every relation is read in one `READ ONLY`, `REPEATABLE READ` transaction
+    (`src/forze_cli/schema.py`).
+
+  (`src/forze_postgres/kernel/catalog/owned/diff.py:280`.)
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:367`, `:375`, `:604`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. The primary key compares as a set, anything but a
+  plain table is refused, a new table's indexes are built plainly, and one diff reads one
+  snapshot.
+- **Action:** decided.
+
+## D-318 — Close-out: no DDL runs, the declaration is the copy, the delta is live, names are quoted
+
+- **Touches:** rows 1, 2, 3 and 16 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:**
+  - **Row 1.** Both commands only print. `diff` reads in a `READ ONLY` transaction and
+    executes nothing it prints (`src/forze_cli/schema.py`), and the how-to and `--help` require
+    a read-only role.
+  - **Row 2.** The durable DDL lives in its declaration
+    (`src/forze_postgres/adapters/durable/schema.py`); the adapter docstrings point at it, and
+    `CONTRIBUTING.md` → Changelog requires a shape change to edit it in the same PR.
+  - **Row 3.** The delta is computed from `read_catalog`, never from fixed text
+    (`src/forze_postgres/kernel/catalog/owned/diff.py:280`).
+  - **Row 16.** See D-310.
+- **Evidence:**
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:358`, `:373`: the role
+    reads what a superuser reads, and cannot write after `SET TRANSACTION READ WRITE`.
+  - `tests/unit/test_durable_schema_docs.py`: the page prints the render, and the Postgres
+    adapters carry no `CREATE`.
+  - `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:184`: an index named by
+    hand is dropped under that name.
+- **Action:** decided.

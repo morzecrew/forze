@@ -120,73 +120,11 @@ class PostgresDurableRunStore(
     match the tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
-    The table is provided by the application, with its migrations in
-    ``pages/docs/reference/durable-schema.md``; expected schema::
-
-        CREATE TABLE <relation> (
-            run_id              text        NOT NULL,
-            name                text        NOT NULL,
-            status              text        NOT NULL,
-            idempotency_key     text,
-            coalesce_key        text,
-            input               jsonb,
-            output              jsonb,
-            error               text,
-            tenant_id           uuid,
-            attempts            integer     NOT NULL DEFAULT 0,
-            leased_until        timestamptz,
-            available_at        timestamptz,
-            created_at          timestamptz NOT NULL,
-            updated_at          timestamptz NOT NULL,
-            cancel_requested_at timestamptz,
-            cancel_refused_at   timestamptz,
-            PRIMARY KEY (run_id),
-            UNIQUE (idempotency_key)
-        );
-
-        -- Needed by enqueue(coalesce_key=...): one unclaimed pending run per key. An
-        -- existing table adds both before that call is used; nothing else reads the column:
-        --   ALTER TABLE <relation> ADD COLUMN coalesce_key text;
-        CREATE UNIQUE INDEX ON <relation> (coalesce_key) WHERE status = 'pending' AND attempts = 0;
-
-        -- Both cancel columns are nullable with no default, so an existing deployment
-        -- migrates with two plain ADD COLUMNs and no table rewrite:
-        --   ALTER TABLE <relation> ADD COLUMN cancel_requested_at timestamptz,
-        --                          ADD COLUMN cancel_refused_at   timestamptz;
-        --
-        -- RUN THE MIGRATION BEFORE DEPLOYING THIS CODE. `begin`, the recovery scan
-        -- (`claim_abandoned`) and every read return both columns, so against the old schema
-        -- each one raises `UndefinedColumn` and no body starts. A new `enqueue` still
-        -- inserts, so its run waits `pending` until the migration lands and the recovery
-        -- scan claims it; a re-submit of an existing key fails like a read.
-
-        -- Recommended: back the recovery scan (claim_abandoned), which filters on
-        -- status/available_at/leased_until (and `name` for a worker claiming only some
-        -- functions) and orders by created_at under FOR UPDATE SKIP LOCKED. Without it the
-        -- claim seq-scans + sorts under lock as the table grows, and a worker claiming only
-        -- some functions reads every pending run of the others. It replaces the earlier
-        -- (status, created_at); create it first. Neither lets the claim read in created_at
-        -- order: its OR over pending and running rows sorts what it selects, so a scan of
-        -- every function costs the same on either.
-        CREATE INDEX ON <relation> (status, name, created_at);
-        -- On a shared tagged table claim_abandoned also filters `tenant_id = …` for a bound
-        -- tenant, so lead the index with tenant_id to skip other tenants' rows (it replaces
-        -- the earlier (tenant_id, status, created_at)):
-        CREATE INDEX ON <relation> (tenant_id, status, name, created_at);
-
-        -- Recommended where runs are purged: purge_finished filters on status and
-        -- updated_at (when the run landed) and deletes the oldest landings first.
-        CREATE INDEX ON <relation> (status, updated_at);
-
-        -- Recommended: back the admin listing (list_runs), which orders newest-first by
-        -- (created_at DESC, run_id DESC) and keyset-seeks on (created_at, run_id). Without a
-        -- matching index it seq-scans + sorts the whole relation. On a namespace (per-tenant)
-        -- table the ordering columns suffice:
-        CREATE INDEX ON <relation> (created_at DESC, run_id DESC);
-        -- On a shared tagged table list_runs filters `tenant_id = …` for a bound tenant, so
-        -- lead with tenant_id (an optional `status`/`name` filter is an extra residual
-        -- predicate on top of this keyset order):
-        CREATE INDEX ON <relation> (tenant_id, created_at DESC, run_id DESC);
+    The table is provided by the application. Its shape is declared once, by
+    :func:`~forze_postgres.adapters.durable.schema.durable_run_shape`. ``forze schema sql``
+    prints its DDL, ``forze schema diff`` prints what an existing table is missing,
+    and ``pages/docs/reference/durable-schema.md`` shows the render with the reason
+    for each index.
 
     ``attempts`` doubles as the fence token (advances under a row lock on each claim);
     ``available_at`` delays when a ``PENDING`` run may be claimed. Concurrent scanners are

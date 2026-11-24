@@ -168,7 +168,9 @@ PostgresLifecycleModule(
 
 - **You own the schema.** Forze *introspects* existing relations; it never
   creates application tables. Provision read / write / history / search relations
-  (and extensions) with your migration tool first.
+  (and extensions) with your migration tool first. For the durable tables, `forze schema`
+  prints the SQL and you apply it
+  ([Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md)).
 - **Values a column rounds or pads.** An update compares a value as its column stores it, so
   resending an unchanged one writes nothing: `timestamp(p)`, `timestamptz(p)`, `time(p)` and
   `timetz(p)` round to their precision, `numeric(p,s)` to its scale, `real` to single precision,

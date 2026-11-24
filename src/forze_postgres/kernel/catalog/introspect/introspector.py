@@ -22,6 +22,7 @@ from forze_postgres.kernel.client import PostgresClientPort
 from .types import (
     ExclusionConstraintInfo,
     ForeignKeyInfo,
+    IndexShapeInfo,
     PostgresColumnTypes,
     PostgresIndexEngine,
     PostgresIndexInfo,
@@ -222,12 +223,11 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def _fetch_relation_kind(
+    async def _read_relation_kind(
         self,
         schema: str,
         relation: str,
-        key: CacheKey,
-    ) -> PostgresRelationKind:
+    ) -> PostgresRelationKind | None:
         stmt = sql.SQL(
             """
             SELECT c.relkind
@@ -242,29 +242,56 @@ class PostgresIntrospector:
         rk = await self.client.fetch_value(stmt, [schema, relation], default=None)
 
         if rk is None:
-            raise exc.internal(f"Relation not found: {schema}.{relation}")
-
-        kind: PostgresRelationKind = "other"
+            return None
 
         match str(rk):
             case "r":
-                kind = "table"
+                return "table"
 
             case "v":
-                kind = "view"
+                return "view"
 
             case "m":
-                kind = "materialized_view"
+                return "materialized_view"
 
             case "p":
-                kind = "partitioned_table"
+                return "partitioned_table"
 
             case _:
-                pass
+                return "other"
+
+    # ....................... #
+
+    async def _fetch_relation_kind(
+        self,
+        schema: str,
+        relation: str,
+        key: CacheKey,
+    ) -> PostgresRelationKind:
+        kind = await self._read_relation_kind(schema, relation)
+
+        if kind is None:
+            raise exc.internal(f"Relation not found: {schema}.{relation}")
 
         self.__relation_lane.store(key, kind)
 
         return kind
+
+    # ....................... #
+
+    async def find_relation(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> PostgresRelationKind | None:
+        """The kind of *relation*, or ``None`` when it does not exist.
+
+        Uncached, unlike :meth:`get_relation`: a missing relation is an answer here rather
+        than an error, and a schema diff asks once per relation.
+        """
+
+        return await self._read_relation_kind(self.__normalize_schema(schema), relation)
 
     # ....................... #
 
@@ -667,6 +694,152 @@ class PostgresIntrospector:
             )
 
         return tuple(found)
+
+    # ....................... #
+
+    async def indexes(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> tuple[IndexShapeInfo, ...]:
+        """Every index on *relation*, valid or not, ordered by name.
+
+        The listing a schema diff needs, where :meth:`unique_indexes` keeps only the indexes
+        that enforce writes today: a failed ``CONCURRENTLY`` build has to be found to be
+        rebuilt, and a non-unique scan index has to be found to be dropped when it is retired.
+
+        Uncached, like :meth:`unique_indexes`.
+        """
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            WITH rel AS (
+              SELECT c.oid
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = {schema}
+                AND c.relname = {relation}
+              LIMIT 1
+            )
+            SELECT
+              ic.relname AS name,
+              n.nspname AS schema,
+              ARRAY(
+                SELECT pg_get_indexdef(i.indexrelid, k, true)
+                FROM generate_series(1, i.indnkeyatts) AS k
+                ORDER BY k
+              ) AS keys,
+              ARRAY(
+                SELECT i.indoption[k - 1]::int
+                FROM generate_series(1, i.indnkeyatts) AS k
+                ORDER BY k
+              ) AS options,
+              (i.indnatts - i.indnkeyatts) AS included,
+              am.amname AS method,
+              i.indisunique AS is_unique,
+              i.indisprimary AS is_primary,
+              i.indnullsnotdistinct AS nulls_not_distinct,
+              pg_get_expr(i.indpred, i.indrelid) AS predicate,
+              i.indisvalid AS is_valid,
+              EXISTS (
+                SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid
+              ) AS backs_constraint,
+              NOT EXISTS (
+                SELECT 1
+                FROM unnest(i.indclass::oid[]) AS o(opclass)
+                JOIN pg_opclass oc ON oc.oid = o.opclass
+                WHERE NOT oc.opcdefault
+              ) AS default_opclasses
+            FROM pg_index i
+            JOIN rel ON rel.oid = i.indrelid
+            JOIN pg_class ic ON ic.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = ic.relnamespace
+            JOIN pg_am am ON am.oid = ic.relam
+            ORDER BY ic.relname
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        found: list[IndexShapeInfo] = []
+
+        for row in rows:
+            options = [int(option) for option in row.get("options") or []]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            predicate = row.get("predicate")
+
+            found.append(
+                IndexShapeInfo(
+                    name=str(row["name"]),
+                    schema=str(row["schema"]),
+                    keys=tuple(str(key) for key in row.get("keys") or []),  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                    descending=tuple(bool(option & 1) for option in options),
+                    nulls_first=tuple(bool(option & 2) for option in options),
+                    included=int(row.get("included") or 0),
+                    method=str(row["method"]),
+                    unique=bool(row.get("is_unique")),
+                    primary=bool(row.get("is_primary")),
+                    nulls_not_distinct=bool(row.get("nulls_not_distinct")),
+                    predicate=str(predicate) if predicate is not None else None,
+                    valid=bool(row.get("is_valid")),
+                    backs_constraint=bool(row.get("backs_constraint")),
+                    default_opclasses=bool(row.get("default_opclasses")),
+                )
+            )
+
+        return tuple(found)
+
+    # ....................... #
+
+    async def index_build_in_progress(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> bool:
+        """Whether a ``CREATE INDEX`` or ``REINDEX`` may be running on *relation* now.
+
+        Read from ``pg_stat_progress_create_index``. That view shows a role the table of
+        another role's build only when it has the privileges of ``pg_read_all_stats``; without
+        them the table reads as ``NULL``. Such a build counts as possibly on *relation*, so a
+        role that cannot see which table a build is on gets ``True`` while any build runs in
+        the database. An invalid index is then left alone rather than dropped under a build
+        still writing it.
+        """
+
+        schema = self.__normalize_schema(schema)
+
+        stmt = sql.SQL(
+            """
+            SELECT EXISTS (
+              SELECT 1
+              FROM pg_stat_progress_create_index p
+              WHERE p.pid <> pg_backend_pid()
+                AND p.datid = (SELECT oid FROM pg_database WHERE datname = current_database())
+                AND (
+                  p.relid IS NULL
+                  OR p.relid = (
+                    SELECT c.oid
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = {schema}
+                      AND c.relname = {relation}
+                    LIMIT 1
+                  )
+                )
+            )
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        return bool(await self.client.fetch_value(stmt, [schema, relation], default=False))
 
     # ....................... #
 

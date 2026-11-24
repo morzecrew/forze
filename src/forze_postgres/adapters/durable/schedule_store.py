@@ -53,30 +53,11 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     tenant for the table, the tag and the key together, and refuses a record naming a tenant
     that contradicts the binding.
 
-    The table is provided by the application (see
-    ``pages/docs/reference/durable-schema.md``); expected schema::
-
-        CREATE TABLE <relation> (
-            schedule_id  text        NOT NULL,
-            name         text        NOT NULL,
-            cron         text        NOT NULL,
-            tz           text,
-            input        jsonb,
-            next_fire_at timestamptz NOT NULL,
-            enabled      boolean     NOT NULL DEFAULT true,
-            tenant_id    uuid,
-            created_at   timestamptz NOT NULL,
-            updated_at   timestamptz NOT NULL,
-            PRIMARY KEY (schedule_id)
-        );
-
-        -- Recommended: back claim_due, which scans `WHERE enabled AND next_fire_at <=
-        -- now() ORDER BY next_fire_at` under FOR UPDATE SKIP LOCKED. A partial index on
-        -- the due predicate keeps the scan/sort off the whole table.
-        CREATE INDEX ON <relation> (next_fire_at) WHERE enabled;
-        -- On a shared tagged table claim_due also filters `tenant_id = …` for a bound tenant,
-        -- so lead with tenant_id to avoid scanning other tenants' due rows:
-        CREATE INDEX ON <relation> (tenant_id, next_fire_at) WHERE enabled;
+    The table is provided by the application. Its shape is declared once, by
+    :func:`~forze_postgres.adapters.durable.schema.durable_schedule_shape`. ``forze schema sql``
+    prints its DDL, ``forze schema diff`` prints what an existing table is missing,
+    and ``pages/docs/reference/durable-schema.md`` shows the render with the reason
+    for each index.
     """
 
     client: PostgresClientPort

@@ -519,9 +519,10 @@ retried in place with backoff before it is journaled — compensation only runs 
 failures or exhausted retries, never a one-off blip. A throttled failure waits at least its
 `retry_after`; one longer than the schedule's last backoff is journaled at once. This tier is self-hosted only
 (Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
-Temporal/Inngest. The relations come from your migrations; their schema, indexes and
-migrations — and the one index the Mongo run store needs — are in the
-[Durable execution schema](../reference/durable-schema.md).
+Temporal/Inngest. The relations come from your migrations; their schema and indexes, and
+the one index the Mongo run store needs, are in the
+[Durable execution schema](../reference/durable-schema.md). On Postgres, `forze schema`
+writes those migrations ([Upgrading forze's tables](../running-in-prod/upgrading-forze-tables.md)).
 
 ### Recurring schedules
 
