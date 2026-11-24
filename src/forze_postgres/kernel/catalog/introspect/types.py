@@ -182,6 +182,14 @@ class IndexShapeInfo:
     key constraint on its table, an exclusion constraint, or a foreign key elsewhere that
     references it."""
 
+    owns_constraint: bool = False
+    """Whether a unique, primary-key or exclusion constraint *on the index's own table* is built
+    on it, so ``ALTER TABLE … DROP CONSTRAINT <index name>`` is what removes it."""
+
+    referenced_by_foreign_key: bool = False
+    """Whether a foreign key, in another table or this one, references the index, so it cannot
+    be dropped until that key is."""
+
     default_opclasses: bool
     """Whether every key uses its type's default operator class."""
 

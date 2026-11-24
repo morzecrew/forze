@@ -753,6 +753,16 @@ class PostgresIntrospector:
               EXISTS (
                 SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid
               ) AS backs_constraint,
+              EXISTS (
+                SELECT 1 FROM pg_constraint con
+                WHERE con.conindid = i.indexrelid
+                  AND con.conrelid = i.indrelid
+                  AND con.contype IN ('u', 'p', 'x')
+              ) AS owns_constraint,
+              EXISTS (
+                SELECT 1 FROM pg_constraint con
+                WHERE con.conindid = i.indexrelid AND con.contype = 'f'
+              ) AS referenced_by_foreign_key,
               NOT EXISTS (
                 SELECT 1
                 FROM unnest(i.indclass::oid[]) AS o(opclass)
@@ -806,6 +816,8 @@ class PostgresIntrospector:
                     predicate=str(predicate) if predicate is not None else None,
                     valid=bool(row.get("is_valid")),
                     backs_constraint=bool(row.get("backs_constraint")),
+                    owns_constraint=bool(row.get("owns_constraint")),
+                    referenced_by_foreign_key=bool(row.get("referenced_by_foreign_key")),
                     default_opclasses=bool(row.get("default_opclasses")),
                     default_collations=bool(row.get("default_collations")),
                     immediate=bool(row.get("is_immediate")),

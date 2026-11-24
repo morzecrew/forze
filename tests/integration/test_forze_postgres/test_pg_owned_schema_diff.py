@@ -715,3 +715,68 @@ async def test_on_a_citext_status_the_diff_agrees_with_what_on_conflict_infers(
 
     assert await coalesce("after")
     assert diff_outcome(await _diff(dsn, relations)) == "in_sync"
+
+
+async def test_a_partial_nulls_not_distinct_index_holding_null_keys_is_refused(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    table = sql.Identifier(schema, "durable_run")
+    await admin.execute(
+        sql.SQL(
+            "CREATE UNIQUE INDEX app_nnd ON {} (idempotency_key) NULLS NOT DISTINCT "
+            "WHERE idempotency_key IS NULL"
+        ).format(table)
+    )
+
+    async def keyless(run_id: str) -> None:
+        await admin.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id, name, status, created_at, updated_at) "
+                "VALUES (%s, 'fn', 'pending', now(), now()) "
+                "ON CONFLICT (idempotency_key) DO NOTHING"
+            ).format(table),
+            (run_id,),
+        )
+
+    await keyless("first")
+
+    # Not the conflict arbiter, so DO NOTHING does not swallow the violation.
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        await keyless("second")
+
+    deltas = await _diff(dsn, relations)
+
+    assert diff_outcome(deltas) == "refusal"
+    assert f"-- DROP INDEX CONCURRENTLY {schema}.app_nnd;" in render_diff(deltas, version="9.9.9")
+
+
+async def test_an_index_a_foreign_key_depends_on_is_refused_without_a_drop(
+    dsn: str, admin, schema: str
+) -> None:
+    await _create_schema(admin, schema)
+    relations = owned_relations(_deps(schema)).bound
+    await _run(admin, render_sql(relations, version="9.9.9"))
+    table = sql.Identifier(schema, "durable_run")
+    await admin.execute(
+        sql.SQL("DROP INDEX {}").format(sql.Identifier(schema, "durable_run_idempotency_key_idx"))
+    )
+    await admin.execute(
+        sql.SQL("CREATE UNIQUE INDEX app_nnd ON {} (idempotency_key) NULLS NOT DISTINCT").format(
+            table
+        )
+    )
+    await admin.execute(
+        sql.SQL("CREATE TABLE {} (key text REFERENCES {} (idempotency_key))").format(
+            sql.Identifier(schema, "app_refs"), table
+        )
+    )
+
+    deltas = await _diff(dsn, relations)
+    text = render_diff(deltas, version="9.9.9")
+
+    assert diff_outcome(deltas) == "refusal"
+    assert "foreign keys depend on it" in text
+    assert "app_nnd;" not in text

@@ -78,6 +78,7 @@ def _found(
     predicate: str | None = None,
     valid: bool = True,
     backs_constraint: bool = False,
+    referenced_by_foreign_key: bool = False,
     included: int = 0,
     method: str = "btree",
     primary: bool = False,
@@ -109,7 +110,9 @@ def _found(
         nulls_not_distinct=nulls_not_distinct,
         predicate=predicate,
         valid=valid,
-        backs_constraint=backs_constraint,
+        backs_constraint=backs_constraint or referenced_by_foreign_key,
+        owns_constraint=backs_constraint,
+        referenced_by_foreign_key=referenced_by_foreign_key,
         default_opclasses=default_opclasses,
         default_collations=default_collations,
         immediate=immediate,
@@ -677,6 +680,46 @@ class TestDiff:
 
         assert diff_outcome([delta]) == "refusal"
         assert drop in _text(delta)
+
+    @pytest.mark.parametrize(
+        ("predicate", "refused"),
+        [
+            # Not inferred as an arbiter, but a second keyless run still violates it.
+            ("(idempotency_key IS NULL)", True),
+            ("((idempotency_key IS NULL) AND (status = 'pending'::text))", True),
+            # Holds no NULL, so it cannot collide on one.
+            ("(idempotency_key IS NOT NULL)", False),
+        ],
+    )
+    def test_a_partial_nulls_not_distinct_index_is_refused_unless_it_holds_no_null(
+        self, predicate: str, refused: bool
+    ) -> None:
+        relation = _run()
+        nnd = _found(
+            ("idempotency_key",),
+            name="nnd",
+            unique=True,
+            nulls_not_distinct=True,
+            predicate=predicate,
+        )
+        delta = diff_relation(relation, _with(_in_sync(relation), add=[nnd]))
+
+        assert (diff_outcome([delta]) == "refusal") is refused
+
+    def test_an_index_foreign_keys_depend_on_is_refused_without_a_drop(self) -> None:
+        # The foreign key's conindid names the index, but the constraint lives elsewhere.
+        relation = _run()
+        nnd = _found(
+            ("idempotency_key",),
+            name="nnd",
+            unique=True,
+            nulls_not_distinct=True,
+            referenced_by_foreign_key=True,
+        )
+        text = _text(diff_relation(relation, _with(_in_sync(relation), add=[nnd])))
+
+        assert "foreign keys" in text
+        assert "DROP CONSTRAINT" not in text and "DROP INDEX" not in text
 
     @pytest.mark.parametrize(
         ("status_type", "predicate", "matches"),

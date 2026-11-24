@@ -283,14 +283,30 @@ def _conflicting_uniques(
                 continue
 
             name = quote_ident(found.name)
+            headline = (
+                f"the unique index {name} on {describe_keys(target.keys)} of {table} {reason}."
+            )
+
+            # A foreign key's conindid names the index too, but the constraint lives on the
+            # referencing table: there is nothing here to drop until that key goes.
+            if found.referenced_by_foreign_key:
+                refusals.append(
+                    _refusal(
+                        headline,
+                        "It breaks the adapter's writes, and foreign keys depend on it: drop "
+                        "them first, then the index, once forze's index exists.",
+                    )
+                )
+                continue
+
             drop = (
                 f"ALTER TABLE {table} DROP CONSTRAINT {name};"
-                if found.backs_constraint
+                if found.owns_constraint
                 else f"DROP INDEX CONCURRENTLY {qualified(found.schema, found.name)};"
             )
             refusals.append(
                 _refusal(
-                    f"the unique index {name} on {describe_keys(target.keys)} of {table} {reason}.",
+                    headline,
                     "It breaks the adapter's writes; drop it once forze's index exists.",
                     commented=(drop,),
                 )

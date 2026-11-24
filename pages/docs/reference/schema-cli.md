@@ -66,9 +66,10 @@ matches a declared unique index, unless the constraint is `DEFERRABLE`.
 target included, and refuses a deferrable one even beside a `NOT DEFERRABLE` index. So the
 diff refuses a deferrable unique index on the columns of any target the adapter writes to:
 each declared unique index's and the primary key's. It also refuses a `NULLS NOT DISTINCT`
-unique index on a nullable key, on which two rows without a key collide. Each refusal carries
-the `DROP CONSTRAINT` or `DROP INDEX` commented, and the diff still prints forze's own index
-when it is missing.
+unique index on a nullable key, on which two rows without a key collide, partial or not,
+unless its predicate keeps those rows out with `<key> IS NOT NULL`. Each refusal carries the
+`DROP CONSTRAINT` or `DROP INDEX` commented, unless a foreign key depends on the index, when
+it says to drop that key first. The diff still prints forze's own index when it is missing.
 
 Keys and predicates are compared after normalizing: casts on literals and whitespace dropped,
 keywords and bare names case-insensitive, `AND` and `OR` compared as a tree. A cast on a

@@ -8695,3 +8695,36 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds ten entries, D-319 to D-328: nine `spec-gap` and one
 `discovery`.
+
+## D-329 — A NULL collision is checked apart from inference, and a foreign key blocks the drop
+
+- **Touches:** D-325 (proposed).
+- **Found:** in review on #949.
+  - D-325 checked a `NULLS NOT DISTINCT` index only when the conflict target would infer it.
+    A partial one such as `… NULLS NOT DISTINCT WHERE idempotency_key IS NULL` is not inferred,
+    yet the second keyless run violates it: on Postgres 18 `ON CONFLICT … DO NOTHING` raises
+    a unique violation there.
+  - `backs_constraint` is also true for an index a foreign key references. The refusal then
+    suggested `DROP CONSTRAINT <index>` on a table that has no such constraint.
+- **Built:**
+  - The NULL check runs on any `NULLS NOT DISTINCT` unique index over a nullable target's
+    columns, unless its predicate keeps NULL keys out with a top-level `<key> IS NOT NULL`
+    (`src/forze_postgres/kernel/catalog/owned/matching.py:433`, `:445`). The deferrable check
+    still follows inference.
+  - The index listing reads whether a constraint on the index's own table owns it, and
+    whether a foreign key references it
+    (`src/forze_postgres/kernel/catalog/introspect/introspector.py:761`). A refusal suggests
+    `DROP CONSTRAINT` only for an owning constraint, and when a foreign key depends on the
+    index it suggests no drop and says to drop that key first
+    (`src/forze_postgres/kernel/catalog/owned/diff.py:292`).
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:720`, `:756`
+  on Postgres 18; `tests/unit/test_forze_postgres/test_owned_schema.py:694`, `:709`, red before
+  the change.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-325's row, with: a `NULLS NOT DISTINCT` index is
+  refused whether or not it is inferred, unless it keeps NULL keys out, and no drop is
+  suggested for an index a foreign key depends on.
+- **Action:** departed.
+
+**Drift count: 0.** Unit 32 now holds eleven entries, D-319 to D-329: ten `spec-gap` and one
+`discovery`.

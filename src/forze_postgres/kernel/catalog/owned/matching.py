@@ -430,16 +430,31 @@ def conflicting_unique(
     if {key for key, _, _ in catalog_keys(index)} != {declared_key(key)[0] for key in target.keys}:
         return None
 
-    if index.predicate is not None and not same_predicate(target, index, text_columns):
-        return None
+    inferred = index.predicate is None or same_predicate(target, index, text_columns)
 
-    if not index.immediate:
+    if inferred and not index.immediate:
         return "is DEFERRABLE, and ON CONFLICT infers it and then refuses it"
 
-    if nullable and index.nulls_not_distinct:
+    # Not a question of inference: any index that holds a NULL key refuses the second one.
+    if nullable and index.nulls_not_distinct and not _holds_no_null(index, target.keys):
         return "is NULLS NOT DISTINCT, so two rows without a key collide on it"
 
     return None
+
+
+def _holds_no_null(index: IndexShapeInfo, keys: Sequence[str]) -> bool:
+    """Whether *index*'s predicate keeps out every row with a NULL in one of *keys*: one of its
+    top-level conjuncts is ``<key> IS NOT NULL``."""
+
+    tree = normalize_expression(index.predicate, predicate=True)
+
+    if tree is None:
+        return False
+
+    conjuncts = tree[1] if isinstance(tree, tuple) and tree[0] == "and" else (tree,)
+    excluded = {f"{declared_key(key)[0]}isnotnull" for key in keys}
+
+    return any(conjunct in excluded for conjunct in conjuncts)
 
 
 def retired_mismatch(
