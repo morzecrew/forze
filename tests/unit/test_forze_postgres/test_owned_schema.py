@@ -435,6 +435,33 @@ class TestDiff:
         assert diff_outcome([delta]) == "refusal"
         assert "ON CONFLICT (run_id)" in _text(delta)
 
+    def test_a_primary_key_in_another_order_is_a_note_with_the_index_commented(self) -> None:
+        # ON CONFLICT takes either order, but a purge by run_id cannot use (step_id, run_id).
+        config = PostgresDurableStepConfig(relation=("bi", "durable_step"))
+        relation = BoundOwnedRelation(
+            route="durable_step",
+            schema="bi",
+            name="durable_step",
+            shape=durable_step_shape(config),
+        )
+        reversed_key = _found(
+            ("step_id", "run_id"), name="pkey", unique=True, primary=True, backs_constraint=True
+        )
+        catalog = attrs.evolve(
+            _with(_in_sync(relation), drop=["pkey"], add=[reversed_key]),
+            primary_key=("step_id", "run_id"),
+        )
+
+        delta = diff_relation(relation, catalog)
+
+        assert diff_outcome([delta]) == "in_sync"
+        assert "-- CREATE INDEX CONCURRENTLY ON bi.durable_step (run_id);" in _text(delta)
+
+        # An index of the application's that leads with run_id already serves the scan.
+        served = _with(catalog, add=[_found(("run_id",), name="app_by_run")])
+
+        assert diff_relation(relation, served).blocks == ()
+
     def test_a_missing_nullable_column_is_added(self) -> None:
         relation = _run()
         catalog = _in_sync(relation)

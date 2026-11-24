@@ -37,6 +37,7 @@ the transaction, keeps the diff from writing.
 | Table missing | `CREATE TABLE`, then every declared index, without `CONCURRENTLY` |
 | A view, a partitioned table or another non-plain table under the name | A refusal; a partitioned table takes no `CREATE INDEX CONCURRENTLY` |
 | Primary key on other columns than declared | A refusal naming both key lists |
+| Primary key on the declared columns in another order | A note with an index on the declared leading column commented, unless an index already leads with it: writes work, a scan on that column does not use the key |
 | Column missing, nullable or with a literal default | `ALTER TABLE … ADD COLUMN` |
 | Column missing, `NOT NULL` with no literal default | A refusal, the `ADD COLUMN` commented |
 | Column type of another family | A refusal naming both types; never `ALTER … TYPE` |

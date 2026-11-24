@@ -8728,3 +8728,23 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds eleven entries, D-319 to D-329: ten `spec-gap` and one
 `discovery`.
+
+## D-330 — A primary key in another order is a note, not a refusal
+
+- **Touches:** D-317 (proposed), which compares the primary key as a set of columns.
+- **Found:** in review on #949. A step journal keyed `(step_id, run_id)` reads as in sync,
+  but the purge deletes a run's steps by `run_id`, and that order cannot serve it.
+- **Built:** the set comparison stands, since `ON CONFLICT` infers either order and writes
+  work, so a refusal would fail `--check` for a table that does its job. When the order
+  differs and no valid b-tree index leads with the declared key's first column, the diff adds
+  a note with `CREATE INDEX CONCURRENTLY … (<first column>)` commented, which changes no exit
+  code (`src/forze_postgres/kernel/catalog/owned/diff.py:261`, `:273`, `:467`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_schema.py:438`, red before the
+  change, which also checks that an index leading with `run_id` silences the note.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-317's row, plus: a primary key in another order is
+  a note suggesting an index on the declared leading column, unless one exists.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 32 now holds twelve entries, D-319 to D-330: eleven `spec-gap` and one
+`discovery`.

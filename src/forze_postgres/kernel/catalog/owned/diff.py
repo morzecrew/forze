@@ -17,8 +17,10 @@ import attrs
 
 from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationKind, PostgresType
 from .matching import (
+    catalog_keys,
     catalog_type_family,
     conflicting_unique,
+    declared_key,
     describe_keys,
     narrower,
     retired_mismatch,
@@ -256,6 +258,40 @@ def _declared_index(
     return statements, []
 
 
+def _led_by(catalog: CatalogRelation, column: str) -> bool:
+    """Whether a valid b-tree index on the table leads with *column*."""
+
+    wanted = declared_key(column)[0]
+
+    return any(
+        found.valid and found.method == "btree" and catalog_keys(found)[0][0] == wanted
+        for found in catalog.indexes
+        if found.keys
+    )
+
+
+def _reordered_key_note(relation: BoundOwnedRelation, catalog: CatalogRelation) -> Block:
+    """A note for a primary key on the declared columns in another order.
+
+    ``ON CONFLICT`` infers either order, so writes work. A scan on the declared key's leading
+    column, such as the purge deleting a run's steps by ``run_id``, cannot use the index.
+    """
+
+    table = qualified(relation.schema, relation.name)
+    found = describe_keys([quote_ident(column) for column in catalog.primary_key])
+    leading = quote_ident(relation.shape.primary_key[0])
+
+    return Block(
+        comments=(
+            (
+                f"the primary key of {table} is on {found}, another order than forze's; writes "
+                f"work, but a scan on {leading} cannot use it. Where that scan runs:"
+            ),
+        ),
+        commented=(f"CREATE INDEX CONCURRENTLY ON {table} ({leading});",),
+    )
+
+
 def _conflicting_uniques(
     relation: BoundOwnedRelation,
     catalog: CatalogRelation,
@@ -427,6 +463,11 @@ def diff_relation(
                 "writes fail; recreate it NOT DEFERRABLE.",
             )
         )
+
+    elif tuple(catalog.primary_key) != shape.primary_key and not _led_by(
+        catalog, shape.primary_key[0]
+    ):
+        notes.append(_reordered_key_note(relation, catalog))
 
     for column in shape.columns:
         found = catalog.columns.get(column.name)
