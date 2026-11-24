@@ -303,6 +303,26 @@ def satisfies(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     )
 
 
+def deferrable_arbiter(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
+    """Whether ``ON CONFLICT`` on *declared*'s keys infers *index* and then refuses it.
+
+    Postgres infers every unique index over the conflict target's columns, in any order, and
+    rejects the statement when one of them is deferrable, even beside an immediate one. So a
+    deferrable constraint on those keys breaks the adapter's writes until it is dropped.
+    """
+
+    return (
+        declared.unique
+        and declared.where is None
+        and index.unique
+        and not index.immediate
+        and not index.primary
+        and index.predicate is None
+        and {key for key, _, _ in catalog_keys(index)}
+        == {declared_key(key)[0] for key in declared.keys}
+    )
+
+
 def retired_mismatch(retired: OwnedIndex, index: IndexShapeInfo) -> str | None:
     """Why *index*, which has *retired*'s keys, is not a retired match, or ``None`` when it is.
 

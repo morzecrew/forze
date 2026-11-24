@@ -18,6 +18,7 @@ import attrs
 from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationKind, PostgresType
 from .matching import (
     catalog_type_family,
+    deferrable_arbiter,
     describe_keys,
     narrower,
     retired_mismatch,
@@ -370,6 +371,17 @@ def diff_relation(
         created, warned = _declared_index(relation, index, catalog)
         statements.extend(created)
         warnings.extend(warned)
+        refusals.extend(
+            _refusal(
+                f"the constraint {quote_ident(found.name)} on {describe_keys(index.keys)} of "
+                f"{table} is DEFERRABLE.",
+                "ON CONFLICT infers it beside any other unique index on those keys and then "
+                "refuses it; drop it once the NOT DEFERRABLE index exists.",
+                commented=(f"ALTER TABLE {table} DROP CONSTRAINT {quote_ident(found.name)};",),
+            )
+            for found in catalog.indexes
+            if deferrable_arbiter(index, found)
+        )
 
     drops, retired_refusals = _retired_indexes(relation, catalog)
     statements.extend(drops)

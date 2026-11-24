@@ -590,21 +590,27 @@ class TestDiff:
 
         assert diff_relation(relation, catalog).blocks == ()
 
-    def test_a_deferrable_unique_constraint_is_no_arbiter_so_the_index_is_built(self) -> None:
-        # ON CONFLICT never infers a deferrable index, INITIALLY IMMEDIATE included.
+    @pytest.mark.parametrize("beside_an_immediate_one", [False, True])
+    def test_a_deferrable_unique_constraint_on_the_conflict_keys_is_refused(
+        self, beside_an_immediate_one: bool
+    ) -> None:
+        # ON CONFLICT infers every unique index on its keys and refuses a deferrable one,
+        # INITIALLY IMMEDIATE included, even when an immediate index stands beside it.
         relation = _run()
         keys = ("idempotency_key",)
-        catalog = _with(
-            _in_sync(relation),
-            drop=[_index_named(relation, keys)],
-            add=[
-                _found(keys, name="deferred", unique=True, backs_constraint=True, immediate=False)
-            ],
+        deferred = _found(
+            keys, name="deferred", unique=True, backs_constraint=True, immediate=False
         )
+        drop = [] if beside_an_immediate_one else [_index_named(relation, keys)]
+        delta = diff_relation(relation, _with(_in_sync(relation), drop=drop, add=[deferred]))
 
-        assert _statements(diff_relation(relation, catalog)) == [
-            "CREATE UNIQUE INDEX CONCURRENTLY ON bi.durable_run (idempotency_key);"
-        ]
+        assert diff_outcome([delta]) == "refusal"
+        assert "-- ALTER TABLE bi.durable_run DROP CONSTRAINT deferred;" in _text(delta)
+        assert _statements(delta) == (
+            []
+            if beside_an_immediate_one
+            else ["CREATE UNIQUE INDEX CONCURRENTLY ON bi.durable_run (idempotency_key);"]
+        )
 
     def test_a_deferrable_primary_key_is_refused(self) -> None:
         relation = _run()

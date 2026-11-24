@@ -59,9 +59,11 @@ call.
 An index **matches** a declared one when it is a b-tree over the same keys in the same order
 and direction, with the same uniqueness and predicate, and default operator classes and
 collations. `INCLUDE` columns do not count against a match. A unique constraint's index
-matches a declared unique index, unless the constraint is `DEFERRABLE`: `ON CONFLICT` never
-takes a deferrable index as its arbiter, so the diff prints the index, and refuses a
-deferrable primary key. Keys and predicates are compared after normalizing: casts on literals
+matches a declared unique index, unless the constraint is `DEFERRABLE`. `ON CONFLICT` infers
+every unique index on its keys and refuses a deferrable one, even beside a `NOT DEFERRABLE`
+index, so the diff refuses such a constraint with its `DROP CONSTRAINT` commented, prints
+the `NOT DEFERRABLE` index if it is missing, and refuses a deferrable primary key. Keys and
+predicates are compared after normalizing: casts on literals
 and whitespace dropped, keywords and bare names case-insensitive, `AND` and `OR` compared as a
 tree. A cast on a column is kept, since it can change the value.
 

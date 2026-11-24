@@ -8580,3 +8580,29 @@ keeps D-311. The rest change no decision:
 
 **Drift count: 0.** Unit 32 now holds five entries, D-319 to D-323: four `spec-gap` and one
 `discovery`.
+
+## D-324 — A deferrable constraint on the conflict keys is refused, not worked around
+
+- **Touches:** D-319 (proposed), which said the printed `NOT DEFERRABLE` index is what
+  `ON CONFLICT` then infers.
+- **Found:** in review on #949. That was wrong. Postgres infers every unique index over the
+  conflict target's columns and refuses the statement when any of them is deferrable, so an
+  immediate index beside a deferrable constraint fixes nothing: the insert still fails, and
+  the diff would have read the table as in sync.
+- **Built:** a deferrable, non-partial unique index on a declared unique index's key set, in
+  any order, is refused, with its `DROP CONSTRAINT` commented
+  (`src/forze_postgres/kernel/catalog/owned/matching.py:306`,
+  `src/forze_postgres/kernel/catalog/owned/diff.py:376`). The `NOT DEFERRABLE` index is still
+  printed when it is missing, so the file builds it before the constraint goes.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_schema_diff.py:245`, red
+  before the change: on Postgres 18 the insert fails after the printed index is applied and
+  succeeds once the constraint is dropped, and the diff then reads in sync.
+  `tests/unit/test_forze_postgres/test_owned_schema.py:594` covers the constraint with and
+  without an immediate index beside it.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** `ASSUMED`. D-319's row, with: a deferrable constraint on a
+  declared unique index's keys is refused, whatever else indexes those keys.
+- **Action:** departed.
+
+**Drift count: 0.** Unit 32 now holds six entries, D-319 to D-324: five `spec-gap` and one
+`discovery`.

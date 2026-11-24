@@ -242,7 +242,7 @@ async def test_an_index_on_a_cast_of_the_retired_keys_is_left_alone(
     assert diff_outcome(await _diff(dsn, relations)) == "in_sync"
 
 
-async def test_a_deferrable_unique_constraint_is_no_arbiter_so_the_index_is_printed(
+async def test_a_deferrable_unique_constraint_is_refused_until_it_is_dropped(
     dsn: str, admin, schema: str
 ) -> None:
     await _create_schema(admin, schema)
@@ -259,21 +259,41 @@ async def test_a_deferrable_unique_constraint_is_no_arbiter_so_the_index_is_prin
         ).format(table)
     )
 
-    # What the adapter's conflict target meets on such a table.
-    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="deferrable"):
+    async def enqueue(run_id: str) -> None:
+        # The adapter's conflict target.
         await admin.execute(
             sql.SQL(
                 "INSERT INTO {} (run_id, name, status, idempotency_key, created_at, updated_at) "
-                "VALUES ('r', 'fn', 'pending', 'k', now(), now()) "
+                "VALUES (%s, 'fn', 'pending', 'k', now(), now()) "
                 "ON CONFLICT (idempotency_key) DO NOTHING"
-            ).format(table)
+            ).format(table),
+            (run_id,),
         )
 
-    statements = _statements(render_diff(await _diff(dsn, relations), version="9.9.9"))
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="deferrable"):
+        await enqueue("r1")
 
-    assert statements == [
+    deltas = await _diff(dsn, relations)
+    text = render_diff(deltas, version="9.9.9")
+
+    assert diff_outcome(deltas) == "refusal"
+    assert _statements(text) == [
         f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.durable_run (idempotency_key)"
     ]
+    assert f"-- ALTER TABLE {schema}.durable_run DROP CONSTRAINT deferred_idem;" in text
+
+    # The printed index alone is not enough: Postgres infers both and refuses the deferrable one.
+    await _run(admin, text)
+
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="deferrable"):
+        await enqueue("r2")
+
+    # Dropping the constraint, as the refusal says, is.
+    await admin.execute(sql.SQL("ALTER TABLE {} DROP CONSTRAINT deferred_idem").format(table))
+    await enqueue("r3")
+    await enqueue("r4")
+
+    assert diff_outcome(await _diff(dsn, relations)) == "in_sync"
 
 
 async def test_a_deferrable_primary_key_is_refused(dsn: str, admin, schema: str) -> None:
