@@ -505,6 +505,26 @@ async def test_a_tenant_scoped_document_route_is_skipped_then_bound_per_tenant()
     ]
 
 
+async def test_tenants_whose_resolver_names_one_table_bind_one_document_table() -> None:
+    def one_table(tenant_id: UUID | None) -> tuple[str, str]:
+        return ("app", "jobs")
+
+    deps = _deps(
+        jobs=PostgresDocumentConfig(
+            read=one_table, write=one_table, bookkeeping_strategy="application"
+        )
+    )
+    tenants = [UUID(int=1), UUID(int=2)]
+
+    relations = await resolve_owned_relations(deps, tenants=tenants, specs=framework_registry())
+
+    # The joined label names no single route; the table is still a document table.
+    assert relations.bound == ()
+    assert [(r.route, r.name) for r in relations.documents] == [
+        (f"jobs[{tenants[0]}], jobs[{tenants[1]}]", "jobs")
+    ]
+
+
 def test_a_document_table_shared_with_a_store_table_is_refused() -> None:
     deps = PostgresDepsModule(
         client=_CLIENT,

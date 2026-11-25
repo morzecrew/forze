@@ -134,7 +134,11 @@ def _bind(
     """
 
     documents = list(documents)
-    document_routes = frozenset(route for route, _, _ in documents)
+    # By table, not by route: tenants whose resolver names one table join their routes into
+    # one label that no single route matches.
+    document_tables = frozenset(
+        tuple(relation) for _, relation, _ in documents if not callable(relation)
+    )
     entries = [*entries, *documents]
     tables: dict[tuple[str, str], BoundOwnedRelation] = {}
     skipped: list[str] = []
@@ -161,10 +165,13 @@ def _bind(
     taken = set(tables)
     bound = [_name_default_partition(relation, taken) for relation in tables.values()]
 
+    def is_document(relation: BoundOwnedRelation) -> bool:
+        return (relation.schema, relation.name) in document_tables
+
     return OwnedRelations(
-        bound=tuple(relation for relation in bound if relation.route not in document_routes),
+        bound=tuple(relation for relation in bound if not is_document(relation)),
         skipped=(*skipped, *skipped_documents),
-        documents=tuple(relation for relation in bound if relation.route in document_routes),
+        documents=tuple(relation for relation in bound if is_document(relation)),
     )
 
 
