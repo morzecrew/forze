@@ -1,5 +1,3 @@
-from typing import get_args
-
 import pytest
 
 from pydantic import BaseModel
@@ -49,9 +47,11 @@ class TestIntWidth:
 
         assert Row(hlc=2**62).hlc == 2**62
         assert int_width(fields["hlc"].annotation, fields["hlc"].metadata) == 64
-        # Inside a union the Annotated stays in the annotation: read its member.
+        # Inside a union the Annotated stays in the annotation, which is read through it.
         assert fields["size"].metadata == []
-        assert int_width(get_args(fields["size"].annotation)[0]) == 64
+        assert int_width(fields["size"].annotation, fields["size"].metadata) == 64
+        assert int_width(Int64 | None) == 64
+        assert int_width(int | str) is None
         assert int_width(Int64) == 64
         assert int_width(fields["count"].annotation, fields["count"].metadata) is None
 

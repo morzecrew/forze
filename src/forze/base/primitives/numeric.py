@@ -1,7 +1,8 @@
 """Numeric helpers shared across the application."""
 
 from collections.abc import Iterable
-from typing import Annotated, Any, TypeVar, final, get_args, get_origin
+from types import UnionType
+from typing import Annotated, Any, TypeVar, Union, final, get_args, get_origin
 
 import attrs
 
@@ -36,7 +37,16 @@ def int_width(annotation: Any, metadata: Iterable[Any] = ()) -> int | None:
     annotation. Pass both, and either form is read.
     """
 
-    if get_origin(annotation) is Annotated:
+    origin = get_origin(annotation)
+
+    # ``Int64 | None``: the width is on the one member that is not ``None``.
+    if origin is Union or origin is UnionType:
+        members = [arg for arg in get_args(annotation) if arg is not type(None)]
+
+        if len(members) == 1:
+            return int_width(members[0], metadata)
+
+    if origin is Annotated:
         metadata = (*metadata, *get_args(annotation)[1:])
 
     for item in metadata:
