@@ -137,6 +137,38 @@ A required field must map to a `NOT NULL` column. On a read relation that is a v
 materialized view, nullability is not checked: Postgres records `NOT NULL` on tables only, so
 each column of a view reads as nullable. A write or history relation keeps the check.
 
+To check forze's store tables at startup as well, pass the owned relations of the same deps
+module:
+
+```python
+from forze_postgres import owned_relations
+
+PostgresLifecycleModule(
+    client=pg,
+    dsn="postgresql://…",
+    owned_schema=owned_relations(pg_deps),
+)
+```
+
+The step runs the comparison `forze schema diff` runs, and executes nothing it would print. It
+refuses to start, with `postgres_owned_schema_invalid` naming every table, when a store table
+cannot serve its adapter:
+
+- a missing table, or a missing required column or index;
+- a required index still being built with no valid one beside it, since `ON CONFLICT` cannot
+  use it yet;
+- a column of another type family;
+- a column that is `NOT NULL` where forze writes `NULL`;
+- a primary key on other columns, or a deferrable one;
+- a unique index that breaks a conflict target;
+- a relation that is not a table;
+- a partitioned table with no partition.
+
+It warns about everything else: an optional column or a recommended index missing, a column
+narrower than declared, or an index forze has retired. A relation on a per-tenant resolver is
+skipped with a warning. The step reads every table in one snapshot, and is skipped when the
+introspector needs a tenant that startup has not bound.
+
 Catalog warmup takes the search configs the deps module already holds. Pass its mappings, so a
 search added later is warmed too:
 

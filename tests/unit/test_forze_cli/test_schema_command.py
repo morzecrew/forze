@@ -95,6 +95,32 @@ class TestSql:
         assert "skipped durable_run" in result.stderr
         assert result.stdout.count("CREATE TABLE") == 1
 
+    def test_a_tenant_binds_the_relation_its_resolver_names(self) -> None:
+        tenant = "6f0c1f5e-8a7b-4e0e-9a6b-0d3f6b1c2a11"
+
+        result = runner.invoke(
+            app,
+            [
+                "schema", "sql", "--deps", "tests.support.schema_cli:tenant_scoped",
+                "--tenant", tenant, "--tenant", tenant,
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "skipped" not in result.stderr
+        assert "CREATE TABLE t.durable_run (" in result.stdout
+        # The tenant given twice binds its table once.
+        assert result.stdout.count("CREATE TABLE") == 2
+
+    def test_a_tenant_that_is_not_a_uuid_is_a_usage_error(self) -> None:
+        result = runner.invoke(
+            app,
+            ["schema", "sql", "--deps", "tests.support.schema_cli:tenant_scoped", "--tenant", "acme"],
+        )
+
+        assert result.exit_code == schema_cli.EXIT_USAGE
+        assert "is not a tenant id" in result.stderr
+
 
 class TestDiff:
     def test_the_dsn_is_refused_as_a_flag(self) -> None:

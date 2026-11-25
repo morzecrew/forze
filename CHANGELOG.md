@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Providers can declare what they resolve.** `Requirement(key, route, remedy)` and `DeclaresRequirements` in `forze.application.contracts.deps`, and `ProviderStore.providers()` to walk a store's registrations.
 
-- **`forze schema` prints the SQL for forze's store tables**, from durable runs to outboxes, delivery logs, inboxes and counters. `sql` prints the `CREATE` statements and `diff` what a database lacks, read via a role in `FORZE_SCHEMA_DSN`, exiting 0, 10 or 11 (`--check`, `--keep-retired`); forze never runs it.
+- **`forze schema` prints the SQL for forze's store tables**, from durable runs to outboxes, delivery logs and counters. `sql` prints the `CREATE` statements and `diff` what a database lacks, read via a role in `FORZE_SCHEMA_DSN`, exiting 0, 10 or 11 (`--check`, `--keep-retired`, `--tenant`); forze never runs it.
+
+- **The store tables can be checked at startup.** `PostgresLifecycleModule(owned_schema=owned_relations(deps))` refuses to start when a table cannot serve its adapter (`postgres_owned_schema_invalid`), and warns about the rest.
 
 ### Changed
 

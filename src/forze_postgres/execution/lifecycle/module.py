@@ -21,8 +21,10 @@ from ..deps.configs import (
     PostgresHubSearchConfig,
     PostgresSearchConfig,
 )
+from ..deps.owned import OwnedRelations
 from .catalog_warmup import postgres_catalog_warmup_lifecycle_step
 from .document_schema import postgres_document_schema_validation_lifecycle_step
+from .owned_schema import postgres_owned_schema_validation_lifecycle_step
 from .pool import postgres_lifecycle_step, routed_postgres_lifecycle_step
 
 # ----------------------- #
@@ -77,6 +79,14 @@ class PostgresLifecycleModule(LifecycleModule):
     :func:`~.document_schema.postgres_document_schema_specs` to check every document the deps
     module binds."""
 
+    owned_schema_step_name: str = "postgres_owned_schema_validate"
+    """Step id for the owned-table check."""
+
+    owned_schema: OwnedRelations | None = None
+    """When set, registers the owned-table check at startup: the store tables compared with
+    forze's declarations, refusing to start when one cannot serve its adapter (RFC 0080 §5.4).
+    Pass :func:`~forze_postgres.owned_relations` over the deps module the runtime wires."""
+
     # ....................... #
 
     def __call__(self) -> tuple[LifecycleStep, ...]:
@@ -119,6 +129,14 @@ class PostgresLifecycleModule(LifecycleModule):
                 postgres_document_schema_validation_lifecycle_step(
                     self.schema_step_name,
                     specs=self.schema_specs,
+                ),
+            )
+
+        if self.owned_schema is not None:
+            steps.append(
+                postgres_owned_schema_validation_lifecycle_step(
+                    self.owned_schema_step_name,
+                    relations=self.owned_schema,
                 ),
             )
 

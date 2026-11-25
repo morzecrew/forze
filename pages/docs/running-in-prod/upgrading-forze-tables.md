@@ -148,11 +148,30 @@ $ forze schema diff --deps app.wire:postgres --check
 A forze bump with no migration then fails the job with `10`. The other codes (`2`, `75`,
 `78`) mean the check did not run, so the job fails with those too.
 
+## Refuse to start on a table that cannot serve
+
+A deploy that ran before its migration should stop at startup, not at its first write. Pass
+the owned relations to the lifecycle module:
+
+```python
+from forze_postgres import PostgresLifecycleModule, owned_relations
+
+PostgresLifecycleModule(client=pg, dsn="postgresql://…", owned_schema=owned_relations(pg_deps))
+```
+
+Startup then runs the diff's comparison with the application's own connection, and executes
+nothing. It refuses to start, with `postgres_owned_schema_invalid` naming each table, when
+an adapter's reads or writes would fail: a table, required column or required index is
+missing or still being built, a column has another type family or refuses the `NULL` forze
+writes, or a key or unique index breaks the adapter's `ON CONFLICT`. It logs a warning for anything else, such as
+a recommended index the migration has not built yet. The
+[Postgres integration](../integrations/postgres.md) page lists every case.
+
 ## Limits
 
 - **Store tables only.** The identity, audit and other document tables still take their DDL
   from their pages.
-- **One table per relation.** A relation given as a tenant-scoped resolver names no single
-  table, so both commands skip it with a warning on stderr, and `diff` exits `11`. Diff each
-  tenant's schema through a deps module that names it.
+- **Per-tenant tables need their tenants.** A relation given as a tenant-scoped resolver names
+  no single table, so both commands skip it with a warning on stderr, and `diff` exits `11`.
+  Pass `--tenant <id>` once per tenant to bind it for each.
 - **Postgres only.**
