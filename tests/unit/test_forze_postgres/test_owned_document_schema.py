@@ -470,6 +470,30 @@ def test_a_sealed_field_in_an_array_column_is_refused_at_startup() -> None:
         )
 
 
+def test_a_sealed_field_is_text_whatever_its_annotation() -> None:
+    # Ciphertext has no plaintext type, so an annotation the type table refuses is still text.
+    class _Mixed(Document):
+        either: int | str | None = None
+
+    class _MixedRead(ReadDocument):
+        either: int | str | None = None
+
+    def mixed(sealed: bool) -> DocumentSpec[Any, Any, Any, Any]:
+        return DocumentSpec(
+            name="mixed",
+            read=_MixedRead,
+            write={"domain": _Mixed, "create_cmd": BaseDTO},
+            encryption=FieldEncryption(encrypted=frozenset({"either"})) if sealed else None,
+        )
+
+    (either,) = (column for column in _shape(mixed(True)).columns if column.name == "either")
+
+    assert (either.type, either.nullable, either.default) == ("text", True, None)
+
+    with pytest.raises(CoreException, match="'either'"):
+        _shape(mixed(False))
+
+
 def test_a_sealed_field_is_text_with_no_default() -> None:
     sealed = _spec(encryption=FieldEncryption(encrypted=frozenset({"secret", "extra"})))
     columns = {column.name: column for column in _shape(sealed).columns}

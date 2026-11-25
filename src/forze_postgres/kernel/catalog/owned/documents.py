@@ -313,6 +313,13 @@ def _columns(spec: PostgresDocumentSchemaSpec) -> list[OwnedColumn]:
         columns.append(OwnedColumn(name=TENANT_ID_FIELD, type="uuid", nullable=False))
 
     for name, info in _write_fields(spec):
+        # Ciphertext is stored as base64 text, whatever the plaintext's type, and a plaintext
+        # default would read back as a value that never decrypts.
+        if name in spec.sealed_fields:
+            _, nullable, _ = _strip(info.annotation)
+            columns.append(OwnedColumn(name=name, type="text", nullable=nullable))
+            continue
+
         typed = column_type(info.annotation, info.metadata)
 
         if typed is None:
@@ -323,13 +330,6 @@ def _columns(spec: PostgresDocumentSchemaSpec) -> list[OwnedColumn]:
             )
 
         column, nullable = typed
-
-        # Ciphertext is stored as base64 text, whatever the plaintext's type, and a plaintext
-        # default would read back as a value that never decrypts.
-        if name in spec.sealed_fields:
-            columns.append(OwnedColumn(name=name, type="text", nullable=nullable))
-            continue
-
         columns.append(
             OwnedColumn(name=name, type=column, nullable=nullable, default=_default(info, column))
         )
