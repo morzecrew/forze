@@ -1,6 +1,6 @@
 # RFC 0039 — Proposal lifecycle: machine-authored artifacts that stay inert until a human accepts
 
-- **Status:** 📝 Draft — **design open on one question**, which this RFC exists to settle before any code: is this a contract or a kit? A leaning is recorded (§3: kit) with the evidence and with what would overturn it. Independent of every other draft in the tree; nothing gates it and it gates nothing.
+- **Status:** 📝 Draft — **placement settled 2026-11-26: a kit** (§7 Q1, row 9), on §3's evidence; none of §4's overturning conditions holds. §2.1 and §5.1 amend the shape from its first consumer, bi-backend's mapping proposals, and settle §7 Q2–Q4 (rows 10–17). Ready to build. Independent of every other draft in the tree; nothing gates it and it gates nothing.
 - **Scope:** The lifecycle above `contracts/inference` — a machine-authored artifact that is **inert until a human accepts it**: propose → evaluate → accept/reject, with evidence attached and an acceptance policy that has no auto path. Covers where the lifecycle lives (core contract vs `forze_kits`), the status vocabulary, and the composition with the shipped inference seam and document plane. Does **not** cover what any application proposes (mappings, metric definitions, remediations — all app models), and does not model review UI or notification.
 - **Related:** [`contracts/inference`](../src/forze/application/contracts/inference/) — `InferenceSpec` (`input`/`output`/`capture_inputs`), `InferencePort.predict`, and `InferenceDeps.model`; the layer this sits above and composes rather than extends. [`forze_kits/aggregates/kit.py`](../src/forze_kits/aggregates/kit.py) — the `registry()` / `facade()` / `domain_events()` / `lifecycle_steps()` emission split and `spec_contributions`. [`progress/inventory.py`](../src/forze_kits/integrations/progress/inventory.py) and [`progress/record.py`](../src/forze_kits/integrations/progress/record.py) — a shipped kit that ships its own `DocumentSpec`, registers it `SpecSource.KIT`, and already models *waiting on a human* as `JobStatus.WAITING`. RFC 0006 makes a model-backed proposer real; RFC 0005 (`ModelResolverPort`, parked awaiting "a registry-driven deployment") plausibly finds its trigger in a proposal loop that pins model versions.
 - **Origin:** A lakehouse / semantic-layer design proposing `ProposalPort` as a core contract — *"the strongest candidate in this document for promotion into the core"* — for its mapping-proposal loop. Reviewing it against the tree turned the promotion argument inside out: every property the design cites for core-hood is a property the kit layer already provides, and the port's own enforcement turns out to be illusory (§3). The lifecycle is real and recurring; the placement is the open question.
@@ -24,6 +24,42 @@ Whatever the placement, the model is:
 - **Acceptance requires a principal.** There is deliberately **no auto path**: a framework that ships one will have applications using it, and the whole value is that the artifact is inert until a human acts. An application wanting automation composes a deterministic proposer with its own handler, visibly, in its own code.
 - **Statuses**: drafted → evaluated → accepted / rejected, plus superseded when a newer proposal for the same target is accepted.
 - **The rows are documents.** Proposals are state, and the framework already has a plane for state an application owns. This is not a concession to the kit answer — the source design reaches it independently, and it is what makes proposals exportable, reconciled and portable for free.
+
+### 2.1 The shape, amended from its first consumer (2026-11-26)
+
+§2 was written before a consumer existed. bi-backend has since built the lifecycle by hand for
+its mapping proposals: a model reads a profile of the fields a source sends that the spec does
+not read, and an analyst decides what to do with each. It differs from §2 in six places, and
+the kit takes its shape, since a kit built from §2 would fit neither of its two flows:
+
+- **A proposal is a batch of items, each with its own verdict.** An analyst accepts some of a
+  proposal's mappings and rejects the rest in one decision. Deciding sets every item's verdict
+  at once, an item left out is rejected, and the proposal is then `decided`. The single
+  artifact of §2 is a proposal of one item: bi's second flow, a generated spec draft the
+  analyst saves or not, is that case.
+- **Accepting may amend.** The reviewer can accept an item with a change, and the item keeps
+  both what was proposed and what was decided. A reviewer who could only say yes or no would
+  reject a near-miss and redo it by hand.
+- **An item may be a question.** A proposer unsure of its answer returns a question instead,
+  and accepting a question requires the reviewer's answer. This is how the no-auto-path rule
+  (row 4) meets a low-confidence guess: it becomes a question, never a silent default.
+- **Evidence and confidence are per item.** The evidence is the facts the proposer saw for
+  that item, never a verdict. Re-evaluating is a new proposal, so one evidence value per item
+  is enough (§7 Q4).
+- **Generation is asynchronous, and can fail.** A model call takes minutes, so a request
+  creates the proposal `pending`, a worker fills its items, and it becomes `open`, or `failed`
+  with the error. A second request while one is pending for the same scope returns that one.
+- **A proposal is made against a base, and goes stale.** It records the version of the target
+  it was proposed against. Deciding it after the target moved is refused as
+  `proposal_stale`: propose again. That is the uniqueness rule `superseded` stood for (§7 Q2),
+  without a status the framework would have to maintain.
+
+What acceptance authorises splits in two (§7 Q3). The cheap effect lands with the verdicts, in
+one transaction: bi saves the new spec revision and the decided proposal together, or neither.
+The long effect, applying that revision to a warehouse, is queued from it and runs on its own.
+
+The statuses are therefore `pending`, `open`, `decided` and `failed`, and an item's verdict is
+`pending`, `accepted` or `rejected`.
 
 ## 3. Why the leaning is "kit"
 
@@ -60,6 +96,28 @@ Build against a deterministic proposer first and bind an `InferenceSpec` second.
 
 Escape hatches per the `AggregateKit` precedent: `handlers=` override and `extra_ops=` merge, so an application that needs a different acceptance rule replaces one handler instead of abandoning the kit.
 
+### 5.1 The kit, amended (2026-11-26)
+
+The same package, with §2.1's shape:
+
+- `record.py` — a spec factory generic over the application's two models, what an item
+  proposes and what evidence it carries, building the proposal and item models around them:
+  the statuses, the verdicts, the proposed and decided values, the question, the confidence,
+  the base, the scope, the error, and what generating it cost (model, tokens, latency).
+- `inventory.py` — the contribution, registered `KIT`: the item models are the application's,
+  so the table is the application's too (RFC 0080 row 28).
+- The operations:
+  - **request** creates a `pending` proposal for a scope and a base, or returns the one
+    already pending for that scope;
+  - **run** calls the proposer for a `pending` proposal and stores its items as `open`, or its
+    error as `failed`; the application calls it from its own worker or durable function;
+  - **decide** takes the verdicts, refuses without an authenticated principal, refuses a
+    proposal not `open` and a stale one, stores the verdicts and amendments, and runs the
+    application's accept effect in the same transaction.
+- The proposer is a plain callable from the request to the items, or one built from an
+  `InferenceSpec`; the base check and the accept effect are callables too. Built against a
+  deterministic proposer first (row 6).
+
 ## 6. What stays out
 
 - **No `AUTO` acceptance policy**, in either placement. A threshold may *rank* a review queue; it never replaces the reviewer.
@@ -69,20 +127,34 @@ Escape hatches per the `AggregateKit` precedent: `handlers=` override and `extra
 
 ## 7. Open questions
 
-1. **Placement.** §3 leans kit; §4 lists what would overturn it. *Settle before any code — this is the RFC's reason to exist.*
-2. **Supersession identity.** `SUPERSEDED` implies a target and a uniqueness rule (at most one accepted proposal per target). Caller-supplied key, or derived from the candidate? *Lean: caller-supplied — the framework cannot know what "the same thing" means.*
-3. **Is acceptance transactional with the effect it authorises?** Accepting a mapping presumably applies it. One transaction, or accept-then-apply with idempotency? *Lean: separate, with an idempotency key — the apply is the application's and may be long-running, and welding it to the status flip makes every apply a write amplification of the review.*
-4. **Evidence: one model or a sequence?** Re-evaluating a stale proposal is plausible; a single evidence field loses the history. *No lean.*
+1. **Placement.** §3 leans kit; §4 lists what would overturn it. *Settle before any code — this is the RFC's reason to exist.* *Settled 2026-11-26:* a kit (row 9).
+2. **Supersession identity.** `SUPERSEDED` implies a target and a uniqueness rule (at most one accepted proposal per target). Caller-supplied key, or derived from the candidate? *Lean: caller-supplied — the framework cannot know what "the same thing" means.* *Settled 2026-11-26:* no `superseded` status; a proposal records a caller-supplied base and is refused as stale against a moved one (row 14).
+3. **Is acceptance transactional with the effect it authorises?** Accepting a mapping presumably applies it. One transaction, or accept-then-apply with idempotency? *Lean: separate, with an idempotency key — the apply is the application's and may be long-running, and welding it to the status flip makes every apply a write amplification of the review.* *Settled 2026-11-26:* both, split by cost: the cheap effect in the decide transaction, the long one queued from it (row 15).
+4. **Evidence: one model or a sequence?** Re-evaluating a stale proposal is plausible; a single evidence field loses the history. *No lean.* *Settled 2026-11-26:* one per item; re-evaluating is a new proposal (row 13).
 
-## 8. Decision log
+## 8. Decisions
 
-| # | Decision | State |
+| # | Grade | Decision |
 | --- | --- | --- |
-| 1 | The placement question is answered **before** implementation, with evidence, not after. Importance is not the test for core-hood; several backends behind one contract is | locked |
-| 2 | Leaning: **kit**, not contract — no state, no plane, every operation decomposing into shipped primitives, and three shipped precedents for kit-owned `DocumentSpec`s | proposed |
-| 3 | The "port enforces human acceptance" argument is **rejected as illusory**: proposals are documents and a sibling document port can flip a status regardless. Enforcement lives with whoever owns the handler in either design. Consequence — if this RFC ever flips to *contract*, it must be for a reason other than enforcement | locked |
-| 4 | No `AUTO` acceptance policy, in any placement. Thresholds rank a queue; they never replace a reviewer | locked |
-| 5 | Proposals are documents on the `DOCUMENT` plane — exportable, reconciled and portable for free; no new plane and no new stateful key | locked |
-| 6 | Built against a **deterministic proposer first**, model-backed second. Ordering is the proof that the lifecycle does not presuppose a model | locked |
-| 7 | The DST property (an un-accepted proposal changes no downstream state) is the contract's core claim and ships as a test in either placement — it does not require a port | locked |
-| 8 | Overturning conditions recorded in §4: an external-system implementation, a framework-enforceable invariant a kit cannot carry, or a second in-tree consumer. Absent all three, this stays a kit | recorded |
+| 1 | `LOCKED` | The placement question is answered **before** implementation, with evidence, not after. Importance is not the test for core-hood; several backends behind one contract is |
+| 2 | `ASSUMED` | Leaning: **kit**, not contract — no state, no plane, every operation decomposing into shipped primitives, and three shipped precedents for kit-owned `DocumentSpec`s. Superseded by row 9 |
+| 3 | `LOCKED` | The "port enforces human acceptance" argument is **rejected as illusory**: proposals are documents and a sibling document port can flip a status regardless. Enforcement lives with whoever owns the handler in either design. Consequence — if this RFC ever flips to *contract*, it must be for a reason other than enforcement |
+| 4 | `LOCKED` | No `AUTO` acceptance policy, in any placement. Thresholds rank a queue; they never replace a reviewer |
+| 5 | `LOCKED` | Proposals are documents on the `DOCUMENT` plane — exportable, reconciled and portable for free; no new plane and no new stateful key |
+| 6 | `LOCKED` | Built against a **deterministic proposer first**, model-backed second. Ordering is the proof that the lifecycle does not presuppose a model |
+| 7 | `LOCKED` | The DST property (an un-accepted proposal changes no downstream state) is the contract's core claim and ships as a test in either placement — it does not require a port |
+| 8 | `ASSUMED` | Overturning conditions recorded in §4: an external-system implementation, a framework-enforceable invariant a kit cannot carry, or a second in-tree consumer. Absent all three, this stays a kit |
+| 9 | `ASSUMED` | The lifecycle is a kit, `forze_kits.integrations.proposal`, not a core contract: §3's evidence holds and none of §4's conditions does. Settled by the maintainer on 2026-11-26 (§7 Q1). Supersedes row 2 |
+| 10 | `ASSUMED` | A proposal is a batch of items, each with its own verdict; deciding sets them all, an item left out is rejected, and the proposal is then `decided`. A single artifact is a proposal of one item. Supersedes §2's single artifact (§2.1) |
+| 11 | `ASSUMED` | The statuses are `pending`, `open`, `decided` and `failed`, and an item's verdict is `pending`, `accepted` or `rejected`. Supersedes §2's drafted, evaluated, accepted, rejected and superseded (§2.1) |
+| 12 | `ASSUMED` | Accepting may amend: an accepted item keeps what was proposed and what was decided. An item may be a question, which is accepted only with the reviewer's answer (§2.1) |
+| 13 | `ASSUMED` | Evidence and confidence are per item, typed by the application; re-evaluating is a new proposal (§7 Q4) |
+| 14 | `ASSUMED` | A proposal records a caller-supplied base; deciding it against a moved base is refused as `proposal_stale`. There is no `superseded` status (§7 Q2) |
+| 15 | `ASSUMED` | Deciding stores the verdicts and runs the application's accept effect in one transaction; a long-running effect is queued from it, idempotent per proposal. Departs from §7 Q3's lean on the cheap half only (§2.1) |
+| 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal, or returns the one pending for its scope, and a run stores the proposer's items as `open` or its error as `failed` (§2.1) |
+| 17 | `ASSUMED` | The spec registers as `KIT`: its item models are the application's, so its table is too (RFC 0080 row 28) |
+
+Rows 1–8 are the original decision log, regraded in this table's vocabulary on 2026-11-26
+(`locked` as `LOCKED`, `proposed` and `recorded` as `ASSUMED`) with their wording unchanged.
+Rows 9–17 come from the maintainer's decision on §7 Q1 and from the first consumer's flow
+(§2.1).
