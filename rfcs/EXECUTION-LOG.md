@@ -9639,3 +9639,109 @@ P2 (row 38): §5.7's document tables, with the width marker (row 32) and the ind
 
 **Drift count: 0.** Unit 37 holds twelve entries, D-360 to D-371: ten `spec-gap`, one
 departure and one close-out.
+
+# Unit 38 · RFC 0080 P2c review — ciphertext columns, registration order and keys
+
+Branch `feat/postgres-owned-document-tables` (#954): fixes from the PR's review.
+
+- Row 31 (`ASSUMED`) is narrowed by D-372 and D-375.
+- Row 28 (`ASSUMED`) is extended by D-374, a change to the core registry.
+- D-373 refines D-361's proposed row, and D-376 extends row 34.
+- Row 16 (`LOCKED`) holds, and D-377 closes it out for document index keys.
+
+**Drift count: 0.** Six entries, D-372 to D-377: five `spec-gap` and one close-out.
+
+## D-372 — A sealed field is ciphertext at render and at startup
+
+- **Touches:** row 31 (`ASSUMED`): "an encrypted field is `text`".
+- **Found:** in review. The render printed a sealed field as `text`, but startup validation
+  still checked the field's own type, so an audit table with sealed `metadata` refused to
+  boot. A sealed field whose annotation the type table has no row for was refused at render,
+  and a read-only binding passed no sealed fields to validation.
+- **Built:**
+  - The render takes a sealed field as `text`, nullable from its annotation, before the type
+    table (`src/forze_postgres/kernel/catalog/owned/documents.py:318`).
+  - Validation takes a sealed field's column as ciphertext, on the read and the write
+    relation: text or JSON, never an array (`validate_schema_types.py:43`, `:135`). Both
+    bindings pass the sealed fields (`execution/deps/document_binding.py:43`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py`, the sealed
+  specs in `test_every_framework_table_passes_the_validators_column_checks` and
+  `test_a_binding_carries_the_sealed_fields_to_validation`;
+  `tests/integration/test_forze_postgres/test_pg_owned_document_tables.py::test_a_sealed_field_rendered_as_text_validates`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 31, narrowed: a sealed field is `text` whatever its
+  annotation, and startup accepts a text or JSON column for it.
+- **Action:** decided.
+
+## D-373 — Document tables are told apart by the table they name
+
+- **Touches:** D-361's proposed row.
+- **Found:** in review. Tenants whose resolver names one document table bind it under a joined
+  label, which matched no route, so the table landed among the store tables.
+- **Built:** `_bind` classifies a document table by its `(schema, name)`
+  (`src/forze_postgres/execution/deps/owned.py:139`).
+- **Evidence:** `test_owned_document_schema.py::test_tenants_whose_resolver_names_one_table_bind_one_document_table`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** D-361's row, refined: a document table is one a framework
+  document route names, however many routes or tenants name it.
+- **Action:** decided.
+
+## D-374 — A `FRAMEWORK` registration wins over another source's
+
+- **Touches:** row 28 (`ASSUMED`).
+- **Found:** in review. `SpecRegistry.register_entry` kept the first registration's source for
+  an equal spec, so an application that registered a framework spec itself before merging
+  forze's contribution lost `FRAMEWORK`, and `--specs` left its table out with nothing said.
+- **Built:** a `FRAMEWORK` registration of an equal spec replaces another source's
+  (`src/forze/application/contracts/inventory/registry.py:126`, `:163`). Disposition and
+  identity must still agree. A change to a core contract.
+- **Evidence:** `tests/unit/test_forze_kits/integrations/test_framework_document_contributions.py::test_the_framework_source_holds_whichever_registration_comes_first`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 28, extended: a `FRAMEWORK` registration replaces another
+  source's for an equal spec, whatever the merge order.
+- **Action:** decided.
+
+## D-375 — A `jsonb` column's scalar default is JSON
+
+- **Touches:** row 31 (`ASSUMED`).
+- **Found:** in review. `state: Any = "pending"` printed `DEFAULT 'pending'` on a `jsonb`
+  column, which Postgres refuses at `CREATE TABLE`.
+- **Built:** a scalar default on a `jsonb` column is JSON-encoded, enum values unwrapped, and
+  one JSON cannot hold, such as NaN, prints none (`documents.py:258`).
+- **Evidence:** `test_owned_document_schema.py::test_a_scalar_default_on_a_jsonb_column_is_json`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 31, narrowed: a literal default on a `jsonb` column is
+  printed as JSON.
+- **Action:** decided.
+
+## D-376 — A required index may name a materialized field
+
+- **Touches:** row 34 (`ASSUMED`).
+- **Built:** a materialized computed field counts as stored for `required_indexes`
+  (`src/forze/application/contracts/document/specs.py:1172`). `int_width` reads
+  `Int64 | None` through the union (`src/forze/base/primitives/numeric.py:43`), as its
+  docstring said.
+- **Evidence:** `tests/unit/test_forze/application/contracts/test_document_required_indexes.py::test_a_materialized_field_may_be_indexed`;
+  `tests/unit/test_forze/base/primitives/test_numeric.py`, `TestIntWidth`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 34, extended: a required index may name a materialized
+  field.
+- **Action:** decided.
+
+## D-377 — Close-out: document index keys are quoted
+
+- **Touches:** row 16 (`LOCKED`).
+- **Kind:** resolved.
+- **Found:** in review. A document index printed its keys bare: `(order)` is a syntax error,
+  and `(user)` indexes `CURRENT_USER`.
+- **Built:** document index keys go through `quote_ident` as their columns do
+  (`documents.py:355`). The diff reads a key's column past its quotes, direction and `NULLS`
+  clause before it looks for its nullability (`matching.py:363`, `quoting.py:64`), which also
+  catches a `NULLS NOT DISTINCT` index over a nullable `name DESC` target.
+- **Evidence:** `test_pg_owned_document_tables.py::test_a_field_named_for_a_keyword_is_quoted_in_its_index`
+  on Postgres 18;
+  `test_owned_document_schema.py::test_a_unique_index_counting_nulls_breaks_a_descending_nullable_target`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 38 holds six entries, D-372 to D-377: five `spec-gap` and one
+close-out.
