@@ -6970,20 +6970,44 @@ framework's, so <code>forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR</c
 <span class="w">    </span><span class="n">object_id</span><span class="w">      </span><span class="nb">text</span><span class="p">,</span>
 <span class="w">    </span><span class="n">metadata</span><span class="w">       </span><span class="n">jsonb</span><span class="w">       </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">,</span>
 <span class="w">    </span><span class="k">at</span><span class="w">             </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">surface</span><span class="w">        </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">execution_id</span><span class="w">   </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">correlation_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
+<div class="highlight"><span class="filename">For queries by surface</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">audit_events</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">surface</span><span class="p">,</span><span class="w"> </span><span class="k">at</span><span class="p">);</span>
+</code></pre></div>
+<p>Each row also records where the operation came from: <code>surface</code> names the boundary it entered
+through (<code>http</code>, <code>mcp</code>, <code>cli</code>, <code>inbox</code>, <code>durable</code> …, or <code>unknown</code> when no boundary bound
+metadata), and <code>execution_id</code> and <code>correlation_id</code> join it to the operation's log lines. All
+three are read from the invocation, never from the operation's arguments, and none can be
+sealed. The surface is attribution, not authority: an application's own boundary can set any
+valid token, so never branch a guard on it. The correlation id is tracing context the client
+chooses over HTTP, not evidence. A trail filters by them like by any field:
+<code>{"$values": {"surface": "cli"}}</code>.</p>
 <p>A table created before <code>actor_ids</code> existed needs the column. Until it is added, startup schema
 validation refuses the table (<code>missing columns ['actor_ids']</code>), and without that validation
 every audited operation fails closed on the write. <code>forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR</code>
 prints the statement:</p>
 <div class="highlight"><span class="filename">Migration: actor_ids</span><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">audit_events</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">actor_ids</span><span class="w"> </span><span class="n">uuid</span><span class="p">[]</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">;</span>
 </code></pre></div>
+<p>A table created before <code>surface</code> needs its three columns, with the same consequence until they
+exist (<code>missing columns ['correlation_id', 'execution_id', 'surface']</code>). They are nullable and
+nothing backfills them: an older row never recorded where it came from, so it reads back <code>None</code>,
+and <code>None</code> tells a reader the row predates the field where <code>unknown</code> is a live gap:</p>
+<div class="highlight"><span class="filename">Migration: surface</span><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">audit_events</span>
+<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">surface</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">execution_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">correlation_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
+</code></pre></div>
 <p>On MongoDB, rows written before the field existed have no <code>actor_ids</code> at all. They read back as
 <code>[]</code>, but <code>{"$empty": true}</code> does not match a missing field, so a "direct calls only" query there
 must also accept its absence:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$or"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"actor_ids"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$empty"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}},</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"actor_ids"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$null"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}}]}</span>
 </code></pre></div>
+<p>Rows from before <code>surface</code> lack it the same way, and read back as <code>None</code>;
+<code>{"$values": {"surface": {"$null": True}}}</code> finds them.</p>
 <p>To keep the trail somewhere else, implement <code>AuditPort</code> — one <code>record(entry)</code> that joins the
 open transaction when there is one — and register its factory under <code>AuditDepKey</code>, as
 <code>AuditDepsModule</code> does.</p>
