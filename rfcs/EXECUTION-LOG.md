@@ -9745,3 +9745,55 @@ Branch `feat/postgres-owned-document-tables` (#954): fixes from the PR's review.
 
 **Drift count: 0.** Unit 38 holds six entries, D-372 to D-377: five `spec-gap` and one
 close-out.
+
+# Unit 39 · RFC 0079 P2 — the audit trail
+
+Branch `feat/audit-invocation-surface`, cut from `main` after #955. P2 as §12 plans it: §5.6,
+tests 9 to 12, the audit and CLI docs, and the RFC 0060 row decision 15 planned.
+
+- Rows 11 to 13 (`LOCKED` and `ASSUMED`) hold; D-378 and D-379 fill in what they leave open.
+- Rows 1 and 2 (`LOCKED`) hold, and D-380 closes them out for the audit row.
+
+**Drift count: 0.** Three entries, D-378 to D-380: two `spec-gap` and one close-out.
+
+## D-378 — `forze schema diff` prints the migration
+
+- **Touches:** row 13 (`LOCKED`): a required migration, with the SQL in the changelog and the
+  docs.
+- **Found:** RFC 0080 P2c (#954) made the audit table a framework-owned document table after
+  this RFC was written, so `forze schema sql --specs` renders it from `AuditDoc`.
+- **Built:** the three fields join the models (`src/forze_kits/integrations/audit/record.py:39`,
+  `:54`, `:90`), so the render gains the nullable columns with no hand-written DDL, and
+  `forze schema diff --specs` prints their `ADD COLUMN`s. The audit page's SQL is the render,
+  checked by `tests/unit/test_document_schema_docs.py`, and keeps the hand-written `ALTER TABLE`
+  in a titled block. The changelog points at the diff rather than restating the SQL.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_audit_trail.py:359`: a table
+  without the columns is refused at startup, naming them.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-379 — The MongoDB test writes through the document port
+
+- **Touches:** test 11.
+- **Found:** the audit port records inside a transaction scope on its route, which on Mongo
+  needs a replica set, and the claim under test is the collection's, not the hook's.
+- **Built:** the first MongoDB audit test writes two rows through the trail's document port,
+  strips the fields from one as a pre-P2 row lacks them, and reads both back
+  (`tests/integration/test_forze_mongo/test_mongo_audit_trail.py:29`). The hook's half is
+  proven on the mock and Postgres.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-380 — Close-out: the row reads the invocation, and nothing reads the row's surface
+
+- **Touches:** rows 1 and 2 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:** `Audited.entry` reads `ctx.inv_ctx.get_metadata()` beside the identity, never the
+  arguments (`src/forze/application/hooks/audit/plans.py:134`), and records `unknown` with no
+  ids when nothing is bound. No framework hook, guard or policy reads `AuditEntry.surface`.
+- **Evidence:** `tests/unit/test_forze_kits/integrations/test_audit_trail.py:334`,
+  `TestTheSurface`: a payload naming a surface and ids is ignored.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 39 holds three entries, D-378 to D-380: two `spec-gap` and one
+close-out.

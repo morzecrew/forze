@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A spec declares the indexes it relies on that are not guarantees**: `DocumentSpec(required_indexes=(DocumentIndex(...),))`, as identity does for `username` and role bindings. `Int64` in `forze.base.primitives` marks an `int` needing 64 bits (`bigint`), as the realtime `hlc` and stored-file `size` now are.
 
+- **Audit rows record where the operation came from**: `surface` (`http`, `cli`, …, `unknown`), `execution_id` and `correlation_id`, from the invocation, never its arguments. **Required migration** on Postgres `audit_events`: run `forze schema diff --specs`; until then startup refuses the table.
+
 - **The store tables can be checked at startup.** `PostgresLifecycleModule(owned_schema=owned_relations(deps))` refuses to start when a table cannot serve its adapter (`postgres_owned_schema_invalid`), and warns about the rest.
 
 ### Changed

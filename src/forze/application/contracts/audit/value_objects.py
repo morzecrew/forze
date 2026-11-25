@@ -51,11 +51,13 @@ class AuditObjectRef:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuditEntry:
-    """One audit row: who did what, on whose behalf, to what, and how it ended.
+    """One audit row: who did what, on whose behalf, to what, through which boundary, and how
+    it ended.
 
     ``actor_id`` is who performed the operation and ``subject_id`` on whose behalf it ran;
     they differ only for a delegated call. Both come from the invocation's authenticated
-    identity, never from the operation's arguments.
+    identity, never from the operation's arguments, and so do ``surface``, ``execution_id`` and
+    ``correlation_id``, from its bound metadata.
     """
 
     action: str
@@ -83,3 +85,16 @@ class AuditEntry:
 
     metadata: Mapping[str, AuditScalar] = attrs.field(factory=dict)
     """The declared metadata, already checked against the spec's allowlist."""
+
+    surface: str | None = None
+    """The boundary the invocation entered through, such as ``http`` or ``cli`` (see
+    :class:`~forze.application.execution.context.InvocationSurface`); ``unknown`` when no
+    metadata was bound. Attribution, never authority: an application's own boundary may set
+    any valid token. ``None`` for a row written by a writer that does not set it."""
+
+    execution_id: UUID | None = None
+    """The invocation's execution id, which the boundary mints. Joins the row to its logs."""
+
+    correlation_id: UUID | None = None
+    """The invocation's correlation id. Tracing context, not evidence: over HTTP the client
+    chooses it."""

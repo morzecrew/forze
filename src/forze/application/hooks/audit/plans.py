@@ -36,7 +36,7 @@ from forze.application.contracts.execution import (
     OnSuccessStep,
     Outcome,
 )
-from forze.application.execution.context import ExecutionContext
+from forze.application.execution.context import ExecutionContext, InvocationSurface
 from forze.application.execution.operations.registry.binder import OperationRegistryBinder
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKey, utcnow
@@ -129,6 +129,9 @@ class Audited:
         """
 
         identity = ctx.inv_ctx.get_authn()
+        # Like the actor, where the call came from is read off the invocation, never off its
+        # arguments (RFC 0079 decision 11).
+        bound = ctx.inv_ctx.get_metadata()
         metadata = self.metadata(args, result) if self.metadata and not bare else {}
 
         return AuditEntry(
@@ -140,6 +143,9 @@ class Audited:
             at=utcnow(),
             object_ref=self.object_ref(args, result) if self.object_ref and not bare else None,
             metadata=self.spec.check_metadata(metadata),
+            surface=str(bound.surface if bound is not None else InvocationSurface.UNKNOWN),
+            execution_id=bound.execution_id if bound is not None else None,
+            correlation_id=bound.correlation_id if bound is not None else None,
         )
 
     # ....................... #

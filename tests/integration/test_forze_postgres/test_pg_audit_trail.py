@@ -27,6 +27,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.context import InvocationMetadata, InvocationSurface
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.audit import Audited
@@ -35,11 +36,16 @@ from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec
 from forze_postgres.execution.deps import ConfigurablePostgresDocument, postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from forze_postgres.execution.deps.document_binding import (
+    postgres_document_schema_spec_for_binding,
+)
 from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.execution.lifecycle import PostgresDocumentSchemaValidationHook
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.owned import document_shape
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
-from tests.support.owned_schema import create_document_table
+from tests.support.owned_schema import create_document_table, create_owned_table
 
 pytestmark = pytest.mark.integration
 
@@ -288,3 +294,94 @@ async def test_a_delegation_chain_round_trips_and_is_queryable_by_any_actor(
 
     [row] = page.hits
     assert (row.actor_id, row.subject_id, row.actor_ids) == (agent, USER, [agent, inner])
+
+
+# ....................... #
+# where the operation came from (RFC 0079 P2)
+
+
+def _bound(surface: InvocationSurface) -> InvocationMetadata:
+    return InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4(), surface=surface)
+
+
+async def test_a_row_records_its_surface_and_is_queryable_by_it(
+    pg_client: PostgresClient,
+) -> None:
+    ctx = _ctx(pg_client)
+    registry = _registry(Audited(spec=SPEC))
+    cli = _bound(InvocationSurface.CLI)
+
+    with ctx.inv_ctx.bind_metadata(metadata=cli):
+        await _run(registry, ctx)
+
+    with ctx.inv_ctx.bind_metadata(metadata=_bound(InvocationSurface.HTTP)):
+        await _run(registry, ctx)
+
+    rows = await ctx.document.query(TRAIL).find_many(filters={"$values": {"surface": "cli"}})
+
+    assert [(r.surface, r.execution_id, r.correlation_id) for r in rows.hits] == [
+        ("cli", cli.execution_id, cli.correlation_id)
+    ]
+
+
+async def test_a_named_trail_records_the_surface_too(pg_client: PostgresClient) -> None:
+    named = audit_record_spec("ops_trail")
+    await pg_client.execute("DROP TABLE IF EXISTS ops_trail;")
+    await create_document_table(pg_client, named, "public", "ops_trail")
+    documents = {"things": _document("audit_things"), "ops_trail": _document("ops_trail")}
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+        .merge(
+            Deps.routed(
+                {
+                    DocumentQueryDepKey: documents,
+                    DocumentCommandDepKey: documents,
+                    TransactionManagerDepKey: {"main": postgres_txmanager},
+                }
+            )
+        )
+        .merge(AuditDepsModule(tx_route="main", spec=named)())
+    )
+
+    with ctx.inv_ctx.bind_metadata(metadata=_bound(InvocationSurface.MCP)):
+        await _run(_registry(Audited(spec=SPEC)), ctx)
+
+    rows = await pg_client.fetch_all("SELECT surface FROM ops_trail")
+
+    assert [row["surface"] for row in rows] == ["mcp"]
+
+
+async def test_a_trail_without_the_surface_columns_refuses_startup(
+    pg_client: PostgresClient,
+) -> None:
+    # The table as it was before RFC 0079 P2: the migration has not run.
+    await pg_client.execute("DROP TABLE audit_events;")
+    config = PostgresDocumentConfig(
+        read=("public", "audit_events"),
+        write=("public", "audit_events"),
+        bookkeeping_strategy="application",
+    )
+    shape = document_shape(
+        postgres_document_schema_spec_for_binding("audit_events", spec=TRAIL, config=config)
+    )
+    await create_owned_table(
+        pg_client,
+        shape,
+        "public",
+        "audit_events",
+        omit=frozenset({"surface", "execution_id", "correlation_id"}),
+    )
+    specs = (postgres_document_schema_spec_for_binding("audit_events", spec=TRAIL, config=config),)
+    ctx = context_from_deps(
+        Deps.plain({PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client)})
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await PostgresDocumentSchemaValidationHook(specs=specs)(ctx)
+
+    assert caught.value.details["missing"] == ["correlation_id", "execution_id", "surface"]
