@@ -311,6 +311,15 @@ class TestDiff:
         assert result.exit_code == schema_cli.EXIT_CONFIG
         assert "Cannot load --deps" in result.stderr
 
+    def test_a_spec_registry_that_refuses_its_configuration_on_import_exits_78(self) -> None:
+        result = runner.invoke(
+            app,
+            ["schema", "sql", "--deps", _DEPS, "--specs", "tests.support.schema_cli_broken:deps"],
+        )
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert "Cannot load --specs" in result.stderr
+
     @pytest.mark.parametrize("command", ["sql", "diff"])
     def test_two_stores_on_one_table_are_a_configuration_error(
         self, command: str, monkeypatch: pytest.MonkeyPatch

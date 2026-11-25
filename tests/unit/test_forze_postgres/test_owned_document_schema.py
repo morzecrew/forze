@@ -5,7 +5,7 @@ nullability checks, so the derivation cannot drift from what validation accepts.
 table, the defaults, the indexes and the refusals are each pinned here.
 """
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal, TypeVar
@@ -13,7 +13,7 @@ from uuid import UUID
 
 import attrs
 import pytest
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, computed_field
 
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentIndex, DocumentSpec
@@ -44,6 +44,7 @@ from forze_postgres.kernel.catalog.owned import (
     render_sql,
 )
 from forze_postgres.kernel.catalog.owned.documents import column_type
+from forze_postgres.kernel.catalog.owned.quoting import unquote_ident
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     _write_field_names_union,  # pyright: ignore[reportPrivateUsage]
@@ -218,6 +219,8 @@ class _Nested(BaseModel):
 
 _T = TypeVar("_T")
 
+type _Tags = list[str]
+
 
 @pytest.mark.parametrize(
     ("annotation", "expected"),
@@ -246,6 +249,7 @@ _T = TypeVar("_T")
         (str | None, ("text", True)),
         (Int64 | None, ("bigint", True)),
         (list[str] | None, ("text[]", True)),
+        (_Tags, ("text[]", False)),
     ],
 )
 def test_each_annotation_emits_one_column_type(annotation: Any, expected: tuple[str, bool]) -> None:
@@ -361,6 +365,7 @@ def test_a_scalar_default_on_a_jsonb_column_is_json() -> None:
         flag: Any = True
         mode: Any = _Status.OFF
         ratio: Any = float("nan")
+        when: Any = datetime(2026, 1, 1, tzinfo=UTC)
 
     class _LooseRead(ReadDocument):
         pass
@@ -370,13 +375,99 @@ def test_a_scalar_default_on_a_jsonb_column_is_json() -> None:
     )
     columns = {column.name: column for column in _shape(loose).columns}
 
-    assert {name: columns[name].default for name in ("state", "count", "flag", "mode", "ratio")} == {
+    names = ("state", "count", "flag", "mode", "ratio", "when")
+
+    assert {name: columns[name].default for name in names} == {
         "state": "'\"pending\"'",
         "count": "'0'",
         "flag": "'true'",
         "mode": "'\"off\"'",
         "ratio": None,
+        "when": None,
     }
+
+
+def test_a_default_that_is_no_literal_renders_none() -> None:
+    class _Dated(Document):
+        since: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class _DatedRead(ReadDocument):
+        since: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+
+    dated: DocumentSpec[Any, Any, Any, Any] = DocumentSpec(
+        name="dated", read=_DatedRead, write={"domain": _Dated, "create_cmd": BaseDTO}
+    )
+    (since,) = (column for column in _shape(dated).columns if column.name == "since")
+
+    assert (since.type, since.nullable, since.default) == ("timestamptz", False, None)
+
+
+def test_a_materialized_field_is_a_column_typed_by_its_return() -> None:
+    class _Named(Document):
+        first: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def full(self) -> str | None:
+            return self.first
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def either(self) -> int | str:
+            return self.first
+
+    class _NamedRead(ReadDocument):
+        first: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def full(self) -> str | None:
+            return self.first
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def either(self) -> int | str:
+            return self.first
+
+    def named(materialized: frozenset[str]) -> DocumentSpec[Any, Any, Any, Any]:
+        return DocumentSpec(
+            name="named",
+            read=_NamedRead,
+            write={"domain": _Named, "create_cmd": BaseDTO},
+            materialized=materialized,
+        )
+
+    (full,) = (c for c in _shape(named(frozenset({"full"}))).columns if c.name == "full")
+
+    assert (full.type, full.nullable) == ("text", True)
+
+    with pytest.raises(CoreException, match="materialized field 'either'"):
+        _shape(named(frozenset({"either"})))
+
+
+def test_a_read_only_binding_has_no_table_to_print() -> None:
+    read_only = attrs.evolve(
+        _schema_spec(_spec(), PostgresDocumentConfig(**_RW)), write_relation=None
+    )
+
+    with pytest.raises(CoreException) as caught:
+        document_shape(read_only)
+
+    assert caught.value.code == "postgres_document_render_refused"
+
+
+def test_a_sealed_field_in_an_array_column_is_refused_at_startup() -> None:
+    # Ciphertext is one string: an array column cannot hold it.
+    catalog = {"tags": PostgresType(base="text", is_array=True, not_null=True)}
+
+    with pytest.raises(CoreException, match="array element type"):
+        validate_field_type_compatibility(
+            model=_Doc,
+            column_types=catalog,
+            omit_fields=frozenset(),
+            label="things",
+            sealed_fields=frozenset({"tags"}),
+        )
 
 
 def test_a_sealed_field_is_text_with_no_default() -> None:
@@ -551,6 +642,23 @@ async def test_tenants_whose_resolver_names_one_table_bind_one_document_table() 
     ]
 
 
+async def test_without_tenants_a_tenant_scoped_document_route_is_skipped() -> None:
+    def per_tenant(tenant_id: UUID | None) -> tuple[str, str]:
+        return ("app", "jobs")
+
+    deps = _deps(
+        jobs=PostgresDocumentConfig(
+            read=per_tenant, write=per_tenant, bookkeeping_strategy="application"
+        ),
+        audit_events=document_config("app", "audit_events"),
+    )
+
+    relations = await resolve_owned_relations(deps, tenants=[], specs=framework_registry())
+
+    assert relations.skipped == ("jobs",)
+    assert [r.route for r in relations.documents] == ["audit_events"]
+
+
 def test_a_document_table_shared_with_a_store_table_is_refused() -> None:
     deps = PostgresDepsModule(
         client=_CLIENT,
@@ -668,3 +776,16 @@ def test_every_framework_table_created_from_its_render_diffs_clean(
     )
 
     assert diff_relation(relation, catalog).blocks == ()
+
+
+@pytest.mark.parametrize(
+    ("key", "name"),
+    [
+        ('"order"', "order"),
+        ('"a""b"', 'a"b'),
+        ("status", "status"),
+        ("created_at DESC", "created_at DESC"),
+    ],
+)
+def test_a_quoted_key_reads_back_as_its_name(key: str, name: str) -> None:
+    assert unquote_ident(key) == name

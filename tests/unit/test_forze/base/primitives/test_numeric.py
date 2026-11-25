@@ -56,4 +56,4 @@ class TestIntWidth:
         assert int_width(fields["count"].annotation, fields["count"].metadata) is None
 
     def test_a_width_is_read_from_metadata_alone(self) -> None:
-        assert int_width(int, [IntWidth(32)]) == 32
+        assert int_width(int, [object(), IntWidth(32)]) == 32
