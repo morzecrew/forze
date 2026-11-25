@@ -50,7 +50,8 @@ def _command(
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RequestProposal:
-    """Create a ``pending`` proposal for a scope, or return the one already pending there."""
+    """Create a ``pending`` proposal for a scope and base, or return the one already pending
+    there. A request against a newer base gets a new proposal."""
 
     ctx: ExecutionContext
     spec: ProposalSpec[Any, Any]
@@ -59,18 +60,27 @@ class RequestProposal:
     # ....................... #
 
     async def __call__(self, args: RequestProposalDTO) -> ProposalRecord[Any, Any]:
+        base = args.base
+
+        if base is None and self.base_of is not None:
+            base = await self.base_of(self.ctx, args.scope)
+
+        # Only a pending proposal on the same base is this request's: one on an older base is
+        # already stale, and returning it would hand back a proposal decide refuses.
+        same_base: Any = {"$null": True} if base is None else base
         pending = await _query(self.ctx, self.spec).find_many(
-            filters={"$values": {"status": ProposalStatus.PENDING, "scope": args.scope}},
+            filters={
+                "$values": {
+                    "status": ProposalStatus.PENDING,
+                    "scope": args.scope,
+                    "base": same_base,
+                }
+            },
             pagination={"limit": 1},
         )
 
         if pending.hits:
             return pending.hits[0]
-
-        base = args.base
-
-        if base is None and self.base_of is not None:
-            base = await self.base_of(self.ctx, args.scope)
 
         return await _command(self.ctx, self.spec).create(
             self.spec.create_cmd(scope=args.scope, base=base, status=ProposalStatus.PENDING)

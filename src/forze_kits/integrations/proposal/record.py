@@ -88,7 +88,8 @@ class ProposalItem(BaseModel, Generic[C, E]):
 
 class _ProposalFields(BaseModel, Generic[C, E]):
     scope: str
-    """What the proposal is about, chosen by the application: one pending proposal per scope."""
+    """What the proposal is about, chosen by the application: one pending proposal per scope
+    and base."""
 
     base: str | None = None
     """The version of the target the proposal was made against. Deciding it after the target

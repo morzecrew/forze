@@ -81,7 +81,7 @@ Three operations, keyed under the collection's name (`mappings.request`, `mappin
 
 | Operation | Takes | Does |
 | --- | --- | --- |
-| `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope, or returns the one already pending there. Without a `base`, the kit's `base_of` supplies it. |
+| `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope and base, or returns the one already pending there; a newer base gets a new proposal. Without a `base`, the kit's `base_of` supplies it. |
 | `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, or two items with one key, fails the proposal with the error. A proposal no longer `pending` is returned as it is. |
 | `decide` | `DecideProposalDTO(id, verdicts, note)` | Records each item's verdict and runs `on_accept`, in one transaction on `tx_route`. An item left out is rejected. |
 

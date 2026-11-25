@@ -189,6 +189,24 @@ class TestRequestAndRun:
         assert again.id == first.id
         assert other.id != first.id
 
+    async def test_a_request_against_a_newer_base_gets_a_new_proposal(self) -> None:
+        # The pending one is already stale: returning it would hand back a proposal that
+        # decide refuses.
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+
+        old = await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+        same = await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+        newer = await _op(kit, "request", RequestProposalDTO(scope="s", base="r2"), ctx)
+        unbased = await _op(kit, "request", RequestProposalDTO(scope="s"), ctx)
+        unbased_again = await _op(kit, "request", RequestProposalDTO(scope="s"), ctx)
+
+        assert same.id == old.id
+        assert newer.id != old.id
+        assert newer.base == "r2"
+        assert unbased.id not in (old.id, newer.id)
+        assert unbased_again.id == unbased.id
+
     async def test_the_base_comes_from_base_of_when_a_request_omits_it(self) -> None:
         ctx = _ctx()
 

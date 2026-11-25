@@ -23,7 +23,8 @@ class ProposalKernelOp(StrEnum):
     """The kit's operations, keyed under the kit's namespace."""
 
     REQUEST = "request"
-    """Create a ``pending`` proposal for a scope, or return the one already pending there."""
+    """Create a ``pending`` proposal for a scope and base, or return the one already pending
+    there."""
 
     RUN = "run"
     """Run the proposer for a ``pending`` proposal: ``open`` with its items, or ``failed``."""
@@ -37,7 +38,7 @@ class ProposalKernelOp(StrEnum):
 
 class RequestProposalDTO(BaseDTO):
     scope: str
-    """What the proposal is about; one pending proposal per scope."""
+    """What the proposal is about; one pending proposal per scope and base."""
 
     base: str | None = None
     """The target version it is made against. Omitted, the kit's ``base_of`` supplies it."""
