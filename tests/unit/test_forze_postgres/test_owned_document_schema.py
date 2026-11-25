@@ -456,6 +456,22 @@ def test_a_read_only_binding_has_no_table_to_print() -> None:
     assert caught.value.code == "postgres_document_render_refused"
 
 
+@pytest.mark.parametrize("read_only", [False, True])
+def test_a_binding_carries_the_sealed_fields_to_validation(read_only: bool) -> None:
+    # A read-only binding reads the same ciphertext a writer stored.
+    sealed = audit_record_spec(encryption=FieldEncryption(encrypted=frozenset({"metadata"})))
+    config: PostgresReadOnlyDocumentConfig = (
+        PostgresReadOnlyDocumentConfig(read=("app", "audit_events"))
+        if read_only
+        else document_config("app", "audit_events")
+    )
+    schema_spec = postgres_document_schema_spec_for_binding(
+        "audit_events", spec=sealed, config=config
+    )
+
+    assert schema_spec.sealed_fields == frozenset({"metadata"})
+
+
 def test_a_sealed_field_in_an_array_column_is_refused_at_startup() -> None:
     # Ciphertext is one string: an array column cannot hold it.
     catalog = {"tags": PostgresType(base="text", is_array=True, not_null=True)}

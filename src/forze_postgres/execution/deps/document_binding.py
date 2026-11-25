@@ -40,6 +40,7 @@ def postgres_document_schema_spec_for_binding(
         read-write binding pairs with a spec that has no write model.
     """
 
+    sealed = spec.encryption.sealed if spec.encryption is not None else frozenset[str]()
     read_rel = require_static_relation(
         config.read,
         document_name=name,
@@ -68,6 +69,7 @@ def postgres_document_schema_spec_for_binding(
             guarantees=spec.declared_guarantees,
             warn_undeclared=warn_undeclared,
             bound_relations=bound_relations or {},
+            sealed_fields=sealed,
         )
 
     w = spec.write
@@ -113,6 +115,6 @@ def postgres_document_schema_spec_for_binding(
         guarantees=spec.guarantees,
         warn_undeclared=warn_undeclared,
         bound_relations=bound_relations or {},
-        sealed_fields=spec.encryption.sealed if spec.encryption is not None else frozenset(),
+        sealed_fields=sealed,
         required_indexes=spec.required_indexes,
     )
