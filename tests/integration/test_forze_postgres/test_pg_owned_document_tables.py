@@ -15,7 +15,9 @@ from uuid import uuid4
 import pytest
 from psycopg import sql
 
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.execution import Deps
+from forze_kits.integrations.audit import audit_record_spec, audit_spec_contributions
 from forze_postgres import PostgresClient, PostgresDepsModule, owned_relations
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.lifecycle import (
@@ -89,3 +91,32 @@ async def test_every_framework_table_from_the_render_validates_and_diffs_clean(
         ]
 
     assert {delta.relation.name: delta.blocks for delta in deltas if delta.blocks} == {}
+
+
+async def test_a_sealed_field_rendered_as_text_validates(pg_client: PostgresClient) -> None:
+    # Ciphertext is a base64 string whatever the field's type, so the render prints text and
+    # validation must accept it there, a sealed dict included.
+    schema = f"owned_sealed_{uuid4().hex[:8]}"
+    sealed = audit_record_spec(encryption=FieldEncryption(encrypted=frozenset({"metadata"})))
+    registry = audit_spec_contributions(sealed).freeze()
+    deps = PostgresDepsModule(
+        client=PostgresClient(),
+        rw_documents={"audit_events": document_config(schema, "audit_events", tenant_aware=True)},
+    )
+    relations = owned_relations(deps, specs=registry)
+
+    assert [c.type for c in relations.documents[0].shape.columns if c.name == "metadata"] == [
+        "text"
+    ]
+
+    await pg_client.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+
+    for statement in split_sql(render_sql(relations.tables, version="9.9.9")):
+        await pg_client.execute(sql.SQL(statement))  # type: ignore[arg-type]
+
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: introspector}))
+
+    await PostgresDocumentSchemaValidationHook(
+        specs=postgres_document_schema_specs(registry, deps)
+    )(ctx)

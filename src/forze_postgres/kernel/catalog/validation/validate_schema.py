@@ -198,6 +198,7 @@ async def _validate_relation_models(
     relation: str,
     models: Sequence[tuple[type[BaseModel], frozenset[str], str]],
     read: bool = False,
+    sealed_fields: frozenset[str] = frozenset(),
 ) -> None:
     column_types = await introspector.get_column_types(schema=schema, relation=relation)
     # Postgres records NOT NULL on tables only: every column of a view or a materialized view
@@ -217,6 +218,7 @@ async def _validate_relation_models(
             column_types=column_types,
             omit_fields=omit_fields,
             label=label,
+            sealed_fields=sealed_fields,
         )
 
         if unchecked:
@@ -1578,6 +1580,7 @@ async def _validate_document(
             ),
         ],
         read=True,
+        sealed_fields=spec.sealed_fields,
     )
 
     if spec.write_relation is not None:
@@ -1634,6 +1637,7 @@ async def _validate_document(
             schema=spec.write_relation[0],
             relation=spec.write_relation[1],
             models=write_models,
+            sealed_fields=spec.sealed_fields,
         )
 
         if spec.tenant_aware:

@@ -52,6 +52,9 @@ from forze_postgres.kernel.catalog.validation.validate_schema_types import (
     validate_field_nullability,
     validate_field_type_compatibility,
 )
+from forze_kits.integrations.audit import audit_record_spec
+from forze_kits.integrations.progress import job_record_spec
+from forze_kits.integrations.realtime import realtime_mailbox_spec
 from tests.support.framework_documents import (
     document_config,
     framework_contributions,
@@ -89,15 +92,24 @@ def _catalog(shape: OwnedRelationShape) -> dict[str, PostgresType]:
     }
 
 
+_SEALED = [
+    audit_record_spec(encryption=FieldEncryption(encrypted=frozenset({"metadata"}))),
+    job_record_spec(encryption=FieldEncryption(encrypted=frozenset({"message", "subject"}))),
+    realtime_mailbox_spec(encryption=FieldEncryption(encrypted=frozenset({"payload", "event"}))),
+]
+"""The framework specs that take a field-encryption policy, each sealing what it allows."""
+
 _SPECS = framework_document_specs()
 _IDS = [str(spec.name) for spec in _SPECS]
+_ALL = [*_SPECS, *_SEALED]
+_ALL_IDS = [*_IDS, *(f"{spec.name}-sealed" for spec in _SEALED)]
 
 
 # ....................... #
 
 
 @pytest.mark.parametrize("tenant_aware", [False, True])
-@pytest.mark.parametrize("spec", _SPECS, ids=_IDS)
+@pytest.mark.parametrize("spec", _ALL, ids=_ALL_IDS)
 def test_every_framework_table_passes_the_validators_column_checks(
     spec: DocumentSpec[Any, Any, Any, Any], tenant_aware: bool
 ) -> None:
@@ -134,7 +146,11 @@ def test_every_framework_table_passes_the_validators_column_checks(
             continue
 
         validate_field_type_compatibility(
-            model=model, column_types=catalog, omit_fields=frozenset(), label=str(spec.name)
+            model=model,
+            column_types=catalog,
+            omit_fields=frozenset(),
+            label=str(spec.name),
+            sealed_fields=schema_spec.sealed_fields,
         )
         validate_field_nullability(
             model=model, column_types=catalog, omit_fields=frozenset(), label=str(spec.name)
