@@ -11,8 +11,8 @@ yours to create, and at startup the schema validation checks every mapped column
 against the model (type family and nullability, exactly).
 
 Forze prints the DDL for you. With the identity specs in your spec registry,
-`forze schema sql --specs MODULE:ATTR` prints a table for every identity route
-the deps module binds, and `forze schema diff --specs MODULE:ATTR` prints what a
+`forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR` prints a table for every identity route
+the deps module binds, and `forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR` prints what a
 live database lacks; see [`forze schema`](../reference/schema-cli.md). The SQL on
 this page is that render, for the six tables most deployments bind, checked
 against it by forze's tests.
@@ -197,7 +197,7 @@ tenant>`, and only `IS NULL` with no tenant bound. A writer sets `scope_tenant_i
 purpose, since leaving it out binds the role in every tenant.
 
 The remaining identity specs (identity mappings, invites, authz bindings and
-grants, tenancy) are printed by `forze schema sql --specs` the same way.
+grants, tenancy) are printed by `forze schema sql --deps … --specs …` the same way.
 
 ## Binding the specs to a schema
 
@@ -236,6 +236,6 @@ than the database holds, silently.
 
 These tables are the render forze's own Postgres integration tests create and run
 schema validation against, so they cannot drift from the models silently. After an
-upgrade, `forze schema diff --specs MODULE:ATTR` prints what your tables lack; if you
+upgrade, `forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR` prints what your tables lack; if you
 change a model, boot against a copy of production first: the validation error names
 the exact field, the expected column family, and what it found.

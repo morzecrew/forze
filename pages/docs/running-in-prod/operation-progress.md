@@ -227,7 +227,7 @@ owes the pattern this one status and the grain that spans the pause.
 
 ## The collection
 
-`job_record_spec()` hands you the spec, and `forze schema sql --specs MODULE:ATTR` prints
+`job_record_spec()` hands you the spec, and `forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR` prints
 its table once `progress_spec_contributions` (below) catalogues it
 ([`forze schema`](../reference/schema-cli.md)). Wire it tenant-aware and the adapter injects
 and scopes `tenant_id` — the models carry no tenant field of their own:

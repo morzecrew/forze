@@ -140,7 +140,7 @@ audit_deps = AuditDepsModule(tx_route="pg")
 Route `AUDIT` through your document deps module on the database the audited operations' own
 transactions use — an `allowed` row is written inside them — and merge
 `audit_spec_contributions(AUDIT)` into your spec inventory. It catalogues the spec as the
-framework's, so `forze schema sql --specs MODULE:ATTR` prints its table
+framework's, so `forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR` prints its table
 ([`forze schema`](../reference/schema-cli.md)). Wired tenant-aware, the table is:
 
 ```sql
@@ -165,7 +165,7 @@ CREATE TABLE app.audit_events (
 
 A table created before `actor_ids` existed needs the column. Until it is added, startup schema
 validation refuses the table (`missing columns ['actor_ids']`), and without that validation
-every audited operation fails closed on the write. `forze schema diff --specs MODULE:ATTR`
+every audited operation fails closed on the write. `forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR`
 prints the statement:
 
 ```sql title="Migration: actor_ids"
