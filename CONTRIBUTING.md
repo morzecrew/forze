@@ -423,6 +423,11 @@ The entry names the table and tells readers to run `forze schema diff`. A change
 are stored changes no shape, so the diff cannot see it: its entry carries a **Migration:**
 statement guarded so a second run is a no-op (RFC 0080 §5.5).
 
+A framework-owned document table has no declaration of its own: `forze schema` derives it
+from the spec (RFC 0080 §5.7). A change to such a spec's models is a change to its table, so
+its entry names the table and tells readers to run `forze schema diff --specs`; a field that
+may hold a 64-bit integer is annotated `Int64`.
+
 ## Release Process
 
 Releases are tag-driven.

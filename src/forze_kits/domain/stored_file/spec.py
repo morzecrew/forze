@@ -5,6 +5,7 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.inventory import SpecRegistry, SpecSource
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
@@ -123,6 +124,19 @@ class StoredFileKitSpec:
                 "update_cmd": StoredFileUpdateCmd,
             },
         )
+
+    # ....................... #
+
+    def document_contributions(self) -> SpecRegistry:
+        """Catalogue :attr:`document` for the application's inventory — merge it at assembly.
+
+        It is catalogued as :attr:`~forze.application.contracts.inventory.SpecSource.FRAMEWORK`:
+        forze ships the stored-file models, so the application cannot change the table, and
+        ``forze schema`` prints it (RFC 0080 §5.7). The :attr:`search` and :attr:`outbox`
+        specs are the application's, and it registers them itself.
+        """
+
+        return SpecRegistry().register(self.document, source=SpecSource.FRAMEWORK)
 
     # ....................... #
 

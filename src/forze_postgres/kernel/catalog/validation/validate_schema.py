@@ -7,6 +7,7 @@ from typing import Final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.document import DocumentIndex
 from forze.application.contracts.guarantees import (
     GuaranteeMoment,
     NonOverlapping,
@@ -132,6 +133,16 @@ class PostgresDocumentSchemaSpec:
     """The relation of each document the same module binds, by route name: where a declared
     :class:`~forze.application.contracts.guarantees.Reference` must point its foreign key, and
     which spec an undeclared one points at."""
+
+    sealed_fields: frozenset[str] = frozenset()
+    """Write fields stored as ciphertext (see :attr:`FieldEncryption.sealed
+    <forze.application.contracts.crypto.FieldEncryption.sealed>`), whose column holds base64
+    text whatever the field's type."""
+
+    required_indexes: tuple[DocumentIndex, ...] = ()
+    """Indexes the spec relies on that are not guarantees (see
+    :attr:`DocumentSpec.required_indexes
+    <forze.application.contracts.document.DocumentSpec.required_indexes>`)."""
 
     # ....................... #
 

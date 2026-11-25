@@ -1,6 +1,7 @@
 """Postgres lifecycle steps (pool, catalog warmup, document and owned schema validation,
 counter purge)."""
 
+from ..deps.document_binding import postgres_document_schema_spec_for_binding
 from .capabilities import POSTGRES_CLIENT_CAPABILITY
 from .catalog_warmup import (
     PostgresCatalogWarmupHook,
@@ -10,7 +11,6 @@ from .catalog_warmup import (
 from .counter_purge import postgres_counter_purge_lifecycle_step
 from .document_schema import (
     PostgresDocumentSchemaValidationHook,
-    postgres_document_schema_spec_for_binding,
     postgres_document_schema_specs,
     postgres_document_schema_validation_lifecycle_step,
 )

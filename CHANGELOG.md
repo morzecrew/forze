@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze schema` prints the SQL for forze's store tables**, from durable runs to outboxes, delivery logs and counters. `sql` prints the `CREATE` statements and `diff` what a database lacks, read via a role in `FORZE_SCHEMA_DSN`, exiting 0, 10 or 11 (`--check`, `--keep-retired`, `--tenant`); forze never runs it.
 
+- **`forze schema --specs` prints the document tables forze owns**: identity, audit, jobs, realtime mailbox, cursors, stored files, derived from each spec (`owned_relations(deps, specs=...)`). Catalogue them via `audit_spec_contributions`, `realtime_document_contributions`, `StoredFileKitSpec.document_contributions()`.
+
+- **A spec declares the indexes it relies on that are not guarantees**: `DocumentSpec(required_indexes=(DocumentIndex(...),))`, as identity does for `username` and role bindings. `Int64` in `forze.base.primitives` marks an `int` needing 64 bits (`bigint`), as the realtime `hlc` and stored-file `size` now are.
+
 - **The store tables can be checked at startup.** `PostgresLifecycleModule(owned_schema=owned_relations(deps))` refuses to start when a table cannot serve its adapter (`postgres_owned_schema_invalid`), and warns about the rest.
 
 ### Changed

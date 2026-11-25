@@ -132,6 +132,10 @@ class OwnedIndex:
     where: str | None = None
     """The predicate of a partial index."""
 
+    nulls_not_distinct: bool = False
+    """Whether a unique index counts ``NULL`` as one value (``NULLS NOT DISTINCT``, Postgres
+    15 or later), so two rows holding a null key collide."""
+
     required: bool = False
     """``True`` when correctness depends on the index (a unique claim), ``False`` when it only
     keeps a scan fast."""
@@ -228,6 +232,10 @@ class OwnedRelationShape:
     Forze creates the table and its ``DEFAULT`` partition; the partitions are the
     application's."""
 
+    notes: tuple[str, ...] = ()
+    """Lines printed above the ``CREATE TABLE``: what the table needs that forze does not
+    print, such as a trigger the application owns."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -316,6 +324,7 @@ class OwnedRelationShape:
             columns=_merged(self.columns, other.columns, key=lambda column: column.name),
             indexes=_merged(self.indexes, other.indexes, key=_index_key),
             retired=tuple(dict.fromkeys((*self.retired, *other.retired))),
+            notes=tuple(dict.fromkeys((*self.notes, *other.notes))),
         )
 
 
@@ -329,7 +338,7 @@ def _added_unsafely(column: OwnedColumn, first: tuple[int, ...]) -> bool:
 
 
 def _index_key(index: OwnedIndex) -> tuple[object, ...]:
-    return (index.keys, index.unique, index.where)
+    return (index.keys, index.unique, index.where, index.nulls_not_distinct)
 
 
 def _shared(reason: str) -> exc:

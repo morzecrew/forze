@@ -227,32 +227,36 @@ owes the pattern this one status and the grain that spans the pause.
 
 ## The collection
 
-`job_record_spec()` hands you the spec; the table is yours. Wire it tenant-aware
-and the adapter injects and scopes `tenant_id` — the models carry no tenant field
-of their own:
+`job_record_spec()` hands you the spec, and `forze schema sql --specs MODULE:ATTR` prints
+its table once `progress_spec_contributions` (below) catalogues it
+([`forze schema`](../reference/schema-cli.md)). Wire it tenant-aware and the adapter injects
+and scopes `tenant_id` — the models carry no tenant field of their own:
 
 ```sql
-CREATE TABLE jobs (
-    id              uuid PRIMARY KEY,
-    rev             integer NOT NULL,
-    created_at      timestamptz NOT NULL,
-    last_update_at  timestamptz NOT NULL,
-    tenant_id       uuid NOT NULL,          -- adapter-managed (tenant_aware routes)
-    kind            text NOT NULL,
-    status          text NOT NULL,
-    progress        double precision,
-    message         text,
-    subject         text,
-    durable_run_id  text,
-    error           text,
-    heartbeat_at    timestamptz NOT NULL,
-    started_at      timestamptz,
-    finished_at     timestamptz,
-    event_at        timestamptz NOT NULL,
-    event_seq       integer NOT NULL
+CREATE TABLE app.jobs (
+    id             uuid             NOT NULL,
+    rev            integer          NOT NULL,
+    created_at     timestamptz      NOT NULL,
+    last_update_at timestamptz      NOT NULL,
+    tenant_id      uuid             NOT NULL,
+    kind           text             NOT NULL,
+    status         text             NOT NULL DEFAULT 'pending',
+    progress       double precision,
+    message        text,
+    subject        text,
+    durable_run_id text,
+    error          text,
+    heartbeat_at   timestamptz      NOT NULL,
+    started_at     timestamptz,
+    finished_at    timestamptz,
+    event_at       timestamptz      NOT NULL,
+    event_seq      integer          NOT NULL DEFAULT 0,
+    PRIMARY KEY (id)
 );
+```
 
-CREATE INDEX jobs_staleness ON jobs (tenant_id, status, heartbeat_at);
+```sql title="For the staleness query"
+CREATE INDEX ON app.jobs (tenant_id, status, heartbeat_at);
 ```
 
 Use `double precision`, not `real`: the merge compares the fraction the store

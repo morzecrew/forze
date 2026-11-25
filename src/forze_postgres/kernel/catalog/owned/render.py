@@ -149,7 +149,8 @@ def create_index(
     *,
     concurrently: bool,
 ) -> str:
-    """``CREATE [UNIQUE] INDEX [CONCURRENTLY] ON … (keys) [WHERE …];``, unnamed."""
+    """``CREATE [UNIQUE] INDEX [CONCURRENTLY] ON … (keys) [NULLS NOT DISTINCT] [WHERE …];``,
+    unnamed."""
 
     head = "CREATE UNIQUE INDEX" if index.unique else "CREATE INDEX"
 
@@ -157,6 +158,9 @@ def create_index(
         head += " CONCURRENTLY"
 
     statement = f"{head} ON {qualified(relation.schema, relation.name)} ({', '.join(index.keys)})"
+
+    if index.nulls_not_distinct:
+        statement += " NULLS NOT DISTINCT"
 
     if index.where is not None:
         statement += f" WHERE {index.where}"
@@ -166,9 +170,9 @@ def create_index(
 
 def install_blocks(relation: BoundOwnedRelation) -> list[Block]:
     """The table, its ``DEFAULT`` partition when it is partitioned, then each declared index,
-    for a database that has none of it."""
+    for a database that has none of it. The shape's notes head the table's block."""
 
-    blocks = [Block(statement=create_table(relation))]
+    blocks = [Block(comments=relation.shape.notes, statement=create_table(relation))]
 
     if relation.shape.partitioned_by is not None:
         blocks.append(default_partition(relation))
@@ -203,7 +207,7 @@ def render_sql(relations: Sequence[BoundOwnedRelation], *, version: str) -> str:
         first = install[0]
         blocks.append(
             Block(
-                comments=(relation_header(relation, version=version),),
+                comments=(relation_header(relation, version=version), *first.comments),
                 statement=first.statement,
             )
         )

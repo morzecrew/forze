@@ -166,7 +166,9 @@ cannot serve its adapter:
 
 It warns about everything else: an optional column or a recommended index missing, a column
 narrower than declared, or an index forze has retired. A relation on a per-tenant resolver is
-skipped with a warning. The step reads every table in one snapshot, and is skipped when the
+skipped with a warning. `owned_relations(pg_deps, specs=registry)` also binds the tables of
+framework-owned document specs, for `forze schema`; the step leaves those to document schema
+validation, which already checks them. The step reads every table in one snapshot, and is skipped when the
 introspector needs a tenant that startup has not bound.
 
 Catalog warmup takes the search configs the deps module already holds. Pass its mappings, so a

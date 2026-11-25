@@ -32,6 +32,7 @@ from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
     build_realtime_cursors,
     build_realtime_mailbox,
+    realtime_cursor_spec,
     realtime_mailbox_spec,
 )
 from forze_mock import MockKeyManagement
@@ -44,41 +45,13 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
+from tests.support.owned_schema import create_document_table
 from tests.support.realtime_retention import UNSWEPT
 
 pytestmark = pytest.mark.integration
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")
 _T2 = UUID("22222222-2222-2222-2222-222222222222")
-
-# tenant_id is the adapter-managed scoping column (no model field); rest mirrors the models.
-_MAILBOX_DDL = """
-CREATE TABLE rt_mailbox (
-    id uuid PRIMARY KEY,
-    rev integer NOT NULL,
-    created_at timestamptz NOT NULL,
-    last_update_at timestamptz NOT NULL,
-    tenant_id uuid NOT NULL,
-    principal text NOT NULL,
-    event_id text NOT NULL,
-    hlc bigint NOT NULL,
-    event text NOT NULL,
-    payload jsonb NOT NULL
-);
-"""
-
-_CURSORS_DDL = """
-CREATE TABLE rt_cursors (
-    id uuid PRIMARY KEY,
-    rev integer NOT NULL,
-    created_at timestamptz NOT NULL,
-    last_update_at timestamptz NOT NULL,
-    tenant_id uuid NOT NULL,
-    principal text NOT NULL,
-    client_key text NOT NULL,
-    hlc bigint NOT NULL
-);
-"""
 
 
 def _hlc(physical_ms: int) -> HlcTimestamp:
@@ -138,8 +111,13 @@ def mailbox_ctx(pg_client: PostgresClient) -> ExecutionContext:
 async def _tables(pg_client: PostgresClient):
     await pg_client.execute("DROP TABLE IF EXISTS rt_mailbox;")
     await pg_client.execute("DROP TABLE IF EXISTS rt_cursors;")
-    await pg_client.execute(_MAILBOX_DDL)
-    await pg_client.execute(_CURSORS_DDL)
+    # The tables as `forze schema sql --specs` prints them for the tenant-aware routes.
+    await create_document_table(
+        pg_client, realtime_mailbox_spec(), "public", "rt_mailbox", tenant_aware=True
+    )
+    await create_document_table(
+        pg_client, realtime_cursor_spec(), "public", "rt_cursors", tenant_aware=True
+    )
     yield
 
 
@@ -337,21 +315,6 @@ async def test_retention_sweeps_scope_by_tenant_on_postgres(
 # sealing the stored signal bodies, against the real adapter
 
 
-_SEALED_MAILBOX_DDL = """
-CREATE TABLE rt_sealed_mailbox (
-    id uuid PRIMARY KEY,
-    rev integer NOT NULL,
-    created_at timestamptz NOT NULL,
-    last_update_at timestamptz NOT NULL,
-    tenant_id uuid NOT NULL,
-    principal text NOT NULL,
-    event_id text NOT NULL,
-    hlc bigint NOT NULL,
-    event text NOT NULL,
-    payload jsonb NOT NULL
-);
-"""
-
 _SEALED_SPEC = realtime_mailbox_spec(
     encryption=FieldEncryption(encrypted=frozenset({"payload"})),
 )
@@ -360,7 +323,10 @@ _SEALED_SPEC = realtime_mailbox_spec(
 @pytest_asyncio.fixture
 async def sealed_mailbox_ctx(pg_client: PostgresClient) -> ExecutionContext:
     await pg_client.execute("DROP TABLE IF EXISTS rt_sealed_mailbox;")
-    await pg_client.execute(_SEALED_MAILBOX_DDL)
+    # Rendered from the sealed spec, so the sealed payload is a text column.
+    await create_document_table(
+        pg_client, _SEALED_SPEC, "public", "rt_sealed_mailbox", tenant_aware=True
+    )
 
     configurable = _configurable("rt_sealed_mailbox")
 

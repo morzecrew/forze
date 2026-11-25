@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import Field
 
+from forze.base.primitives import Int64
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 # ----------------------- #
@@ -41,7 +42,7 @@ class StoredFileDocument(Document):
     content_type: str = "application/octet-stream"
     """MIME type; refined after blob upload when ready."""
 
-    size: int = 0
+    size: Int64 = 0
     """Object size in bytes."""
 
     storage_key: str | None = None
@@ -84,7 +85,7 @@ class StoredFileRead(BaseDTO):
     content_type: str
     """MIME type."""
 
-    size: int
+    size: Int64
     """Object size in bytes."""
 
     storage_key: str | None = None
@@ -115,7 +116,7 @@ class StoredFileCreateCmd(CreateDocumentCmd):
     content_type: str = Field(default="application/octet-stream")
     """MIME type placeholder until upload completes."""
 
-    size: int = 0
+    size: Int64 = 0
     """Expected size in bytes (typically ``len(data)`` from the upload request)."""
 
     storage_key: str | None = None
@@ -146,7 +147,7 @@ class StoredFileUpdateCmd(BaseDTO):
     content_type: str | None = None
     """MIME type after upload."""
 
-    size: int | None = None
+    size: Int64 | None = None
     """Size after upload."""
 
     storage_key: str | None = None

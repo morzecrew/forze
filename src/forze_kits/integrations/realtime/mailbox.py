@@ -37,7 +37,7 @@ from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity, TenantProviderPort
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import HlcTimestamp
+from forze.base.primitives import HlcTimestamp, Int64
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.integrations._logger import logger
 
@@ -139,7 +139,7 @@ class MailboxStats:
 class _MailboxDoc(Document):
     principal: str
     event_id: str
-    hlc: int  # packed HlcTimestamp (monotonic int; range-queryable)
+    hlc: Int64  # packed HlcTimestamp (monotonic int; range-queryable)
     event: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -147,7 +147,7 @@ class _MailboxDoc(Document):
 class _MailboxCreate(BaseDTO):
     principal: str
     event_id: str
-    hlc: int
+    hlc: Int64
     event: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -155,7 +155,7 @@ class _MailboxCreate(BaseDTO):
 class _MailboxRead(ReadDocument):
     principal: str
     event_id: str
-    hlc: int
+    hlc: Int64
     event: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -163,23 +163,23 @@ class _MailboxRead(ReadDocument):
 class _CursorDoc(Document):
     principal: str
     client_key: str
-    hlc: int
+    hlc: Int64
 
 
 class _CursorCreate(BaseDTO):
     principal: str
     client_key: str
-    hlc: int
+    hlc: Int64
 
 
 class _CursorUpdate(BaseDTO):
-    hlc: int
+    hlc: Int64
 
 
 class _CursorRead(ReadDocument):
     principal: str
     client_key: str
-    hlc: int
+    hlc: Int64
 
 
 # ....................... #

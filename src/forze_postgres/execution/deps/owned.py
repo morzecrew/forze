@@ -1,4 +1,4 @@
-"""The owned tables a :class:`PostgresDepsModule` binds (RFC 0080 §5.1).
+"""The owned tables a :class:`PostgresDepsModule` binds (RFC 0080 §5.1, §5.7).
 
 Every store table: the three durable tables, the outbox and its delivery log, the HLC
 checkpoint, the inbox, idempotency claims, counters, principal epochs and rotating
@@ -6,16 +6,29 @@ credentials. Several routes may name one table (two outbox routes, say), each wi
 config, so a table is bound once, with the union of its routes' shapes: a column one route's
 switch leaves out stays while another route writes it.
 
+Given the spec registry, also every framework-owned document table: each read-write document
+route whose spec the registry catalogues as
+:attr:`~forze.application.contracts.inventory.SpecSource.FRAMEWORK`. Forze ships that spec's
+models, so the application cannot change its table. Its shape is derived from the spec and the
+route's config (:func:`~forze_postgres.kernel.catalog.owned.documents.document_shape`).
+
 A relation given as a tenant-scoped resolver names no single table until a tenant is bound,
 so it is skipped and reported, as document schema validation skips dynamic routes.
 """
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Protocol, cast, final
+from typing import Any, Protocol, cast, final
 from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.inventory import (
+    FrozenSpecRegistry,
+    SpecPlane,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.contracts.resolution import RelationSpec, resolve_value
 from forze.base.exceptions import exc
 
@@ -35,8 +48,10 @@ from ...adapters.store_schema import (
     rotating_credentials_shape,
 )
 from ...kernel.catalog.owned import BoundOwnedRelation, OwnedRelationShape
+from ...kernel.catalog.owned.documents import document_shape
 from ...kernel.catalog.owned.render import default_partition_name
-from .configs import PostgresOutboxConfig
+from .configs import PostgresDocumentConfig, PostgresOutboxConfig
+from .document_binding import postgres_document_schema_spec_for_binding
 from .module import PostgresDepsModule
 
 # ----------------------- #
@@ -48,10 +63,23 @@ class OwnedRelations:
     """The owned relations a deps module binds, and the routes skipped as tenant-scoped."""
 
     bound: tuple[BoundOwnedRelation, ...]
-    """Each bound table with its shape, in deps-module field order, once per table."""
+    """Each bound store table with its shape, in deps-module field order, once per table."""
 
     skipped: tuple[str, ...]
     """Routes whose relation is a tenant-scoped resolver, so no single table is known."""
+
+    documents: tuple[BoundOwnedRelation, ...] = ()
+    """Each bound framework-owned document table, by route name. Empty unless the spec
+    registry was given. The startup step leaves these to document schema validation (RFC 0080
+    row 36), so a missing column is reported once."""
+
+    # ....................... #
+
+    @property
+    def tables(self) -> tuple[BoundOwnedRelation, ...]:
+        """The store tables, then the document tables: what ``forze schema`` prints."""
+
+        return (*self.bound, *self.documents)
 
 
 # ....................... #
@@ -93,9 +121,21 @@ def _delivery_logs(configs: Mapping[str, PostgresOutboxConfig] | None) -> list[_
     ]
 
 
-def _bind(entries: Iterable[_Entry]) -> OwnedRelations:
-    """One bound relation per table, its routes joined and their shapes united."""
+def _bind(
+    entries: Iterable[_Entry],
+    *,
+    documents: Iterable[_Entry] = (),
+    skipped_documents: Iterable[str] = (),
+) -> OwnedRelations:
+    """One bound relation per table, its routes joined and their shapes united.
 
+    *documents* are the document tables, bound after the store tables. No store table shares
+    one, since the union of a document's shape with any other refuses.
+    """
+
+    documents = list(documents)
+    document_routes = frozenset(route for route, _, _ in documents)
+    entries = [*entries, *documents]
     tables: dict[tuple[str, str], BoundOwnedRelation] = {}
     skipped: list[str] = []
 
@@ -119,9 +159,13 @@ def _bind(entries: Iterable[_Entry]) -> OwnedRelations:
 
     # Every name a partition could take, the bound tables' and each one already handed out.
     taken = set(tables)
-    bound = tuple(_name_default_partition(relation, taken) for relation in tables.values())
+    bound = [_name_default_partition(relation, taken) for relation in tables.values()]
 
-    return OwnedRelations(bound=bound, skipped=tuple(skipped))
+    return OwnedRelations(
+        bound=tuple(relation for relation in bound if relation.route not in document_routes),
+        skipped=(*skipped, *skipped_documents),
+        documents=tuple(relation for relation in bound if relation.route in document_routes),
+    )
 
 
 def _name_default_partition(
@@ -173,24 +217,109 @@ def _entries(deps: PostgresDepsModule) -> list[_Entry]:
     ]
 
 
-def owned_relations(deps: PostgresDepsModule) -> OwnedRelations:
+type _Document = tuple[str, PostgresDocumentConfig, DocumentSpec[Any, Any, Any, Any]]
+"""A framework-owned document route, its config and its spec."""
+
+
+def _framework_documents(
+    deps: PostgresDepsModule,
+    specs: SpecRegistry | FrozenSpecRegistry | None,
+) -> list[_Document]:
+    """The read-write routes whose spec *specs* catalogues as ``FRAMEWORK``, by route name.
+
+    ``KIT`` is not enough: a kit registers the application's own spec as ``KIT``. A read-only
+    route is the writer's table, not this module's.
+    """
+
+    if specs is None:
+        return []
+
+    registry = specs.freeze() if isinstance(specs, SpecRegistry) else specs
+    found: list[_Document] = []
+
+    for route, config in sorted((deps.rw_documents or {}).items()):
+        entry = registry.find(SpecPlane.DOCUMENT, str(route))
+
+        if (
+            entry is not None
+            and entry.source is SpecSource.FRAMEWORK
+            and isinstance(entry.spec, DocumentSpec)
+        ):
+            found.append((str(route), config, entry.spec))  # pyright: ignore[reportUnknownArgumentType]
+
+    return found
+
+
+def _is_dynamic(config: PostgresDocumentConfig) -> bool:
+    return any(callable(relation) for relation in (config.read, config.write, config.history))
+
+
+def _document_entry(
+    route: str,
+    config: PostgresDocumentConfig,
+    spec: DocumentSpec[Any, Any, Any, Any],
+    *,
+    label: str | None = None,
+) -> _Entry:
+    """The write relation of a static route, with the table its spec and config derive."""
+
+    schema_spec = postgres_document_schema_spec_for_binding(route, spec=spec, config=config)
+
+    return (label or route, config.write, document_shape(schema_spec))
+
+
+async def _for_tenant(config: PostgresDocumentConfig, tenant: UUID) -> PostgresDocumentConfig:
+    """*config* with each resolver replaced by the table it names for *tenant*."""
+
+    async def resolved(relation: RelationSpec | None) -> RelationSpec | None:
+        if relation is None or not callable(relation):
+            return relation
+
+        return await resolve_value(cast(RelationSpec, relation), tenant)
+
+    return attrs.evolve(
+        config,
+        read=await resolved(config.read),
+        write=await resolved(config.write),
+        history=await resolved(config.history),
+    )
+
+
+def owned_relations(
+    deps: PostgresDepsModule,
+    *,
+    specs: SpecRegistry | FrozenSpecRegistry | None = None,
+) -> OwnedRelations:
     """Pair each owned table *deps* configures with the shape its configs declare.
 
-    A relation given as a tenant-scoped resolver is skipped; :func:`resolve_owned_relations`
-    binds it for the tenants it is given.
+    With *specs*, the application's spec registry, the framework-owned document tables are
+    bound too (:attr:`OwnedRelations.documents`). A relation given as a tenant-scoped resolver
+    is skipped; :func:`resolve_owned_relations` binds it for the tenants it is given.
 
     :raises CoreException: ``configuration``, code ``postgres_owned_relation_shared``, when
         routes that name one table declare different tables for it, such as an outbox and an
-        inbox.
+        inbox; code ``postgres_document_render_refused`` when a framework spec's table cannot
+        be printed.
     """
 
-    return _bind(_entries(deps))
+    documents = _framework_documents(deps, specs)
+
+    return _bind(
+        _entries(deps),
+        documents=[
+            _document_entry(route, config, spec)
+            for route, config, spec in documents
+            if not _is_dynamic(config)
+        ],
+        skipped_documents=[route for route, config, _ in documents if _is_dynamic(config)],
+    )
 
 
 async def resolve_owned_relations(
     deps: PostgresDepsModule,
     *,
     tenants: Sequence[UUID],
+    specs: SpecRegistry | FrozenSpecRegistry | None = None,
 ) -> OwnedRelations:
     """:func:`owned_relations`, with each tenant-scoped relation bound once per tenant.
 
@@ -212,8 +341,24 @@ async def resolve_owned_relations(
 
         for tenant in tenants:
             # The spec as configured, so the resolver's result types the value.
-            spec = cast(RelationSpec, relation)
-            resolved = await resolve_value(spec, tenant)
+            configured = cast(RelationSpec, relation)
+            resolved = await resolve_value(configured, tenant)
             entries.append((f"{route}[{tenant}]", resolved, shape))
 
-    return _bind(entries)
+    documents: list[_Entry] = []
+    skipped: list[str] = []
+
+    for route, config, spec in _framework_documents(deps, specs):
+        if not _is_dynamic(config):
+            documents.append(_document_entry(route, config, spec))
+            continue
+
+        if not tenants:
+            skipped.append(route)
+            continue
+
+        for tenant in tenants:
+            bound = await _for_tenant(config, tenant)
+            documents.append(_document_entry(route, bound, spec, label=f"{route}[{tenant}]"))
+
+    return _bind(entries, documents=documents, skipped_documents=skipped)

@@ -8,8 +8,10 @@
   Units 33 and 34 (D-332 to D-349). **P2b is built**: repeated `--tenant` and the §5.4
   startup step, recorded in Unit 35 (D-350 to D-354). The maintainer accepted the proposed
   rows of Units 33 to 35 on 2026-11-25 (rows 10, 11, 13, 14, 17 and 24, and rows 39–47), which
-  settle §10 Q4 and Q5. **P2c is next; P3 is demand-gated.** Row 2's amendment to the beta
-  rule was accepted on 2026-11-04 (§10 Q1).
+  settle §10 Q4 and Q5. **P2c is built**: the framework-owned document tables, `--specs`,
+  the `Int64` width marker and `DocumentSpec.required_indexes`, recorded in Unit 37 (D-360 to
+  D-371). **P3 is demand-gated.** Row 2's amendment to the beta rule was accepted on
+  2026-11-04 (§10 Q1).
 - **Scope:** Moves the DDL for the Postgres tables forze owns out of docstrings and markdown
   into one declaration per table, kept in code. Adds a `forze schema` CLI group:
   - `sql` prints the `CREATE` statements a fresh install needs;
@@ -32,8 +34,9 @@
   - add a migration runner or history table;
   - detect data rewrites (P3, demand-gated).
 
-  It adds no port and changes no contract. New code lives in `forze_postgres` (the
-  declarations, the diff) and `forze_cli` (the group).
+  It adds no port. P1 to P2b change no contract, and P2c adds two backend-neutral ones
+  (§5.7). New code lives in `forze_postgres` (the declarations, the diff) and `forze_cli`
+  (the group).
 - **Related:**
   - The DDL that exists today, in docstrings:
     - [`src/forze_postgres/adapters/durable/run_store.py:123-189`](../src/forze_postgres/adapters/durable/run_store.py),

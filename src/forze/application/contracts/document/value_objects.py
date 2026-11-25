@@ -131,6 +131,52 @@ class OwnedBy:
 # ....................... #
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DocumentIndex:
+    """An index a spec's correctness relies on that is not a storage guarantee.
+
+    Identity's unique ``username`` is one: registration checks for an existing login and then
+    inserts, and only a unique index stops two concurrent registrations. Not every document
+    store can keep one, so it is not a
+    :class:`~forze.application.contracts.guarantees.UniqueTogether`, and nothing refuses a
+    store that lacks it at wiring. A store that can keep it keeps it, and one that cannot
+    ignores it. Forze's Postgres schema render prints it as a required index (RFC 0080 row 34).
+
+    :raises CoreException: ``configuration`` when no field is named, a field is named twice,
+        or ``skip_null`` is set on an index that is not unique.
+    """
+
+    fields: tuple[str, ...]
+    """The indexed fields, in key order."""
+
+    unique: bool = False
+    """Whether at most one row may hold each tuple of :attr:`fields`."""
+
+    skip_null: bool = False
+    """Whether a unique index exempts rows whose tuple holds a null. Off by default: a null
+    counts as one value, so a nullable field's ``NULL`` is unique too, as
+    :attr:`UniqueTogether.skip_null <forze.application.contracts.guarantees.UniqueTogether.skip_null>`
+    reads it."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.fields:
+            raise exc.configuration("DocumentIndex names no field.")
+
+        if len(set(self.fields)) != len(self.fields):
+            raise exc.configuration(f"DocumentIndex names a field twice: {self.fields!r}.")
+
+        if self.skip_null and not self.unique:
+            raise exc.configuration(
+                f"DocumentIndex over {self.fields!r} sets skip_null, which only a unique index "
+                "reads.",
+            )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True)
 class KeyedCreate[C: BaseDTO]:
     """A create payload paired with the primary key to insert it at."""

@@ -83,7 +83,7 @@ from .mapping import (
     StrKeyMapping,
 )
 from .namespace import StrKeyNamespace
-from .numeric import clamp
+from .numeric import Int64, IntWidth, clamp, int_width
 from .period import Bounds, Period, grain_of
 from .projection import (
     MISSING,
@@ -183,6 +183,9 @@ __all__ = [
     "StripedAsyncLocks",
     "normalize_string",
     "clamp",
+    "Int64",
+    "IntWidth",
+    "int_width",
     "MISSING",
     "build_projection",
     "path_get",

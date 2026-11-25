@@ -39,6 +39,7 @@ from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresInt
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
+from tests.support.owned_schema import create_document_table
 
 pytestmark = pytest.mark.integration
 
@@ -46,25 +47,6 @@ pytestmark = pytest.mark.integration
 
 USER = uuid4()
 OTHER = uuid4()
-
-# The audit collection's DDL, as the docs page hands it to applications (not tenant-aware here).
-_AUDIT_DDL = """
-CREATE TABLE audit_events (
-    id uuid PRIMARY KEY,
-    rev integer NOT NULL,
-    created_at timestamptz NOT NULL,
-    last_update_at timestamptz NOT NULL,
-    action text NOT NULL,
-    outcome text NOT NULL,
-    actor_id uuid,
-    subject_id uuid,
-    actor_ids uuid[] NOT NULL DEFAULT '{}',
-    object_type text,
-    object_id text,
-    metadata jsonb NOT NULL DEFAULT '{}',
-    at timestamptz NOT NULL
-);
-"""
 
 _THINGS_DDL = """
 CREATE TABLE audit_things (
@@ -195,7 +177,8 @@ async def _things(pg_client: PostgresClient) -> int:
 @pytest_asyncio.fixture(autouse=True)
 async def _tables(pg_client: PostgresClient):
     await pg_client.execute("DROP TABLE IF EXISTS audit_events; DROP TABLE IF EXISTS audit_things;")
-    await pg_client.execute(_AUDIT_DDL)
+    # The audit table as `forze schema sql --specs` prints it (not tenant-aware here).
+    await create_document_table(pg_client, TRAIL, "public", "audit_events")
     await pg_client.execute(_THINGS_DDL)
     yield
 

@@ -399,9 +399,10 @@ def satisfies(
     text_columns: frozenset[str] = frozenset(),
 ) -> bool:
     """Whether *index* is the declared index: the same keys, uniqueness and predicate, with
-    default operator classes and collations, and nulls distinct as Postgres has them by
-    default. A unique one must also be immediate, since ``ON CONFLICT`` never takes a
-    deferrable index as its arbiter.
+    default operator classes and collations, and nulls compared as declared (distinct, as
+    Postgres has them by default, unless the index says ``NULLS NOT DISTINCT``). A unique one
+    must also be immediate, since ``ON CONFLICT`` never takes a deferrable index as its
+    arbiter.
 
     ``INCLUDE`` columns do not count against it: they add payload and change neither which
     rows the index finds nor which tuples are unique.
@@ -413,7 +414,7 @@ def satisfies(
         and same_predicate(declared, index, text_columns)
         and index.default_opclasses
         and index.default_collations
-        and not index.nulls_not_distinct
+        and index.nulls_not_distinct == declared.nulls_not_distinct
         and not index.primary
         and (index.immediate or not index.unique)
     )
@@ -446,8 +447,14 @@ def conflicting_unique(
     if inferred and not index.immediate:
         return "is DEFERRABLE, and ON CONFLICT infers it and then refuses it"
 
-    # Not a question of inference: any index that holds a NULL key refuses the second one.
-    if nullable_keys and index.nulls_not_distinct and not _holds_no_null(index, nullable_keys):
+    # Not a question of inference: any index that holds a NULL key refuses the second one,
+    # unless the target declares that refusal itself.
+    if (
+        nullable_keys
+        and index.nulls_not_distinct
+        and not target.nulls_not_distinct
+        and not _holds_no_null(index, nullable_keys)
+    ):
         return "is NULLS NOT DISTINCT, so two rows without a key collide on it"
 
     return None

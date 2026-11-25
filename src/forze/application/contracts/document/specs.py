@@ -63,6 +63,7 @@ from ..querying.field_policy import validate_field_policy
 from ..querying.field_types import unwrap_annotated
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from .codecs import DocumentCodecs, document_codecs_for_spec
+from .value_objects import DocumentIndex
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #
@@ -697,6 +698,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     Empty by default, and empty asks for nothing — the reconciliation is inert for a spec that
     declares no guarantee, which is every spec that has not opted in."""
 
+    required_indexes: tuple[DocumentIndex, ...] = ()
+    """Indexes this aggregate's correctness relies on that are not storage guarantees (see
+    :class:`~forze.application.contracts.document.DocumentIndex`), such as a unique login name
+    checked before it is inserted.
+
+    Unlike :attr:`guarantees`, nothing refuses a store that cannot keep one. A store that can
+    keeps it, and one that cannot ignores it. Each must name stored fields of the write domain
+    model. Empty by default."""
+
     # ....................... #
 
     @functools.cached_property
@@ -776,6 +786,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
         if self.guarantees:
             self._validate_guarantees()
+
+        if self.required_indexes:
+            self._validate_required_indexes()
 
         read_fields = self._read_query_fields()
 
@@ -1132,6 +1145,37 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                     "the guarantee's fields on the persisted row and selects its rows with the "
                     "guarantee's filter; a name that is not there reads as null and quietly "
                     "changes the property rather than failing.",
+                )
+
+    # ....................... #
+
+    def _validate_required_indexes(self) -> None:
+        """Refuse a required index on a spec with no write side, or naming a field the write
+        domain model does not store.
+
+        A misspelled field would print an index over a column no write fills, so the index a
+        registration relies on would never exist where it is needed.
+
+        :raises CoreException: ``configuration``, code ``document_index_invalid``.
+        """
+
+        if self.write is None:
+            raise exc.configuration(
+                f"Spec {self.name!r} declares required_indexes but has no write model, so no "
+                "store writes the rows they would index.",
+                code="document_index_invalid",
+            )
+
+        stored = stored_field_names_for(self.write["domain"], include_computed=False) - (
+            self.write_omit_fields
+        )
+
+        for index in self.required_indexes:
+            if unknown := frozenset(index.fields) - stored:
+                raise exc.configuration(
+                    f"A required index on spec {self.name!r} names {sorted(unknown)}, which "
+                    "the write domain model does not store.",
+                    code="document_index_invalid",
                 )
 
     # ....................... #

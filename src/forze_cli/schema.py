@@ -19,7 +19,8 @@ Exit codes are a contract for CI. They say what the diff found, whether or not i
 * ``1``: an internal error.
 
 ``--check`` prints no SQL and keeps the code; warnings still go to stderr. ``--keep-retired``
-leaves retired indexes out.
+leaves retired indexes out. ``--specs`` adds the framework-owned document tables: identity,
+audit, progress, the realtime mailbox and cursors, and stored files (RFC 0080 §5.7).
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from forze_cli._compat import require_postgres
 from forze_cli.loader import load_object
 
 if TYPE_CHECKING:
+    from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
     from forze.base.exceptions import CoreException
     from forze_postgres import OwnedRelations, PostgresDepsModule
     from forze_postgres.kernel.catalog.owned import BoundOwnedRelation, RelationDelta
@@ -66,6 +68,12 @@ _DEPS_HELP: Final = (
     "The PostgresDepsModule, or a sequence holding exactly one, as 'module:attribute'."
 )
 
+_SPECS_HELP: Final = (
+    "The application's SpecRegistry or FrozenSpecRegistry, as 'module:attribute'. Adds the "
+    "tables of the document routes whose spec it catalogues as framework-owned. Without it, "
+    "only the store tables are covered."
+)
+
 _TENANT_HELP: Final = (
     "Bind each tenant-scoped relation for this tenant id; repeat for several tenants. "
     "Without it, such a relation is skipped."
@@ -78,7 +86,8 @@ schema_app = typer.Typer(
         "with your migration tool. Covers the store tables a PostgresDepsModule configures: "
         "durable runs, steps and schedules, outboxes and their delivery logs, the HLC "
         "checkpoint, inboxes, idempotency claims, counters, principal epochs and rotating "
-        "credentials."
+        "credentials. With --specs, also the document tables forze owns: identity, audit, "
+        "progress, the realtime mailbox and cursors, and stored files."
     ),
 )
 
@@ -125,6 +134,31 @@ def _load_deps(ref: str) -> PostgresDepsModule:
     _fail(f"--deps {ref!r} is not a PostgresDepsModule.", EXIT_CONFIG)
 
 
+def _load_specs(ref: str | None) -> SpecRegistry | FrozenSpecRegistry | None:
+    from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    if ref is None:
+        return None
+
+    try:
+        obj = load_object(ref)
+
+    except (ImportError, AttributeError, ValueError) as error:
+        _fail(f"Cannot load --specs {ref!r}: {error}", EXIT_CONFIG)
+
+    except CoreException as error:
+        if error.kind is not ExceptionKind.CONFIGURATION:
+            raise
+
+        _fail(f"Cannot load --specs {ref!r}: {error.summary}", EXIT_CONFIG)
+
+    if not isinstance(obj, SpecRegistry | FrozenSpecRegistry):
+        _fail(f"--specs {ref!r} is not a SpecRegistry or a FrozenSpecRegistry.", EXIT_CONFIG)
+
+    return obj
+
+
 def _tenant_ids(values: Sequence[str]) -> tuple[UUID, ...]:
     tenants: list[UUID] = []
 
@@ -138,18 +172,26 @@ def _tenant_ids(values: Sequence[str]) -> tuple[UUID, ...]:
     return tuple(dict.fromkeys(tenants))
 
 
-def _relations(ref: str, tenants: Sequence[str] = ()) -> OwnedRelations:
+def _relations(
+    ref: str,
+    tenants: Sequence[str] = (),
+    specs_ref: str | None = None,
+) -> OwnedRelations:
     from forze.base.exceptions import CoreException, ExceptionKind
     from forze_postgres import owned_relations, resolve_owned_relations
 
     ids = _tenant_ids(tenants)
     deps = _load_deps(ref)
+    specs = _load_specs(specs_ref)
 
     # Routes that cannot share their table are refused as they are bound, and a resolver
-    # that refuses a tenant is the deps module's configuration too.
+    # that refuses a tenant is the deps module's configuration too, as is a framework spec
+    # whose table cannot be printed.
     try:
         relations = (
-            _run(resolve_owned_relations(deps, tenants=ids)) if ids else owned_relations(deps)
+            _run(resolve_owned_relations(deps, tenants=ids, specs=specs))
+            if ids
+            else owned_relations(deps, specs=specs)
         )
 
     except CoreException as error:
@@ -174,6 +216,7 @@ def _relations(ref: str, tenants: Sequence[str] = ()) -> OwnedRelations:
 @schema_app.command("sql")
 def sql_command(
     deps: str = typer.Option(..., "--deps", metavar="MODULE:ATTR", help=_DEPS_HELP),
+    specs: str | None = typer.Option(None, "--specs", metavar="MODULE:ATTR", help=_SPECS_HELP),
     tenant: list[str] = typer.Option([], "--tenant", metavar="UUID", help=_TENANT_HELP),
 ) -> None:
     """Print the CREATE statements for every owned table the deps module binds.
@@ -185,8 +228,8 @@ def sql_command(
 
     from forze_postgres.kernel.catalog.owned import render_sql
 
-    relations = _relations(deps, tenant)
-    typer.echo(render_sql(relations.bound, version=__version__), nl=False)
+    relations = _relations(deps, tenant, specs)
+    typer.echo(render_sql(relations.tables, version=__version__), nl=False)
 
 
 # ....................... #
@@ -305,6 +348,7 @@ def _exit_for(error: CoreException) -> int:
 )
 def diff_command(
     deps: str = typer.Option(..., "--deps", metavar="MODULE:ATTR", help=_DEPS_HELP),
+    specs: str | None = typer.Option(None, "--specs", metavar="MODULE:ATTR", help=_SPECS_HELP),
     check: bool = typer.Option(
         False,
         "--check",
@@ -340,10 +384,10 @@ def diff_command(
     if not url:
         _fail(f"{DSN_ENV} is not set. {_ROLE_NOTE}", EXIT_CONFIG)
 
-    relations = _relations(deps, tenant)
+    relations = _relations(deps, tenant, specs)
 
     try:
-        deltas = _run(_read_deltas(url, relations.bound, keep_retired=keep_retired))
+        deltas = _run(_read_deltas(url, relations.tables, keep_retired=keep_retired))
 
     except CoreException as error:
         _fail(f"Cannot read the catalog: {error.summary}", _exit_for(error))

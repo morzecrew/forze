@@ -1,6 +1,10 @@
+from typing import get_args
+
 import pytest
 
-from forze.base.primitives.numeric import clamp
+from pydantic import BaseModel
+
+from forze.base.primitives.numeric import Int64, IntWidth, clamp, int_width
 
 
 class TestClamp:
@@ -32,3 +36,24 @@ class TestClamp:
     def test_inverted_bounds_raise(self) -> None:
         with pytest.raises(ValueError, match="inverted"):
             clamp(5, 20, 10)
+
+
+class TestIntWidth:
+    def test_int64_validates_as_an_int_and_states_its_width(self) -> None:
+        class Row(BaseModel):
+            hlc: Int64
+            size: Int64 | None = None
+            count: int = 0
+
+        fields = Row.model_fields
+
+        assert Row(hlc=2**62).hlc == 2**62
+        assert int_width(fields["hlc"].annotation, fields["hlc"].metadata) == 64
+        # Inside a union the Annotated stays in the annotation: read its member.
+        assert fields["size"].metadata == []
+        assert int_width(get_args(fields["size"].annotation)[0]) == 64
+        assert int_width(Int64) == 64
+        assert int_width(fields["count"].annotation, fields["count"].metadata) is None
+
+    def test_a_width_is_read_from_metadata_alone(self) -> None:
+        assert int_width(int, [IntWidth(32)]) == 32

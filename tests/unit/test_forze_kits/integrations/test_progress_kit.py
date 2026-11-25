@@ -1402,7 +1402,9 @@ class TestTheMergeUnderConcurrency:
 class TestSpecContributions:
     """The inventory half — both progress specs are ones no application author wrote."""
 
-    def test_both_halves_are_catalogued_as_the_kit_s(self) -> None:
+    def test_both_halves_are_catalogued_as_the_framework_s(self) -> None:
+        # Forze ships both specs and their models, so the application cannot change the job
+        # table, and `forze schema` prints it (RFC 0080 row 28).
         entries = progress_spec_contributions(spec=_SPEC, outbox_spec=_PROGRESS_OUTBOX).freeze()
         by_plane = {
             entry.plane: (entry.name, entry.disposition, entry.source) for entry in entries.entries
@@ -1413,12 +1415,12 @@ class TestSpecContributions:
         assert by_plane[SpecPlane.DOCUMENT] == (
             str(_SPEC.name),
             PlaneDisposition.EXPORTABLE,
-            SpecSource.KIT,
+            SpecSource.FRAMEWORK,
         )
         assert by_plane[SpecPlane.OUTBOX] == (
             str(_PROGRESS_OUTBOX.name),
             PlaneDisposition.DRAINED,
-            SpecSource.KIT,
+            SpecSource.FRAMEWORK,
         )
 
     def test_only_the_half_you_wired_is_catalogued(self) -> None:
