@@ -108,5 +108,8 @@ type AcceptEffect = Callable[
     Awaitable[None],
 ]
 """What accepting authorises, run inside the decide transaction with the decided proposal
-and its accepted items: it lands with the verdicts, or neither does. Queue long-running work
-from it rather than running it here."""
+and its accepted items: it lands with the verdicts, or neither does, and it does not run when
+no item is accepted. Write a long-running job's queue entry from it, through a transactional
+outbox or a durable enqueue that joins the transaction, rather than running the job here. Write
+the target conditionally on ``proposal.base``: the kit's stale check reads before the effect
+writes, so two open proposals on one base can both pass it."""

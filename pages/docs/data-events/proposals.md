@@ -95,14 +95,26 @@ proposed and what was decided.
 ## What accepting authorises
 
 `on_accept(ctx, proposal, accepted_items)` runs inside the decide transaction, after the
-verdicts are stored: the effect and the decision land together, or neither does. Keep it to
-the cheap part, such as saving a new revision of what the items change, and queue anything
-long-running from it, keyed by the proposal id, rather than running it there.
+verdicts are stored: the effect and the decision land together, or neither does. A decision
+that accepts nothing runs no effect. Keep the effect to the cheap part, such as saving a new
+revision of what the items change.
+
+For anything long-running, write its queue entry from the effect, so it commits with the
+decision: an event on a [transactional outbox](../recipes/transactional-outbox.md), or an enqueue on a durable
+run store that joins the transaction. Queued after the commit instead, a crash between the
+two leaves an accepted change that nothing applies. Key the work by the proposal id, so a
+redelivery applies it once.
 
 `base_of(ctx, scope)` returns the current version of what a scope's proposals change. A
 proposal records the version it was made against, and deciding it after that moved is
 refused: the reviewer would be accepting changes to something that no longer exists in that
 form. Request a new proposal instead.
+
+That check reads before it writes, so it is a fast refusal, not the guarantee: two open
+proposals on one base can pass it at once. Make the effect's write conditional on
+`proposal.base`, as a compare-and-set on the target's version or a unique constraint on its
+next version, so the second decision fails in the database rather than applying to a target
+the first already moved.
 
 ## Refusals
 
