@@ -1154,7 +1154,8 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         domain model does not store.
 
         A misspelled field would print an index over a column no write fills, so the index a
-        registration relies on would never exist where it is needed.
+        registration relies on would never exist where it is needed. A :attr:`materialized`
+        field is stored, and may be indexed.
 
         :raises CoreException: ``configuration``, code ``document_index_invalid``.
         """
@@ -1166,9 +1167,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 code="document_index_invalid",
             )
 
-        stored = stored_field_names_for(self.write["domain"], include_computed=False) - (
-            self.write_omit_fields
-        )
+        # A materialized computed field is persisted too, so it can be indexed.
+        stored = (
+            stored_field_names_for(self.write["domain"], include_computed=False) | self.materialized
+        ) - self.write_omit_fields
 
         for index in self.required_indexes:
             if unknown := frozenset(index.fields) - stored:

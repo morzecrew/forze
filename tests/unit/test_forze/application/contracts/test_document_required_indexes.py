@@ -2,6 +2,7 @@
 (RFC 0080 row 34)."""
 
 import pytest
+from pydantic import computed_field
 
 from forze.application.contracts.document import DocumentIndex, DocumentSpec
 from forze.base.exceptions import CoreException
@@ -80,3 +81,41 @@ def test_a_read_only_spec_declares_no_required_index() -> None:
 def test_a_malformed_index_is_refused_as_it_is_built(kwargs: dict[str, object]) -> None:
     with pytest.raises(CoreException):
         DocumentIndex(**kwargs)  # type: ignore[arg-type]
+
+
+def test_a_materialized_field_may_be_indexed() -> None:
+    # Materialized means persisted: its column exists, so an index over it is one a store
+    # can keep. A computed field that is not materialized has no column and stays refused.
+    class _Named(Document):
+        first: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def full(self) -> str:
+            return self.first
+
+    class _NamedRead(ReadDocument):
+        first: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def full(self) -> str:
+            return self.first
+
+    index = DocumentIndex(fields=("full",))
+
+    def spec(materialized: frozenset[str]) -> DocumentSpec[_NamedRead, _Named, BaseDTO, BaseDTO]:
+        return DocumentSpec(
+            name="named",
+            read=_NamedRead,
+            write={"domain": _Named, "create_cmd": BaseDTO},
+            materialized=materialized,
+            required_indexes=(index,),
+        )
+
+    assert spec(frozenset({"full"})).required_indexes == (index,)
+
+    with pytest.raises(CoreException) as caught:
+        spec(frozenset())
+
+    assert caught.value.code == "document_index_invalid"
