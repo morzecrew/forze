@@ -134,7 +134,10 @@ class SpecRegistry:
         ``identity=False`` sticks, and a per-tenant export carries API keys and session tokens;
         register an explicit ``REFUSED`` second and it is silently downgraded to exportable.
         Conflicting metadata is refused instead; ``source`` is provenance, not a guarantee, so
-        it alone never conflicts.
+        it alone never conflicts. It is not first-wins either: a ``FRAMEWORK`` registration
+        replaces another source's of the same spec, so an application that also registers a
+        spec forze ships keeps it catalogued as forze's, whichever registration comes first.
+        ``forze schema --specs`` prints only a framework spec's table.
         """
 
         existing = self._entries.get(_key(entry))
@@ -156,6 +159,9 @@ class SpecRegistry:
                     f"identity={entry.identity}. Exports act on these flags, so the "
                     f"registrations must agree — align them (or register the spec once)."
                 )
+
+            if entry.source is SpecSource.FRAMEWORK:
+                self._entries[_key(entry)] = entry
 
             return self
 

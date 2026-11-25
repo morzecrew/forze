@@ -61,3 +61,20 @@ def test_the_stored_file_collection_is_the_framework_s() -> None:
     assert [(entry.plane, entry.name, entry.source) for entry in registry.entries] == [
         (SpecPlane.DOCUMENT, "files", SpecSource.FRAMEWORK)
     ]
+
+
+@pytest.mark.parametrize("framework_first", [True, False])
+def test_the_framework_source_holds_whichever_registration_comes_first(
+    framework_first: bool,
+) -> None:
+    # An application that also registers a spec forze ships keeps it forze's, so its table
+    # is printed either way.
+    kit = StoredFileKitSpec(name="files")
+    own = SpecRegistry().register(kit.document)
+    registry = (
+        kit.document_contributions().merge(own)
+        if framework_first
+        else own.merge(kit.document_contributions())
+    )
+
+    assert _documents(registry) == [("files", SpecSource.FRAMEWORK)]
