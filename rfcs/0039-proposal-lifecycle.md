@@ -56,7 +56,23 @@ the kit takes its shape, since a kit built from §2 would fit neither of its two
 
 What acceptance authorises splits in two (§7 Q3). The cheap effect lands with the verdicts, in
 one transaction: bi saves the new spec revision and the decided proposal together, or neither.
-The long effect, applying that revision to a warehouse, is queued from it and runs on its own.
+The long effect, applying that revision to a warehouse, runs on its own, but its queue entry is
+written in that same transaction, through the transactional outbox or a durable enqueue that
+joins it. Queued after the commit, a crash between the two would leave an accepted change that
+nothing ever applies, and nothing would find it again.
+
+Three rules keep acceptance exact:
+
+- **No accepted item, no effect.** A decision that rejects every item records the verdicts and
+  runs no effect, so an un-accepted proposal changes nothing downstream (row 7).
+- **The base is checked where the target is written.** Reading the base, comparing it and then
+  writing does not stop two open proposals on one base from both being accepted, each applied
+  to a target the other already moved. The effect therefore writes the target conditionally on
+  the base the proposal recorded, as a compare-and-set on the target's version or a uniqueness
+  on its next version, and a write that finds the base moved is refused as stale. The kit's own
+  check before the effect is a fast refusal, not the guarantee.
+- **One decision per proposal.** The verdicts are stored at the revision read, so of two
+  concurrent decisions on one proposal the second fails before its effect runs.
 
 The statuses are therefore `pending`, `open`, `decided` and `failed`, and an item's verdict is
 `pending`, `accepted` or `rejected`.
@@ -150,7 +166,7 @@ The same package, with §2.1's shape:
 | 12 | `ASSUMED` | Accepting may amend: an accepted item keeps what was proposed and what was decided. An item may be a question, which is accepted only with the reviewer's answer (§2.1) |
 | 13 | `ASSUMED` | Evidence and confidence are per item, typed by the application; re-evaluating is a new proposal (§7 Q4) |
 | 14 | `ASSUMED` | A proposal records a caller-supplied base; deciding it against a moved base is refused as `proposal_stale`. There is no `superseded` status (§7 Q2) |
-| 15 | `ASSUMED` | Deciding stores the verdicts and runs the application's accept effect in one transaction; a long-running effect is queued from it, idempotent per proposal. Departs from §7 Q3's lean on the cheap half only (§2.1) |
+| 15 | `ASSUMED` | Deciding stores the verdicts and runs the application's accept effect in one transaction, and runs no effect when no item is accepted. A long-running effect is queued in that transaction, through the transactional outbox or a durable enqueue that joins it, idempotent per proposal. The effect writes the target conditionally on the proposal's base; the kit's base check is a fast refusal. Departs from §7 Q3's lean on the cheap half only (§2.1) |
 | 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal, or returns the one pending for its scope, and a run stores the proposer's items as `open` or its error as `failed` (§2.1) |
 | 17 | `ASSUMED` | The spec registers as `KIT`: its item models are the application's, so its table is too (RFC 0080 row 28) |
 
