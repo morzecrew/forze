@@ -77,7 +77,8 @@ the resolver validates it against the principal's membership.
 **Static identity.** It costs three things, so it is refused unless you acknowledge it:
 
 - there is no expiry, revocation or eligibility check;
-- every operator shares one audit actor;
+- every operator shares one audit actor, so a row tells a `forze ops` call (`surface` is `cli`)
+  from an HTTP one, but not one operator from another;
 - every caller shares one idempotency namespace. Two jobs passing the same
   `--idempotency-key` share one claim, so prefix keys with the job's name.
 

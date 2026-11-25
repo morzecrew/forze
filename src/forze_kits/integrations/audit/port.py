@@ -45,6 +45,9 @@ class DocumentAuditPort(AuditPort):
             object_id=ref.id if ref is not None else None,
             metadata=dict(entry.metadata),
             at=entry.at,
+            surface=entry.surface,
+            execution_id=entry.execution_id,
+            correlation_id=entry.correlation_id,
         )
 
         # Inside the operation's transaction this nests on the same route and commits or rolls

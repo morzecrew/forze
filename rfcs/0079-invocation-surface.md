@@ -7,8 +7,11 @@
   span attribute. §10 Q4 was taken at its lean; that and every other departure are recorded
   in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-209), and the maintainer
   accepted the proposed rows on 2026-11-04 (rows 17–22). §10 Q1–Q3 were settled by the
-  maintainer on 2026-11-23, each at its lean (rows 8, 12 and 13), so **P2 (the audit trail) is
-  ready to build.**
+  maintainer on 2026-11-23, each at its lean (rows 8, 12 and 13). **P2 shipped**: `surface`,
+  `execution_id` and `correlation_id` on every audit row, read from the bound metadata, with the
+  Postgres migration and the first MongoDB audit test; RFC 0060's table carries the row decision
+  15 planned. Departures are in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 39 (D-378 to
+  D-380). **P3 is demand-gated.**
 - **Scope:** One field, `InvocationMetadata.surface`, naming the framework boundary an
   invocation entered through: `http`, `mcp`, `cli`, and so on. It settles:
   - the vocabulary, and who may set it: the boundary, never the caller;

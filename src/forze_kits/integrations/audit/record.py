@@ -1,9 +1,10 @@
 """The audit collection — one row per audited operation, and its spec factory.
 
 The collection is the framework's, the table is the application's (the ``job_record_spec``
-pattern): :func:`audit_record_spec` hands over the spec and the DDL is documented rather than
-migrated for you. Wire it **tenant-aware** and the adapter injects and scopes ``tenant_id``
-like every other collection. Rows are written once and never updated, so the spec has no
+pattern): :func:`audit_record_spec` hands over the spec, ``forze schema sql --specs`` prints
+its DDL once :func:`~.inventory.audit_spec_contributions` catalogues it, and the application's
+migration tool applies it. Wire it **tenant-aware** and the adapter injects and scopes
+``tenant_id`` like every other collection. Rows are written once and never updated, so the spec has no
 update command and no history.
 """
 
@@ -35,6 +36,9 @@ class AuditDoc(Document):
     object_id: str | None = None
     metadata: dict[str, AuditScalar] = Field(default_factory=dict)
     at: datetime
+    surface: str | None = None
+    execution_id: UUID | None = None
+    correlation_id: UUID | None = None
 
 
 class AuditCreate(BaseDTO):
@@ -47,6 +51,9 @@ class AuditCreate(BaseDTO):
     object_id: str | None = None
     metadata: dict[str, AuditScalar] = Field(default_factory=dict)
     at: datetime
+    surface: str | None = None
+    execution_id: UUID | None = None
+    correlation_id: UUID | None = None
 
 
 class AuditRecord(ReadDocument):
@@ -80,6 +87,16 @@ class AuditRecord(ReadDocument):
     at: datetime
     """When it was recorded."""
 
+    surface: str | None = None
+    """The boundary the operation entered through (``http``, ``cli``, ``inbox`` …), or
+    ``unknown``; ``None`` on a row written before the field existed."""
+
+    execution_id: UUID | None = None
+    """The invocation's execution id, which joins the row to its log lines."""
+
+    correlation_id: UUID | None = None
+    """The invocation's correlation id: tracing context, chosen by the client over HTTP."""
+
 
 # ....................... #
 
@@ -87,7 +104,19 @@ AuditDocumentSpec = DocumentSpec[AuditRecord, AuditDoc, AuditCreate, BaseDTO]
 """The audit collection's spec type (only the read model is public)."""
 
 _QUERIED_FIELDS: Final = frozenset(
-    {"action", "outcome", "actor_id", "subject_id", "actor_ids", "object_type", "object_id", "at"}
+    {
+        "action",
+        "outcome",
+        "actor_id",
+        "subject_id",
+        "actor_ids",
+        "object_type",
+        "object_id",
+        "at",
+        "surface",
+        "execution_id",
+        "correlation_id",
+    }
 )
 """What a trail is read by: "every disclosure of this record", "everything this actor did"."""
 

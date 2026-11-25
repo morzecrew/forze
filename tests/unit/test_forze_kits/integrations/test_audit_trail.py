@@ -32,6 +32,7 @@ from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import BeforeStep
 from forze.application.execution import ExecutionContext, check_wiring
+from forze.application.execution.context import InvocationMetadata, InvocationSurface
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.audit import Audited
@@ -322,6 +323,72 @@ class TestEveryOutcome:
     def test_a_transactional_binding_without_a_route_is_refused(self) -> None:
         with pytest.raises(CoreException):
             _registry(Audited(spec=SPEC), tx=False)
+
+
+class _Forged(_Args):
+    surface: str = "cli"
+    execution_id: UUID = OTHER
+    correlation_id: UUID = OTHER
+
+
+class TestTheSurface:
+    async def test_the_row_records_the_bound_surface_and_ids(self) -> None:
+        ctx = _ctx()
+        bound = InvocationMetadata(
+            execution_id=uuid4(), correlation_id=uuid4(), surface=InvocationSurface.HTTP
+        )
+
+        with ctx.inv_ctx.bind_metadata(metadata=bound):
+            await _run(_registry(Audited(spec=SPEC)), ctx)
+
+        [row] = await _rows(ctx)
+        assert (row.surface, row.execution_id, row.correlation_id) == (
+            "http",
+            bound.execution_id,
+            bound.correlation_id,
+        )
+
+    async def test_the_payload_cannot_name_the_surface(self) -> None:
+        # Read off the invocation, as the actor is: a payload naming a surface changes nothing.
+        ctx = _ctx()
+        bound = InvocationMetadata(
+            execution_id=uuid4(), correlation_id=uuid4(), surface=InvocationSurface.MCP
+        )
+
+        with ctx.inv_ctx.bind_metadata(metadata=bound):
+            await _run(_registry(Audited(spec=SPEC)), ctx, _Forged())
+
+        [row] = await _rows(ctx)
+        assert (row.surface, row.execution_id) == ("mcp", bound.execution_id)
+
+    async def test_without_metadata_the_row_records_unknown_and_no_ids(self) -> None:
+        ctx = _ctx()
+
+        await _run(_registry(Audited(spec=SPEC)), ctx)
+
+        [row] = await _rows(ctx)
+        assert (row.surface, row.execution_id, row.correlation_id) == ("unknown", None, None)
+
+    async def test_a_trail_filters_by_surface(self) -> None:
+        ctx = _ctx()
+        registry = _registry(Audited(spec=SPEC))
+
+        for surface in (InvocationSurface.CLI, InvocationSurface.HTTP):
+            bound = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4(), surface=surface)
+
+            with ctx.inv_ctx.bind_metadata(metadata=bound):
+                await _run(registry, ctx)
+
+        rows = await ctx.document.query(TRAIL).find_many(filters={"$values": {"surface": "cli"}})
+
+        assert [row.surface for row in rows.hits] == ["cli"]
+
+    @pytest.mark.parametrize("field", ["surface", "execution_id", "correlation_id"])
+    def test_sealing_the_surface_or_an_id_is_refused(self, field: str) -> None:
+        with pytest.raises(CoreException) as caught:
+            audit_record_spec(encryption=FieldEncryption(encrypted=frozenset({field})))
+
+        assert caught.value.code == "audit_record_sealed_index"
 
 
 class TestTheActor:

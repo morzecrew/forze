@@ -159,9 +159,25 @@ CREATE TABLE app.audit_events (
     object_id      text,
     metadata       jsonb       NOT NULL DEFAULT '{}',
     at             timestamptz NOT NULL,
+    surface        text,
+    execution_id   uuid,
+    correlation_id uuid,
     PRIMARY KEY (id)
 );
 ```
+
+```sql title="For queries by surface"
+CREATE INDEX ON app.audit_events (tenant_id, surface, at);
+```
+
+Each row also records where the operation came from: `surface` names the boundary it entered
+through (`http`, `mcp`, `cli`, `inbox`, `durable` …, or `unknown` when no boundary bound
+metadata), and `execution_id` and `correlation_id` join it to the operation's log lines. All
+three are read from the invocation, never from the operation's arguments, and none can be
+sealed. The surface is attribution, not authority: an application's own boundary can set any
+valid token, so never branch a guard on it. The correlation id is tracing context the client
+chooses over HTTP, not evidence. A trail filters by them like by any field:
+`{"$values": {"surface": "cli"}}`.
 
 A table created before `actor_ids` existed needs the column. Until it is added, startup schema
 validation refuses the table (`missing columns ['actor_ids']`), and without that validation
@@ -172,6 +188,18 @@ prints the statement:
 ALTER TABLE app.audit_events ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
 ```
 
+A table created before `surface` needs its three columns, with the same consequence until they
+exist (`missing columns ['correlation_id', 'execution_id', 'surface']`). They are nullable and
+nothing backfills them: an older row never recorded where it came from, so it reads back `None`,
+and `None` tells a reader the row predates the field where `unknown` is a live gap:
+
+```sql title="Migration: surface"
+ALTER TABLE app.audit_events
+    ADD COLUMN surface text,
+    ADD COLUMN execution_id uuid,
+    ADD COLUMN correlation_id uuid;
+```
+
 On MongoDB, rows written before the field existed have no `actor_ids` at all. They read back as
 `[]`, but `{"$empty": true}` does not match a missing field, so a "direct calls only" query there
 must also accept its absence:
@@ -179,6 +207,9 @@ must also accept its absence:
 ```python
 {"$or": [{"$values": {"actor_ids": {"$empty": True}}}, {"$values": {"actor_ids": {"$null": True}}}]}
 ```
+
+Rows from before `surface` lack it the same way, and read back as `None`;
+`{"$values": {"surface": {"$null": True}}}` finds them.
 
 To keep the trail somewhere else, implement `AuditPort` — one `record(entry)` that joins the
 open transaction when there is one — and register its factory under `AuditDepKey`, as
