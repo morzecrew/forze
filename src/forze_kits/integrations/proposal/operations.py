@@ -100,6 +100,11 @@ type Proposer = Callable[[ExecutionContext, ProposalRequest], Awaitable[Proposal
 outside any request, so a model call may take as long as it needs. An exception fails the
 proposal, with its message as the error."""
 
+type Dispatch = Callable[[ExecutionContext, ProposalRecord[Any, Any]], Awaitable[None]]
+"""Schedules ``run`` for a proposal ``request`` just created, inside the request's transaction:
+a durable enqueue that joins it, or an event on the transactional outbox. A reused proposal is
+never dispatched again, so the first dispatch must commit with it."""
+
 type BaseOf = Callable[[ExecutionContext, str], Awaitable[str | None]]
 """The current version of a scope's target, which a proposal is made against and checked
 against when it is decided."""

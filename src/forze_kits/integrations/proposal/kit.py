@@ -22,6 +22,7 @@ from .operations import (
     AcceptEffect,
     BaseOf,
     DecideProposalDTO,
+    Dispatch,
     ProposalIdDTO,
     ProposalKernelOp,
     Proposer,
@@ -43,7 +44,8 @@ class ProposalKit(Generic[C, E]):
     Three operations over :attr:`spec`'s collection, under the namespace :attr:`spec`'s name
     names:
 
-    - ``request`` creates a ``pending`` proposal for a scope, or returns the one pending there;
+    - ``request`` creates a ``pending`` proposal for a scope and base and runs :attr:`dispatch`
+      for it in the same transaction, or returns the one pending there;
     - ``run`` calls :attr:`proposer` for it, from the application's worker or durable
       function, and stores its items as ``open``, or its error as ``failed``;
     - ``decide`` records a reviewer's verdicts and runs :attr:`on_accept`, in one transaction.
@@ -62,6 +64,11 @@ class ProposalKit(Generic[C, E]):
     base_of: BaseOf | None = None
     """The current version of a scope's target. A proposal is made against it and refused as
     stale when it moved. ``None`` keeps whatever base a request passes, and checks none."""
+
+    dispatch: Dispatch | None = None
+    """Schedules ``run`` for each new proposal, in the request's transaction. ``None`` leaves
+    scheduling to the caller, who must make it durable: a proposal whose run never happens stays
+    ``pending``, and every later request for its scope and base returns it."""
 
     on_accept: AcceptEffect | None = None
     """What accepting authorises, run inside the decide transaction. ``None`` records the
@@ -84,13 +91,14 @@ class ProposalKit(Generic[C, E]):
     # ....................... #
 
     def registry(self, *, tx_route: StrKey = "default") -> FrozenOperationRegistry:
-        """The kit's operations, ``decide`` in a transaction on *tx_route*, frozen."""
+        """The kit's operations, ``request`` and ``decide`` each in a transaction on *tx_route*,
+        frozen."""
 
         ns = self.namespace
         spec = self.spec
 
         def _request(ctx: ExecutionContext) -> RequestProposal:
-            return RequestProposal(ctx=ctx, spec=spec, base_of=self.base_of)
+            return RequestProposal(ctx=ctx, spec=spec, base_of=self.base_of, dispatch=self.dispatch)
 
         def _run(ctx: ExecutionContext) -> RunProposal:
             return RunProposal(ctx=ctx, spec=spec, proposer=self.proposer)
@@ -130,12 +138,9 @@ class ProposalKit(Generic[C, E]):
             },
             namespace=ns,
         )
-        reg = (
-            reg.bind(ns.key(ProposalKernelOp.DECIDE))
-            .bind_tx()
-            .set_route(tx_route)
-            .finish(deep=True)
-        )
+        # `request` creates and dispatches, `decide` stores and applies: each lands whole.
+        for op in (ProposalKernelOp.REQUEST, ProposalKernelOp.DECIDE):
+            reg = reg.bind(ns.key(op)).bind_tx().set_route(tx_route).finish(deep=True)
 
         if self.handlers:
             reg = reg.set_handlers(dict(self.handlers), override=True, namespace=ns)

@@ -207,6 +207,33 @@ class TestRequestAndRun:
         assert unbased.id not in (old.id, newer.id)
         assert unbased_again.id == unbased.id
 
+    async def test_a_new_proposal_dispatches_its_run_in_the_requests_transaction(self) -> None:
+        # A reused proposal is never re-dispatched, so the first dispatch has to commit with it.
+        ctx = _ctx()
+        dispatched: list[Any] = []
+
+        async def dispatch(ctx: ExecutionContext, proposal: Any) -> None:
+            dispatched.append(proposal.id)
+
+        kit = _kit(_proposer(_item("a")), dispatch=dispatch)
+        first = await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+        await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+
+        assert dispatched == [first.id]
+
+    async def test_a_dispatch_that_fails_leaves_no_pending_proposal(self) -> None:
+        ctx = _ctx()
+
+        async def dispatch(ctx: ExecutionContext, proposal: Any) -> None:
+            raise RuntimeError("the queue is down")
+
+        kit = _kit(_proposer(_item("a")), dispatch=dispatch)
+
+        with pytest.raises(RuntimeError):
+            await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+
+        assert await ctx.document.query(SPEC.document).count() == 0
+
     async def test_the_base_comes_from_base_of_when_a_request_omits_it(self) -> None:
         ctx = _ctx()
 

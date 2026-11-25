@@ -21,6 +21,7 @@ from .operations import (
     AcceptEffect,
     BaseOf,
     DecideProposalDTO,
+    Dispatch,
     ProposalIdDTO,
     ProposalRequest,
     Proposer,
@@ -56,6 +57,7 @@ class RequestProposal:
     ctx: ExecutionContext
     spec: ProposalSpec[Any, Any]
     base_of: BaseOf | None = None
+    dispatch: Dispatch | None = None
 
     # ....................... #
 
@@ -82,9 +84,14 @@ class RequestProposal:
         if pending.hits:
             return pending.hits[0]
 
-        return await _command(self.ctx, self.spec).create(
+        created = await _command(self.ctx, self.spec).create(
             self.spec.create_cmd(scope=args.scope, base=base, status=ProposalStatus.PENDING)
         )
+
+        if self.dispatch is not None:
+            await self.dispatch(self.ctx, created)
+
+        return created
 
 
 # ....................... #
