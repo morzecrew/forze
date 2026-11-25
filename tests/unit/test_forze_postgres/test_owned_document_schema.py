@@ -353,6 +353,32 @@ def test_a_literal_default_or_an_empty_collection_renders_as_default() -> None:
     assert [name for name, column in columns.items() if column.nullable] == ["note"]
 
 
+def test_a_scalar_default_on_a_jsonb_column_is_json() -> None:
+    # A jsonb column parses its default as JSON: a bare 'pending' fails the CREATE TABLE.
+    class _Loose(Document):
+        state: Any = "pending"
+        count: Any = 0
+        flag: Any = True
+        mode: Any = _Status.OFF
+        ratio: Any = float("nan")
+
+    class _LooseRead(ReadDocument):
+        pass
+
+    loose: DocumentSpec[Any, Any, Any, Any] = DocumentSpec(
+        name="loose", read=_LooseRead, write={"domain": _Loose, "create_cmd": BaseDTO}
+    )
+    columns = {column.name: column for column in _shape(loose).columns}
+
+    assert {name: columns[name].default for name in ("state", "count", "flag", "mode", "ratio")} == {
+        "state": "'\"pending\"'",
+        "count": "'0'",
+        "flag": "'true'",
+        "mode": "'\"off\"'",
+        "ratio": None,
+    }
+
+
 def test_a_sealed_field_is_text_with_no_default() -> None:
     sealed = _spec(encryption=FieldEncryption(encrypted=frozenset({"secret", "extra"})))
     columns = {column.name: column for column in _shape(sealed).columns}

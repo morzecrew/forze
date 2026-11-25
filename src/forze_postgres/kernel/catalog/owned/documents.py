@@ -23,6 +23,7 @@ What it cannot print is refused, naming the spec: a guarantee Postgres keeps wit
 other than a plain unique index, a history table, and an annotation outside the type table.
 """
 
+import json
 from collections.abc import Iterator, Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -247,7 +248,27 @@ def _default(info: FieldInfo, column: str) -> str | None:
     if value is PydanticUndefined or value is None:
         return None
 
+    if column == "jsonb":
+        return _json_literal(value)
+
     return _literal(value)
+
+
+def _json_literal(value: Any) -> str | None:
+    """*value* as a ``jsonb`` literal: a ``jsonb`` column parses its default as JSON, so a
+    bare ``'pending'`` or ``0`` fails the ``CREATE TABLE``."""
+
+    if isinstance(value, Enum):
+        value = value.value
+
+    if not isinstance(value, bool | int | float | str):
+        return None
+
+    try:
+        return _literal(json.dumps(value, allow_nan=False))
+
+    except ValueError:
+        return None
 
 
 # ....................... #
