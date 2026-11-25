@@ -16,7 +16,10 @@ import pytest
 from psycopg import sql
 
 from forze.application.contracts.crypto import FieldEncryption
+from forze.application.contracts.document import DocumentIndex, DocumentSpec
+from forze.application.contracts.inventory import SpecRegistry, SpecSource
 from forze.application.execution import Deps
+from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.integrations.audit import audit_record_spec, audit_spec_contributions
 from forze_postgres import PostgresClient, PostgresDepsModule, owned_relations
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
@@ -120,3 +123,47 @@ async def test_a_sealed_field_rendered_as_text_validates(pg_client: PostgresClie
     await PostgresDocumentSchemaValidationHook(
         specs=postgres_document_schema_specs(registry, deps)
     )(ctx)
+
+
+class _Ranked(Document):
+    order: int
+    user: str | None = None
+
+
+class _RankedRead(ReadDocument):
+    order: int
+    user: str | None = None
+
+
+async def test_a_field_named_for_a_keyword_is_quoted_in_its_index(
+    pg_client: PostgresClient,
+) -> None:
+    # `order` and `user` are reserved: the render quotes them in the index as in the table,
+    # and the diff matches the index Postgres reads back.
+    schema = f"owned_keyword_{uuid4().hex[:8]}"
+    ranked = DocumentSpec(
+        name="ranked",
+        read=_RankedRead,
+        write={"domain": _Ranked, "create_cmd": BaseDTO},
+        required_indexes=(DocumentIndex(fields=("order", "user"), unique=True),),
+    )
+    registry = SpecRegistry().register(ranked, source=SpecSource.FRAMEWORK).freeze()
+    deps = PostgresDepsModule(
+        client=PostgresClient(),
+        rw_documents={"ranked": document_config(schema, "ranked", tenant_aware=True)},
+    )
+    relations = owned_relations(deps, specs=registry)
+
+    await pg_client.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+
+    for statement in split_sql(render_sql(relations.tables, version="9.9.9")):
+        await pg_client.execute(sql.SQL(statement))  # type: ignore[arg-type]
+
+    introspector = PostgresIntrospector(client=pg_client)
+    options = PostgresTransactionOptions(read_only=True, isolation="repeatable_read")
+
+    async with pg_client.transaction(options=options):
+        (relation,) = relations.documents
+        delta = diff_relation(relation, await read_catalog(introspector, relation))
+
+    assert delta.blocks == ()

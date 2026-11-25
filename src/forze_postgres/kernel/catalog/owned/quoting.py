@@ -61,6 +61,16 @@ def quote_ident(name: str) -> str:
 # ....................... #
 
 
+def unquote_ident(key: str) -> str:
+    """The name *key* spells when it is one identifier, quoted or bare: ``"order"`` is
+    ``order``. Any other key, an expression or a key with a direction, comes back as it is."""
+
+    if len(key) >= 2 and key.startswith('"') and key.endswith('"'):
+        return key[1:-1].replace('""', '"')
+
+    return key
+
+
 def qualified(schema: str, name: str) -> str:
     """``schema.name``, each part quoted on its own."""
 

@@ -43,6 +43,7 @@ from forze.base.primitives import int_width
 from forze.base.serialization import stored_field_names_for
 
 from ..validation.validate_schema import PostgresDocumentSchemaSpec
+from .quoting import quote_ident
 from .shapes import OwnedColumn, OwnedIndex, OwnedRelationShape, is_constant_default
 
 # ----------------------- #
@@ -352,13 +353,14 @@ def _columns(spec: PostgresDocumentSchemaSpec) -> list[OwnedColumn]:
 
 
 def _scoped(spec: PostgresDocumentSchemaSpec, fields: Sequence[str]) -> tuple[str, ...]:
-    """*fields*, led by ``tenant_id`` on a tenant-aware route: every read and write there is
-    scoped by tenant, so uniqueness holds per tenant."""
+    """*fields* as quoted index keys, led by ``tenant_id`` on a tenant-aware route: every read
+    and write there is scoped by tenant, so uniqueness holds per tenant. A field named for a
+    keyword, such as ``order``, is quoted, as its column is."""
 
     if spec.tenant_aware and TENANT_ID_FIELD not in fields:
-        return (TENANT_ID_FIELD, *fields)
+        fields = (TENANT_ID_FIELD, *fields)
 
-    return tuple(fields)
+    return tuple(quote_ident(field) for field in fields)
 
 
 def _indexes(spec: PostgresDocumentSchemaSpec, columns: Sequence[OwnedColumn]) -> list[OwnedIndex]:
@@ -410,7 +412,7 @@ def _indexes(spec: PostgresDocumentSchemaSpec, columns: Sequence[OwnedColumn]) -
     if target is not None and frozenset(target) != {"id"}:
         indexes.append(
             OwnedIndex(
-                keys=tuple(target),
+                keys=tuple(quote_ident(column) for column in target),
                 unique=True,
                 required=True,
                 comment=f"the conflict target {spec.name}'s route configures",

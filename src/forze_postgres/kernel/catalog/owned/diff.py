@@ -29,7 +29,7 @@ from .matching import (
     text_columns,
     type_family,
 )
-from .quoting import qualified, quote_ident
+from .quoting import qualified, quote_ident, unquote_ident
 from .render import (
     Block,
     column_definition,
@@ -457,7 +457,9 @@ def _conflicting_uniques(
             reason = conflicting_unique(
                 target,
                 found,
-                nullable_keys=frozenset(key for key in target.keys if key in nullable),
+                nullable_keys=frozenset(
+                    key for key in target.keys if unquote_ident(key) in nullable
+                ),
                 text_columns=casts,
             )
 
