@@ -6794,139 +6794,171 @@
 
 <p>The identity plane stores its documents through the ordinary document plane, so
 the specs are backend-agnostic: the same models run on Postgres, Mongo, or the
-mock. What <em>is</em> backend-specific is provisioning — on Postgres you write the
-tables yourself, and at startup the schema validation checks every mapped column
-against the model (type family and nullability, exactly). This recipe is the DDL
-that passes that check, so migrations are copied, not reverse-engineered from
-the models.</p>
-<p>The mapping rule behind it is mechanical, and it is what the validator enforces
-on every backend that has a schema:</p>
+mock. What <em>is</em> backend-specific is provisioning. On Postgres the tables are
+yours to create, and at startup the schema validation checks every mapped column
+against the model (type family and nullability, exactly).</p>
+<p>Forze prints the DDL for you. With the identity specs in your spec registry,
+<code>forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR</code> prints a table for every identity route
+the deps module binds, and <code>forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR</code> prints what a
+live database lacks; see <a href="../../reference/schema-cli/"><code>forze schema</code></a>. The SQL on
+this page is that render, for the six tables most deployments bind, checked
+against it by forze's tests.</p>
+<p>The render picks one column type per model field. Startup validation and
+<code>forze schema diff</code> also accept the other types of its family:</p>
 <table>
 <thead>
 <tr>
 <th>Model field</th>
-<th>Column</th>
+<th>Rendered column</th>
+<th>Also accepted</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>UUID</code></td>
 <td><code>uuid</code></td>
+<td></td>
 </tr>
 <tr>
-<td><code>str</code></td>
-<td><code>text</code> (or <code>varchar</code>/<code>char</code>/<code>citext</code>)</td>
+<td><code>str</code>, a <code>str</code> enum, a <code>Literal</code> of strings, <code>EmailStr</code></td>
+<td><code>text</code></td>
+<td><code>varchar</code>, <code>char</code>, <code>citext</code></td>
 </tr>
 <tr>
 <td><code>bool</code></td>
 <td><code>boolean</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>int</code></td>
-<td><code>int2</code> / <code>int4</code> / <code>int8</code></td>
+<td><code>integer</code> (<code>bigint</code> for <code>Int64</code>)</td>
+<td><code>smallint</code>, <code>bigint</code></td>
+</tr>
+<tr>
+<td><code>float</code></td>
+<td><code>double precision</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>datetime</code></td>
-<td><code>timestamptz</code> (or <code>timestamp</code>)</td>
+<td><code>timestamptz</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>Decimal</code></td>
 <td><code>numeric</code></td>
+<td></td>
 </tr>
 <tr>
-<td>nested model / <code>dict</code> / <code>list</code></td>
+<td>a list of one of the above</td>
+<td>that type's array</td>
+<td></td>
+</tr>
+<tr>
+<td>nested model / <code>dict</code> / any other list</td>
 <td><code>jsonb</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>T \| None</code></td>
-<td>the same family, nullable</td>
+<td>the same type, nullable</td>
+<td></td>
 </tr>
 <tr>
-<td>required field</td>
+<td>any other field</td>
 <td><code>NOT NULL</code></td>
+<td></td>
 </tr>
 </tbody>
 </table>
-<p>Table names are yours — the spec binds by route configuration, not by name.
-Indexes beyond the primary key are yours too; the ones shown are the minimum
-the access patterns want.</p>
+<p>Table names are yours: the spec binds by route configuration, not by name.
+Indexes beyond the required ones are yours too; each table below notes the ones
+its access patterns want.</p>
 <h2 id="authn">Authn<a class="headerlink" href="#authn" title="Permanent link">&para;</a></h2>
 <p>Password accounts (<code>password_account_spec</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">            </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">username</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">email</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">password_hash</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w">      </span><span class="nb">boolean</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span><span class="p">,</span>
+<span class="w">    </span><span class="n">email</span><span class="w">          </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w">   </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">username</span><span class="w">       </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">password_hash</span><span class="w">  </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">username</span><span class="p">);</span>
+<span class="c1">-- required: authn_password_accounts relies on it over (username)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">username</span><span class="p">);</span>
 </code></pre></div>
 <p>Keep the unique index on <code>username</code>: registration checks for an existing login before it
-inserts, and only the index stops two concurrent registrations of one username. The spec does
-not declare it as a storage guarantee, because not every document store can keep one, so
-startup validation neither requires it nor reports it.</p>
+inserts, and only the index stops two concurrent registrations of one username. The spec
+declares it in <code>required_indexes</code>, not as a storage guarantee, because not every document
+store can keep one, so startup validation neither requires it nor reports it.</p>
 <p>API-key accounts (<code>api_key_account_spec</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">                 </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">                </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">         </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w">          </span><span class="nb">boolean</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w">       </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">actor_principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
-<span class="w">    </span><span class="k">prefix</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">hint</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">label</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">key_hash</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span>
+<span class="w">    </span><span class="k">prefix</span><span class="w">             </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">hint</span><span class="w">               </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">label</span><span class="w">              </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w">         </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">key_hash</span><span class="w">           </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><span class="filename">For lookups by principal</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
 </code></pre></div>
 <p>Sessions (<code>session_spec</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">            </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
-<span class="w">    </span><span class="n">family_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">refresh_digest</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">revoked_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rotated_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="n">replaced_by</span><span class="w"> </span><span class="n">uuid</span>
+<span class="w">    </span><span class="n">revoked_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rotated_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">replaced_by</span><span class="w">    </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w">   </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w">      </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">family_id</span><span class="w">      </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">refresh_digest</span><span class="w"> </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">family_id</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><span class="filename">For lookups by principal and by family</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">family_id</span><span class="p">);</span>
 </code></pre></div>
 <p>Password resets (<code>password_reset_spec</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_password_resets</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_password_resets</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">            </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">token_digest</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">used_at</span><span class="w"> </span><span class="n">timestamptz</span>
+<span class="w">    </span><span class="n">used_at</span><span class="w">        </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w">   </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">token_digest</span><span class="w">   </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
 <h2 id="authz">Authz<a class="headerlink" href="#authz" title="Permanent link">&para;</a></h2>
 <p>Policy principals (<code>policy_principal_spec</code>) — also the one table a token-only
 deployment needs for the default eligibility gate
 (<code>AuthnDepsModule(eligibility="allow_all")</code> is the declared opt-out):</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_policy_principals</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_policy_principals</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">            </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">kind</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w">      </span><span class="nb">boolean</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span><span class="p">,</span>
+<span class="w">    </span><span class="n">kind</span><span class="w">           </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
 <p>Principal-role bindings (<code>principal_role_binding_spec</code>) carry the tenant a binding
@@ -6934,18 +6966,19 @@ holds in, <code>scope_tenant_id</code>; <code>NULL</code> means every tenant
 (<a href="../../identity-tenancy-enc/identity/#roles-in-one-tenant">roles in one tenant</a>). The
 unique index is required: role assignment checks for an existing row and then inserts,
 and the index is what stops two concurrent assigns leaving two rows, one of which a revoke
-would miss.</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">role_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span>
+would miss. <code>NULLS NOT DISTINCT</code> counts <code>NULL</code> (every tenant) as one value.</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">              </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">             </span><span class="nb">integer</span><span class="w">     </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">      </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w">  </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w">    </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">role_id</span><span class="w">         </span><span class="n">uuid</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-<span class="c1">-- one row per principal, role and tenant, NULL (every tenant) counting as one value</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="c1">-- required: authz_principal_role_bindings relies on it over (principal_id, role_id, scope_tenant_id)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span>
 <span class="w">    </span><span class="p">(</span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="p">,</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="p">)</span><span class="w"> </span><span class="n">NULLS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">DISTINCT</span><span class="p">;</span>
 </code></pre></div>
 <p><code>NULLS NOT DISTINCT</code> needs Postgres 15 or later. An existing table gains the column
@@ -6953,17 +6986,17 @@ and the index in one migration, after refusing to run over duplicate rows, which
 check-then-insert assign could leave behind. Drop a <code>UNIQUE (principal_id, role_id)</code>
 constraint in the same migration, or a role held in every tenant can never also be
 bound in one:</p>
-<div class="highlight"><pre><span></span><code><span class="k">DO</span><span class="w"> </span><span class="err">$$</span><span class="w"> </span><span class="k">BEGIN</span>
-<span class="w">  </span><span class="k">IF</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<div class="highlight"><span class="filename">Migration: scope_tenant_id</span><pre><span></span><code><span class="k">DO</span><span class="w"> </span><span class="err">$$</span><span class="w"> </span><span class="k">BEGIN</span>
+<span class="w">  </span><span class="k">IF</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span>
 <span class="w">             </span><span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="w"> </span><span class="k">HAVING</span><span class="w"> </span><span class="k">count</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">THEN</span>
 <span class="w">    </span><span class="n">RAISE</span><span class="w"> </span><span class="k">EXCEPTION</span><span class="w"> </span><span class="s1">'duplicate principal-role bindings: keep one row per pair before migrating'</span><span class="p">;</span>
 <span class="w">  </span><span class="k">END</span><span class="w"> </span><span class="k">IF</span><span class="p">;</span>
 <span class="k">END</span><span class="w"> </span><span class="err">$$</span><span class="p">;</span>
-<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
 <span class="c1">-- Postgres's default name for UNIQUE (principal_id, role_id), drop one named otherwise by its name</span>
-<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span>
 <span class="w">    </span><span class="k">DROP</span><span class="w"> </span><span class="k">CONSTRAINT</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">authz_principal_role_bindings_principal_id_role_id_key</span><span class="p">;</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authz_principal_role_bindings</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authz_principal_role_bindings</span>
 <span class="w">    </span><span class="p">(</span><span class="n">principal_id</span><span class="p">,</span><span class="w"> </span><span class="n">role_id</span><span class="p">,</span><span class="w"> </span><span class="n">scope_tenant_id</span><span class="p">)</span><span class="w"> </span><span class="n">NULLS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">DISTINCT</span><span class="p">;</span>
 </code></pre></div>
 <p>SQL that reads or writes this table directly must follow the same rule once tenant rows
@@ -6971,9 +7004,7 @@ exist. A reader keeps a row when <code>scope_tenant_id IS NULL OR scope_tenant_i
 tenant&gt;</code>, and only <code>IS NULL</code> with no tenant bound. A writer sets <code>scope_tenant_id</code> on
 purpose, since leaving it out binds the role in every tenant.</p>
 <p>The remaining identity specs (identity mappings, invites, authz bindings and
-grants) follow the same mapping rule — apply the table above to their model
-fields, and startup validation will tell you, field by field, if a column
-disagrees.</p>
+grants, tenancy) are printed by <code>forze schema sql --deps … --specs …</code> the same way.</p>
 <h2 id="binding-the-specs-to-a-schema">Binding the specs to a schema<a class="headerlink" href="#binding-the-specs-to-a-schema" title="Permanent link">&para;</a></h2>
 <p>Once the tables exist, the deps module needs a <code>rw_documents</code> mapping for them.
 The relation each name binds to is yours — this recipe happens to name tables
@@ -6986,8 +7017,8 @@ naming a missing table:</p>
 
 <span class="n">IDENTITY_PG</span> <span class="o">=</span> <span class="p">{</span>
     <span class="n">name</span><span class="p">:</span> <span class="n">PostgresDocumentConfig</span><span class="p">(</span>
-        <span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">"identity"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
-        <span class="n">write</span><span class="o">=</span><span class="p">(</span><span class="s2">"identity"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
+        <span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
+        <span class="n">write</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
         <span class="c1"># the DDL in this recipe ships no optimistic-locking trigger,</span>
         <span class="c1"># so bookkeeping stays application-side</span>
         <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">"application"</span><span class="p">,</span>
@@ -7003,11 +7034,11 @@ than hand-listing names: a principal can reach a role directly or through a
 group, so binding only part of the grant-resolution set resolves fewer grants
 than the database holds, silently.</p>
 <h2 id="trust-but-verify">Trust but verify<a class="headerlink" href="#trust-but-verify" title="Permanent link">&para;</a></h2>
-<p>These shapes are the ones forze's own Postgres integration tests provision and
-run schema validation against, so they cannot drift from the models silently. If
-you change a model (or upgrade across a release that does), boot against a copy
-of production first: the validation error names the exact field, the expected
-column family, and what it found.</p>
+<p>These tables are the render forze's own Postgres integration tests create and run
+schema validation against, so they cannot drift from the models silently. After an
+upgrade, <code>forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR</code> prints what your tables lack; if you
+change a model, boot against a copy of production first: the validation error names
+the exact field, the expected column family, and what it found.</p>
 
 
 

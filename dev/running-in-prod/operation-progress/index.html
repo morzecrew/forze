@@ -7162,30 +7162,32 @@ question for a human genuinely succeeded, and only the <em>job</em> is still ope
 question, the answer, and the resume command stay in your domain; the framework
 owes the pattern this one status and the grain that spans the pause.</p>
 <h2 id="the-collection">The collection<a class="headerlink" href="#the-collection" title="Permanent link">&para;</a></h2>
-<p><code>job_record_spec()</code> hands you the spec; the table is yours. Wire it tenant-aware
-and the adapter injects and scopes <code>tenant_id</code> — the models carry no tenant field
-of their own:</p>
-<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">jobs</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="n">id</span><span class="w">              </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<span class="w">    </span><span class="n">rev</span><span class="w">             </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">created_at</span><span class="w">      </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">last_update_at</span><span class="w">  </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">tenant_id</span><span class="w">       </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">          </span><span class="c1">-- adapter-managed (tenant_aware routes)</span>
-<span class="w">    </span><span class="n">kind</span><span class="w">            </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">status</span><span class="w">          </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">progress</span><span class="w">        </span><span class="n">double</span><span class="w"> </span><span class="k">precision</span><span class="p">,</span>
-<span class="w">    </span><span class="n">message</span><span class="w">         </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">subject</span><span class="w">         </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">durable_run_id</span><span class="w">  </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">error</span><span class="w">           </span><span class="nb">text</span><span class="p">,</span>
-<span class="w">    </span><span class="n">heartbeat_at</span><span class="w">    </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">started_at</span><span class="w">      </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="n">finished_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="p">,</span>
-<span class="w">    </span><span class="n">event_at</span><span class="w">        </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<span class="w">    </span><span class="n">event_seq</span><span class="w">       </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<p><code>job_record_spec()</code> hands you the spec, and <code>forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR</code> prints
+its table once <code>progress_spec_contributions</code> (below) catalogues it
+(<a href="../../reference/schema-cli/"><code>forze schema</code></a>). Wire it tenant-aware and the adapter injects
+and scopes <code>tenant_id</code> — the models carry no tenant field of their own:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">jobs</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w">             </span><span class="n">uuid</span><span class="w">             </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w">            </span><span class="nb">integer</span><span class="w">          </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w">      </span><span class="n">uuid</span><span class="w">             </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">kind</span><span class="w">           </span><span class="nb">text</span><span class="w">             </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">status</span><span class="w">         </span><span class="nb">text</span><span class="w">             </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'pending'</span><span class="p">,</span>
+<span class="w">    </span><span class="n">progress</span><span class="w">       </span><span class="n">double</span><span class="w"> </span><span class="k">precision</span><span class="p">,</span>
+<span class="w">    </span><span class="n">message</span><span class="w">        </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">subject</span><span class="w">        </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">durable_run_id</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">error</span><span class="w">          </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">heartbeat_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">started_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">finished_at</span><span class="w">    </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_at</span><span class="w">       </span><span class="n">timestamptz</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_seq</span><span class="w">      </span><span class="nb">integer</span><span class="w">          </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">jobs_staleness</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">jobs</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">heartbeat_at</span><span class="p">);</span>
+</code></pre></div>
+<div class="highlight"><span class="filename">For the staleness query</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">jobs</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">heartbeat_at</span><span class="p">);</span>
 </code></pre></div>
 <p>Use <code>double precision</code>, not <code>real</code>: the merge compares the fraction the store
 handed back, and a narrowed column returns a different number than the one that

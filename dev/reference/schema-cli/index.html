@@ -6782,8 +6782,8 @@
 <p>The how-to is <a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>; this
 page is the contract CI relies on. Forze prints SQL and never runs it.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>forze schema sql   --deps MODULE:ATTR [--tenant UUID ...]
-forze schema diff  --deps MODULE:ATTR [--tenant UUID ...] [--check] [--keep-retired]
+<div class="highlight"><pre><span></span><code>forze schema sql   --deps MODULE:ATTR [--specs MODULE:ATTR] [--tenant UUID ...]
+forze schema diff  --deps MODULE:ATTR [--specs MODULE:ATTR] [--tenant UUID ...] [--check] [--keep-retired]
 </code></pre></div>
 <p><code>--deps</code> names a <code>PostgresDepsModule</code>, or a sequence holding exactly one. Both commands
 cover the store tables it configures: <code>durable_run</code>, <code>durable_step</code> and <code>durable_schedule</code>;
@@ -6793,6 +6793,27 @@ Routes that name one table are one table, with every column and index any of the
 declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 <code>diff</code> then exits <code>11</code>: a relation it never compared cannot be reported in sync.</p>
+<p><code>--specs</code> names the application's <code>SpecRegistry</code> or <code>FrozenSpecRegistry</code>. It adds a table
+for each <code>rw_documents</code> route whose spec the registry catalogues as the framework's: the
+identity specs (<code>forze_identity.spec_contributions()</code>), audit
+(<code>audit_spec_contributions</code>), progress jobs (<code>progress_spec_contributions</code>), the realtime
+mailbox and cursors (<code>realtime_document_contributions</code>) and stored files
+(<code>StoredFileKitSpec.document_contributions()</code>). Forze ships those specs' models, so the
+table is derived from the spec and the route's config, the copy startup validation reads.
+A spec a kit derived from yours is catalogued <code>KIT</code>, and its table stays yours. A read-only
+route is the writer's table and is not printed. Without <code>--specs</code>, only the store tables
+are covered. A registry that does not load is a configuration error (<code>78</code>), and so is a
+framework spec whose table cannot be printed (<code>postgres_document_render_refused</code>).</p>
+<p>A document table has <code>id</code>, <code>rev</code>, <code>created_at</code> and <code>last_update_at</code>, keyed on <code>id</code>, then
+<code>tenant_id</code> on a tenant-aware route, then each field the validator requires, in model
+order. Each field type renders as one column type: an <code>int</code> is <code>integer</code>, and one
+annotated <code>Int64</code> is <code>bigint</code>; a list of scalars is an array, and a nested model, a <code>dict</code>
+or any other list is <code>jsonb</code>; a sealed field is <code>text</code>. A field that is not <code>T | None</code> is
+<code>NOT NULL</code>, and a literal default or an empty collection renders as <code>DEFAULT</code>. A
+<code>UniqueTogether</code> guarantee and a spec's <code>required_indexes</code> render as required indexes, led
+by <code>tenant_id</code> on a tenant-aware route, with <code>NULLS NOT DISTINCT</code> where a nullable key
+counts <code>NULL</code> as one value. A route with <code>bookkeeping_strategy="database"</code> gets a note:
+the trigger is yours. No trigger, function or history table is printed.</p>
 <p><code>--tenant</code>, repeated, binds each such relation once per tenant id: the resolver is called
 for the tenant, and awaited when it returns an awaitable, as the adapters resolve it. The
 route of each table it names carries the tenant, <code>outboxes.orders[&lt;tenant&gt;]</code>, and tenants
@@ -6990,7 +7011,7 @@ another role's build.</p>
 </tr>
 <tr>
 <td><code>78</code></td>
-<td>Configuration: <code>--deps</code> does not load or name one <code>PostgresDepsModule</code>, <code>FORZE_SCHEMA_DSN</code> is unset or does not parse, the server refuses the login, the role lacks access, or the <code>postgres</code> extra is missing</td>
+<td>Configuration: <code>--deps</code> does not load or name one <code>PostgresDepsModule</code>, <code>--specs</code> does not load or name a spec registry, a framework spec's table cannot be printed, <code>FORZE_SCHEMA_DSN</code> is unset or does not parse, the server refuses the login, the role lacks access, or the <code>postgres</code> extra is missing</td>
 </tr>
 </tbody>
 </table>

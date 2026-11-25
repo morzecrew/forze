@@ -11364,6 +11364,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze schema</code> prints the SQL for forze's store tables</strong>, from durable runs to outboxes, delivery logs and counters. <code>sql</code> prints the <code>CREATE</code> statements and <code>diff</code> what a database lacks, read via a role in <code>FORZE_SCHEMA_DSN</code>, exiting 0, 10 or 11 (<code>--check</code>, <code>--keep-retired</code>, <code>--tenant</code>); forze never runs it.</p>
 </li>
 <li>
+<p><strong><code>forze schema --specs</code> prints the document tables forze owns</strong>: identity, audit, jobs, realtime mailbox, cursors, stored files, derived from each spec (<code>owned_relations(deps, specs=...)</code>). Catalogue them via <code>audit_spec_contributions</code>, <code>realtime_document_contributions</code>, <code>StoredFileKitSpec.document_contributions()</code>.</p>
+</li>
+<li>
+<p><strong>A spec declares the indexes it relies on that are not guarantees</strong>: <code>DocumentSpec(required_indexes=(DocumentIndex(...),))</code>, as identity does for <code>username</code> and role bindings. <code>Int64</code> in <code>forze.base.primitives</code> marks an <code>int</code> needing 64 bits (<code>bigint</code>), as the realtime <code>hlc</code> and stored-file <code>size</code> now are.</p>
+</li>
+<li>
 <p><strong>The store tables can be checked at startup.</strong> <code>PostgresLifecycleModule(owned_schema=owned_relations(deps))</code> refuses to start when a table cannot serve its adapter (<code>postgres_owned_schema_invalid</code>), and warns about the rest.</p>
 </li>
 </ul>
