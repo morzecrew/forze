@@ -40,6 +40,10 @@ _SCALAR_PG_BASES: dict[type[Any], frozenset[str]] = {
 
 _JSON_PG_BASES = frozenset({"json", "jsonb"})
 
+_SEALED_PG_BASES = _SCALAR_PG_BASES[str] | _JSON_PG_BASES
+"""Where a sealed field's ciphertext, a base64 string, can be stored: a text column, or a
+JSON one holding it as a string."""
+
 
 def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     """Return (inner annotation, is_optional).
@@ -128,8 +132,13 @@ def validate_field_type_compatibility(
     column_types: dict[str, PostgresType],
     omit_fields: frozenset[str],
     label: str,
+    sealed_fields: frozenset[str] = frozenset(),
 ) -> None:
-    """Raise when a mapped field's Postgres type is incompatible with the Pydantic annotation."""
+    """Raise when a mapped field's Postgres type is incompatible with the Pydantic annotation.
+
+    A field in *sealed_fields* is stored as ciphertext, whatever its annotation, so its column
+    must hold a string: a text or a JSON column, not an array.
+    """
 
     for name, field in model.model_fields.items():
         if name in omit_fields:
@@ -140,7 +149,7 @@ def validate_field_type_compatibility(
         if pg_t is None:
             continue
 
-        expected = expected_pg_bases_for_field(field)
+        expected = _SEALED_PG_BASES if name in sealed_fields else expected_pg_bases_for_field(field)
 
         if expected is None:
             continue
@@ -152,7 +161,7 @@ def validate_field_type_compatibility(
         comparable = normalize_pg_type(strip_type_modifier(actual))
 
         if pg_t.is_array:
-            elem_ok = comparable in expected
+            elem_ok = comparable in expected and name not in sealed_fields
             if not elem_ok:
                 raise exc.internal(
                     f"Postgres schema validation failed for {label!r}: "

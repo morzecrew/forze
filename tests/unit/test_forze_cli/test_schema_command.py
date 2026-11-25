@@ -112,6 +112,46 @@ class TestSql:
         # The tenant given twice binds its table once.
         assert result.stdout.count("CREATE TABLE") == 2
 
+    @pytest.mark.parametrize("specs", ["specs", "frozen_specs"])
+    def test_specs_adds_the_framework_document_tables(self, specs: str) -> None:
+        deps = "tests.support.schema_cli:with_documents"
+        result = runner.invoke(
+            app,
+            ["schema", "sql", "--deps", deps, "--specs", f"tests.support.schema_cli:{specs}"],
+        )
+
+        assert result.exit_code == 0, result.output
+        # The store table first, then the document tables in route order.
+        assert [line for line in result.output.splitlines() if line.startswith("CREATE TABLE")] == [
+            "CREATE TABLE public.durable_run (",
+            "CREATE TABLE public.authn_password_accounts (",
+            "CREATE TABLE public.jobs (",
+        ]
+        assert "CREATE UNIQUE INDEX ON public.authn_password_accounts (username);" in result.output
+
+    def test_without_specs_only_the_store_tables_are_printed(self) -> None:
+        result = runner.invoke(
+            app, ["schema", "sql", "--deps", "tests.support.schema_cli:with_documents"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "public.jobs" not in result.output
+
+    @pytest.mark.parametrize(
+        ("ref", "message"),
+        [
+            ("tests.support.schema_cli:not_deps", "is not a SpecRegistry"),
+            ("tests.support.schema_cli:missing", "Cannot load --specs"),
+        ],
+    )
+    def test_a_specs_reference_that_names_no_registry_is_a_configuration_error(
+        self, ref: str, message: str
+    ) -> None:
+        result = runner.invoke(app, ["schema", "sql", "--deps", _DEPS, "--specs", ref])
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert message in result.output
+
     def test_a_tenant_that_is_not_a_uuid_is_a_usage_error(self) -> None:
         result = runner.invoke(
             app,
@@ -270,6 +310,15 @@ class TestDiff:
 
         assert result.exit_code == schema_cli.EXIT_CONFIG
         assert "Cannot load --deps" in result.stderr
+
+    def test_a_spec_registry_that_refuses_its_configuration_on_import_exits_78(self) -> None:
+        result = runner.invoke(
+            app,
+            ["schema", "sql", "--deps", _DEPS, "--specs", "tests.support.schema_cli_broken:deps"],
+        )
+
+        assert result.exit_code == schema_cli.EXIT_CONFIG
+        assert "Cannot load --specs" in result.stderr
 
     @pytest.mark.parametrize("command", ["sql", "diff"])
     def test_two_stores_on_one_table_are_a_configuration_error(

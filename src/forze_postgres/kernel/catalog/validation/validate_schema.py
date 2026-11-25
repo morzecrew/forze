@@ -7,6 +7,7 @@ from typing import Final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.document import DocumentIndex
 from forze.application.contracts.guarantees import (
     GuaranteeMoment,
     NonOverlapping,
@@ -133,6 +134,16 @@ class PostgresDocumentSchemaSpec:
     :class:`~forze.application.contracts.guarantees.Reference` must point its foreign key, and
     which spec an undeclared one points at."""
 
+    sealed_fields: frozenset[str] = frozenset()
+    """Write fields stored as ciphertext (see :attr:`FieldEncryption.sealed
+    <forze.application.contracts.crypto.FieldEncryption.sealed>`), whose column holds base64
+    text whatever the field's type."""
+
+    required_indexes: tuple[DocumentIndex, ...] = ()
+    """Indexes the spec relies on that are not guarantees (see
+    :attr:`DocumentSpec.required_indexes
+    <forze.application.contracts.document.DocumentSpec.required_indexes>`)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -187,6 +198,7 @@ async def _validate_relation_models(
     relation: str,
     models: Sequence[tuple[type[BaseModel], frozenset[str], str]],
     read: bool = False,
+    sealed_fields: frozenset[str] = frozenset(),
 ) -> None:
     column_types = await introspector.get_column_types(schema=schema, relation=relation)
     # Postgres records NOT NULL on tables only: every column of a view or a materialized view
@@ -206,6 +218,7 @@ async def _validate_relation_models(
             column_types=column_types,
             omit_fields=omit_fields,
             label=label,
+            sealed_fields=sealed_fields,
         )
 
         if unchecked:
@@ -1567,6 +1580,7 @@ async def _validate_document(
             ),
         ],
         read=True,
+        sealed_fields=spec.sealed_fields,
     )
 
     if spec.write_relation is not None:
@@ -1623,6 +1637,7 @@ async def _validate_document(
             schema=spec.write_relation[0],
             relation=spec.write_relation[1],
             models=write_models,
+            sealed_fields=spec.sealed_fields,
         )
 
         if spec.tenant_aware:

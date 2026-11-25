@@ -10,8 +10,8 @@ page is the contract CI relies on. Forze prints SQL and never runs it.
 ## Commands
 
 ```text
-forze schema sql   --deps MODULE:ATTR [--tenant UUID ...]
-forze schema diff  --deps MODULE:ATTR [--tenant UUID ...] [--check] [--keep-retired]
+forze schema sql   --deps MODULE:ATTR [--specs MODULE:ATTR] [--tenant UUID ...]
+forze schema diff  --deps MODULE:ATTR [--specs MODULE:ATTR] [--tenant UUID ...] [--check] [--keep-retired]
 ```
 
 `--deps` names a `PostgresDepsModule`, or a sequence holding exactly one. Both commands
@@ -22,6 +22,29 @@ Routes that name one table are one table, with every column and index any of the
 declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 `diff` then exits `11`: a relation it never compared cannot be reported in sync.
+
+`--specs` names the application's `SpecRegistry` or `FrozenSpecRegistry`. It adds a table
+for each `rw_documents` route whose spec the registry catalogues as the framework's: the
+identity specs (`forze_identity.spec_contributions()`), audit
+(`audit_spec_contributions`), progress jobs (`progress_spec_contributions`), the realtime
+mailbox and cursors (`realtime_document_contributions`) and stored files
+(`StoredFileKitSpec.document_contributions()`). Forze ships those specs' models, so the
+table is derived from the spec and the route's config, the copy startup validation reads.
+A spec a kit derived from yours is catalogued `KIT`, and its table stays yours. A read-only
+route is the writer's table and is not printed. Without `--specs`, only the store tables
+are covered. A registry that does not load is a configuration error (`78`), and so is a
+framework spec whose table cannot be printed (`postgres_document_render_refused`).
+
+A document table has `id`, `rev`, `created_at` and `last_update_at`, keyed on `id`, then
+`tenant_id` on a tenant-aware route, then each field the validator requires, in model
+order. Each field type renders as one column type: an `int` is `integer`, and one
+annotated `Int64` is `bigint`; a list of scalars is an array, and a nested model, a `dict`
+or any other list is `jsonb`; a sealed field is `text`. A field that is not `T | None` is
+`NOT NULL`, and a literal default or an empty collection renders as `DEFAULT`. A
+`UniqueTogether` guarantee and a spec's `required_indexes` render as required indexes, led
+by `tenant_id` on a tenant-aware route, with `NULLS NOT DISTINCT` where a nullable key
+counts `NULL` as one value. A route with `bookkeeping_strategy="database"` gets a note:
+the trigger is yours. No trigger, function or history table is printed.
 
 `--tenant`, repeated, binds each such relation once per tenant id: the resolver is called
 for the tenant, and awaited when it returns an awaitable, as the adapters resolve it. The
@@ -133,7 +156,7 @@ another role's build.
 | `1` | Internal error |
 | `2` | Usage error, such as `--dsn` passed |
 | `75` | The database could not be reached or read; safe to retry |
-| `78` | Configuration: `--deps` does not load or name one `PostgresDepsModule`, `FORZE_SCHEMA_DSN` is unset or does not parse, the server refuses the login, the role lacks access, or the `postgres` extra is missing |
+| `78` | Configuration: `--deps` does not load or name one `PostgresDepsModule`, `--specs` does not load or name a spec registry, a framework spec's table cannot be printed, `FORZE_SCHEMA_DSN` is unset or does not parse, the server refuses the login, the role lacks access, or the `postgres` extra is missing |
 
 A DSN that does not parse is reported without its text, which may hold a password.
 

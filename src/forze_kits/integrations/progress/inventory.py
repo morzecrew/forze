@@ -11,6 +11,10 @@ hard startup failure (a port that can never resolve), so this registers exactly 
 is given rather than defaulting them in: an application that keeps the record but not the
 realtime lane passes only ``spec``, and one whose projector runs on a different node than its
 reporters contributes a different half on each.
+
+Both are catalogued as :attr:`~forze.application.contracts.inventory.SpecSource.FRAMEWORK`:
+forze ships their models, so the application cannot change the job table, and ``forze
+schema`` prints it (RFC 0080 §5.7).
 """
 
 from forze.application.contracts.inventory import SpecRegistry, SpecSource
@@ -60,9 +64,9 @@ def progress_spec_contributions(
     registry = SpecRegistry()
 
     if spec is not None:
-        registry.register(spec, source=SpecSource.KIT)
+        registry.register(spec, source=SpecSource.FRAMEWORK)
 
     if outbox_spec is not None:
-        registry.register(outbox_spec, source=SpecSource.KIT)
+        registry.register(outbox_spec, source=SpecSource.FRAMEWORK)
 
     return registry

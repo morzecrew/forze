@@ -9,6 +9,7 @@ from .diff import (
     read_catalog,
     render_diff,
 )
+from .documents import document_shape
 from .quoting import comment, qualified, quote_ident
 from .render import render_sql
 from .shapes import (
@@ -34,6 +35,7 @@ __all__ = [
     "comment",
     "diff_outcome",
     "diff_relation",
+    "document_shape",
     "is_constant_default",
     "qualified",
     "quote_ident",

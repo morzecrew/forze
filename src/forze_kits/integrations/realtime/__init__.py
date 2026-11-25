@@ -8,6 +8,7 @@ consumes the stream and bridges to live connections. Sibling of the ``notify`` k
 
 from forze.application.contracts.realtime import RealtimeShard
 
+from .inventory import realtime_document_contributions
 from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_mailbox_retention_lifecycle_step,
@@ -63,6 +64,7 @@ __all__ = [
     "instrument_realtime_mailbox",
     "realtime_mailbox_spec",
     "realtime_cursor_spec",
+    "realtime_document_contributions",
     "RealtimeTransport",
     "build_realtime_transport",
     "DEFAULT_REALTIME_CHANNEL",

@@ -22,6 +22,7 @@ from .matching import (
     conflicting_unique,
     declared_key,
     describe_keys,
+    key_column,
     narrower,
     retired_mismatch,
     same_keys,
@@ -457,7 +458,7 @@ def _conflicting_uniques(
             reason = conflicting_unique(
                 target,
                 found,
-                nullable_keys=frozenset(key for key in target.keys if key in nullable),
+                nullable_keys=frozenset(key for key in target.keys if key_column(key) in nullable),
                 text_columns=casts,
             )
 

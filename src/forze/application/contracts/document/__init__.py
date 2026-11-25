@@ -16,7 +16,14 @@ from .deps import (
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
 from .ports import BaseDocumentPort, DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec, require_whole_update_matching, validate_query_parameters
-from .value_objects import KeyedCreate, KeyedUpdate, OwnedBy, RowLockMode, UpsertItem
+from .value_objects import (
+    DocumentIndex,
+    KeyedCreate,
+    KeyedUpdate,
+    OwnedBy,
+    RowLockMode,
+    UpsertItem,
+)
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #
@@ -36,6 +43,7 @@ __all__ = [
     "DocumentCodecs",
     "document_codecs_for_spec",
     "document_codecs_for_write_types",
+    "DocumentIndex",
     "DocumentSpec",
     "require_whole_update_matching",
     "validate_query_parameters",

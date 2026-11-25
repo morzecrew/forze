@@ -127,41 +127,49 @@ The trail is an ordinary document collection, so it is tenant-scoped, queryable 
 like any other; only its `metadata` can be sealed, since the other fields are what it is queried by. `forze_kits.integrations.audit` provides the spec and the port:
 
 ```python
-from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec
+from forze_kits.integrations.audit import (
+    AuditDepsModule,
+    audit_record_spec,
+    audit_spec_contributions,
+)
 
 AUDIT = audit_record_spec()           # route "audit_events"; wire it like any document spec
 audit_deps = AuditDepsModule(tx_route="pg")
 ```
 
 Route `AUDIT` through your document deps module on the database the audited operations' own
-transactions use — an `allowed` row is written inside them — and register it in your spec
-inventory. The collection is yours to create:
+transactions use — an `allowed` row is written inside them — and merge
+`audit_spec_contributions(AUDIT)` into your spec inventory. It catalogues the spec as the
+framework's, so `forze schema sql --deps MODULE:ATTR --specs MODULE:ATTR` prints its table
+([`forze schema`](../reference/schema-cli.md)). Wired tenant-aware, the table is:
 
 ```sql
-CREATE TABLE audit_events (
-    id uuid PRIMARY KEY,
-    rev integer NOT NULL,
-    created_at timestamptz NOT NULL,
+CREATE TABLE app.audit_events (
+    id             uuid        NOT NULL,
+    rev            integer     NOT NULL,
+    created_at     timestamptz NOT NULL,
     last_update_at timestamptz NOT NULL,
-    tenant_id uuid NOT NULL,          -- when wired tenant-aware
-    action text NOT NULL,
-    outcome text NOT NULL,
-    actor_id uuid,
-    subject_id uuid,
-    actor_ids uuid[] NOT NULL DEFAULT '{}',
-    object_type text,
-    object_id text,
-    metadata jsonb NOT NULL DEFAULT '{}',
-    at timestamptz NOT NULL
+    tenant_id      uuid        NOT NULL,
+    action         text        NOT NULL,
+    outcome        text        NOT NULL,
+    actor_id       uuid,
+    subject_id     uuid,
+    actor_ids      uuid[]      NOT NULL DEFAULT '{}',
+    object_type    text,
+    object_id      text,
+    metadata       jsonb       NOT NULL DEFAULT '{}',
+    at             timestamptz NOT NULL,
+    PRIMARY KEY (id)
 );
 ```
 
 A table created before `actor_ids` existed needs the column. Until it is added, startup schema
 validation refuses the table (`missing columns ['actor_ids']`), and without that validation
-every audited operation fails closed on the write:
+every audited operation fails closed on the write. `forze schema diff --deps MODULE:ATTR --specs MODULE:ATTR`
+prints the statement:
 
-```sql
-ALTER TABLE audit_events ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
+```sql title="Migration: actor_ids"
+ALTER TABLE app.audit_events ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
 ```
 
 On MongoDB, rows written before the field existed have no `actor_ids` at all. They read back as

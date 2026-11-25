@@ -138,9 +138,10 @@ class RealtimeTransport:
         Merge it at assembly (the same contract as ``AggregateKit.spec_contributions`` and
         ``forze_identity.spec_contributions``) — without it, reconciliation trips on the
         realtime routes as bound-but-never-catalogued. All three legs are operational
-        planes (drained, not exported); the offline mailbox and cursor collections are
-        ordinary ``DocumentSpec``s the app already declares via
-        ``realtime_mailbox_spec``/``realtime_cursor_spec`` and registers itself.
+        planes (drained, not exported). The offline mailbox and cursor collections are
+        ``DocumentSpec``s the app wires from ``realtime_mailbox_spec``/``realtime_cursor_spec``;
+        merge :func:`~forze_kits.integrations.realtime.realtime_document_contributions` for
+        them.
         """
 
         return SpecRegistry().register(

@@ -43,15 +43,16 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 _RECIPE = Path(__file__).parents[3] / "pages/docs/recipes/provision-identity-postgres.md"
 _SQL = re.compile(r"```sql\n(.*?)```", re.DOTALL)
-_TABLE = re.compile(r"\b((?:authn|authz)_\w+)\b")
+_MIGRATION = re.compile(r'```sql title="Migration: [^"]+"\n(.*?)```', re.DOTALL)
+_TABLE = re.compile(r"\bapp\.((?:authn|authz)_\w+)\b")
 _LOGGER = "forze_postgres.kernel.catalog.validation.validate_schema.logger"
 
-# Table names are the application's, so the recipe's tables are mapped to the specs its
-# headings name rather than assumed to match the route names.
+# Table names are the application's; the recipe names each for its spec, so its binding
+# comprehension binds every one.
 _ROUTES = {
     "authn_password_accounts": AuthnResourceName.PASSWORD_ACCOUNTS,
     "authn_api_key_accounts": AuthnResourceName.API_KEY_ACCOUNTS,
-    "authn_sessions": AuthnResourceName.TOKEN_SESSIONS,
+    "authn_token_sessions": AuthnResourceName.TOKEN_SESSIONS,
     "authn_password_resets": AuthnResourceName.PASSWORD_RESETS,
     "authz_policy_principals": AuthzResourceName.POLICY_PRINCIPALS,
     "authz_principal_role_bindings": AuthzResourceName.PRINCIPAL_ROLE_BINDINGS,
@@ -126,7 +127,7 @@ async def test_the_documented_migration_upgrades_a_pair_constrained_binding_tabl
     # tenant at once, and the new index still keeps one row per tenant.
     (migration,) = (
         block
-        for block in _SQL.findall(_RECIPE.read_text(encoding="utf-8"))
+        for block in _MIGRATION.findall(_RECIPE.read_text(encoding="utf-8"))
         if "ADD COLUMN scope_tenant_id" in block
     )
     schema = f"identity_migration_{uuid4().hex[:12]}"
@@ -146,7 +147,7 @@ async def test_the_documented_migration_upgrades_a_pair_constrained_binding_tabl
         """
     )
 
-    await pg_client.execute(re.sub(r"\bauthz_principal_role_bindings\b", table, migration))
+    await pg_client.execute(re.sub(r"\bapp\.authz_principal_role_bindings\b", table, migration))
 
     principal_id, role_id = uuid4(), uuid4()
     insert = f"""

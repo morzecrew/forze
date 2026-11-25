@@ -11,7 +11,7 @@ against. The mapping rule is mechanical either way: ``UUID`` → ``uuid``,
 nested models → ``jsonb``; ``T | None`` nullable, required ``NOT NULL``.
 """
 
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentIndex, DocumentSpec
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -64,6 +64,9 @@ password_account_spec = DocumentSpec(
         "update_cmd": UpdatePasswordAccountCmd,
     },
     sensitive=True,
+    # Registration checks for an existing login and then inserts: only the index stops two
+    # concurrent registrations of one username.
+    required_indexes=(DocumentIndex(fields=("username",), unique=True),),
 )
 
 api_key_account_spec = DocumentSpec(

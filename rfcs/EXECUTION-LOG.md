@@ -9410,3 +9410,232 @@ still exits `11`.
 - **Action:** decided.
 
 **Drift count: 0.** Unit 36 holds five entries, D-355 to D-359, all `spec-gap`.
+
+# Unit 37 · RFC 0080 P2c — the framework-owned document tables
+
+Branch `feat/postgres-owned-document-tables`, cut from `main` after #953. The third slice of
+P2 (row 38): §5.7's document tables, with the width marker (row 32) and the index declaration
+(row 34) the maintainer accepted on 2026-11-25.
+
+- Rows 27 to 31, 35 and 37 (`ASSUMED`) hold, filled in by D-360 to D-364, D-369 and D-370;
+  row 36 holds by construction (D-361).
+- Rows 32 and 34 (`ASSUMED`, accepted) are built by D-365 and D-366.
+- Row 4 (`ASSUMED`) is departed from by D-367, and row 33 (`ASSUMED`) narrowed by D-368.
+- Row 1 (`LOCKED`) holds, and D-371 closes it out for the document tables.
+
+**Drift count: 0.** Twelve entries, D-360 to D-371: ten `spec-gap`, one departure (D-367,
+`spec-gap`) and one close-out.
+
+## D-360 — The table is derived from the validator's schema spec
+
+- **Touches:** row 27 (`ASSUMED`).
+- **Built:**
+  - `document_shape(spec)` renders a `PostgresDocumentSchemaSpec`, the object the startup
+    validator reads, as an `OwnedRelationShape`
+    (`src/forze_postgres/kernel/catalog/owned/documents.py:411`). The store tables' render
+    and diff then take it unchanged.
+  - The schema spec gains the spec's `sealed_fields` and `required_indexes`, set where it is
+    built.
+  - `postgres_document_schema_spec_for_binding` moves to
+    `src/forze_postgres/execution/deps/document_binding.py:17`, so `owned_relations` can
+    build one without importing the lifecycle package, which imports `owned.py`. The
+    lifecycle package and `forze_postgres` still export it.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:101` runs the
+  validator's required-column, type and nullability checks over every framework spec's
+  render, tenant-aware and not; `tests/integration/test_forze_postgres/test_pg_owned_document_tables.py:58`
+  creates every table from `render_sql` and runs the whole document step, with no warning,
+  then the diff, which prints nothing.
+- **Class:** `spec-gap`. The row named the renderer, not its home.
+- **Action:** decided.
+
+## D-361 — `owned_relations` keeps the document tables apart
+
+- **Touches:** rows 28 and 36 (`ASSUMED`), row 11 (`ASSUMED`).
+- **Built:**
+  - `owned_relations(deps, *, specs=None)` and `resolve_owned_relations(..., specs=None)`
+    take a `SpecRegistry` or `FrozenSpecRegistry`
+    (`src/forze_postgres/execution/deps/owned.py:288`, `:318`).
+  - The document tables land in `OwnedRelations.documents` (`:71`), not `bound`, and
+    `tables` (`:79`) gives both. The startup step reads `bound`, so row 36 holds by
+    construction rather than by a filter.
+  - A document table and a store table on one relation are refused as
+    `postgres_owned_relation_shared`: their shapes name different owners.
+  - A route whose read, write or history relation is a resolver is skipped. With
+    `--tenant`, each is resolved per tenant (`:271`), as row 11 binds a store relation.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:447`, `:469`,
+  `:492`.
+- **Class:** `spec-gap`. Row 28 named the input, not the output's shape.
+- **Proposed row (RFC 0080):** `ASSUMED`. Document tables are bound into their own
+  `OwnedRelations.documents`; the startup step reads only the store tables. A tenant-scoped
+  document route binds per tenant, as a store relation does.
+- **Action:** decided.
+
+## D-362 — The contribution helpers, and progress's outbox
+
+- **Touches:** row 28 (`ASSUMED`).
+- **Built:**
+  - `audit_spec_contributions(spec)`
+    (`src/forze_kits/integrations/audit/inventory.py:16`).
+  - `realtime_document_contributions(*, mailbox=None, cursor=None)`, refusing an empty call
+    as `realtime_document_contributions_empty`, as progress's does
+    (`src/forze_kits/integrations/realtime/inventory.py:18`).
+  - `StoredFileKitSpec.document_contributions()` catalogues the document only
+    (`src/forze_kits/domain/stored_file/spec.py:130`). The kit's search and outbox specs are
+    the application's, and it registers them.
+  - `progress_spec_contributions` registers both halves as `FRAMEWORK`, its outbox route
+    too (`src/forze_kits/integrations/progress/inventory.py:67`, `:70`): forze ships that
+    spec as well, and the source is provenance only.
+- **Evidence:** `tests/unit/test_forze_kits/integrations/test_framework_document_contributions.py:29`,
+  `:35`, `:56`; `tests/unit/test_forze_kits/integrations/test_progress_kit.py`, the
+  `TestSpecContributions` class.
+- **Class:** `spec-gap`. The row named the specs, not the helpers or the outbox.
+- **Action:** decided.
+
+## D-363 — `--specs` loads either registry
+
+- **Touches:** row 29 (`ASSUMED`).
+- **Built:** `--specs MODULE:ATTR` on both commands (`src/forze_cli/schema.py:71`, `:137`).
+  A reference that does not load, or names neither registry, exits `78`, as a bad `--deps`
+  does, and so does a framework spec whose table cannot be printed. `sql` and `diff` print
+  `relations.tables` (`:232`, `:390`).
+- **Evidence:** `tests/unit/test_forze_cli/test_schema_command.py:116`, `:147`.
+- **Class:** `spec-gap`. Exit codes for a bad `--specs` were unstated.
+- **Action:** decided.
+
+## D-364 — What "model order" and "a literal default" mean
+
+- **Touches:** rows 30 and 31 (`ASSUMED`).
+- **Built** (`src/forze_postgres/kernel/catalog/owned/documents.py:175`, `:224`):
+  - The fields are the domain model's in pydantic's field order, then the create and update
+    commands' own, then materialized fields by name. A model field named `tenant_id` on a
+    tenant-aware route is the tenant column.
+  - `EmailStr` and a `Literal` of strings are `text`; a `Literal` of anything else, a `set`
+    and a union of several types are refused. `tuple[X, ...]` is an array like `list[X]`; a
+    fixed-length tuple is `jsonb`.
+  - An empty `list`, `tuple` or `dict`, as a factory or a value, is `DEFAULT '{}'`, or
+    `'[]'` for a list stored as `jsonb`. A number whose text is not a plain literal renders
+    no default.
+  - A sealed field is `text` with no default: a plaintext default would read back as a
+    value that never decrypts (`:307`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:235`, `:240`,
+  `:298`, `:317`, `:340`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-365 — `Int64`, adopted by the packed HLC and the file size
+
+- **Touches:** row 32 (`ASSUMED`, accepted 2026-11-25).
+- **Built:**
+  - `IntWidth(bits)`, `Int64 = Annotated[int, IntWidth(64)]` and `int_width(annotation,
+    metadata)` in `forze.base.primitives` (`src/forze/base/primitives/numeric.py:15`, `:27`,
+    `:31`). Pydantic ignores the marker.
+  - The mailbox's and the cursors' `hlc` fields adopt it
+    (`src/forze_kits/integrations/realtime/mailbox.py:142`).
+  - So do the stored-file `size` fields (`src/forze_kits/domain/stored_file/models.py:45`):
+    a file past 2 GiB overflows `integer`. The row named only the packed HLC.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:163`, `:171`;
+  `tests/unit/test_forze/base/primitives/test_numeric.py`, `TestIntWidth`. The mailbox suite
+  now runs against the render (`tests/integration/test_forze_postgres/test_pg_realtime_mailbox.py`).
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 32, extended: a size in bytes is annotated `Int64` too.
+- **Action:** decided.
+
+## D-366 — `DocumentSpec.required_indexes`
+
+- **Touches:** row 34 (`ASSUMED`, accepted 2026-11-25).
+- **Built:**
+  - `DocumentIndex(fields, unique=False, skip_null=False)`
+    (`src/forze/application/contracts/document/value_objects.py:135`) and
+    `DocumentSpec.required_indexes` (`src/forze/application/contracts/document/specs.py:701`).
+    A field the write domain model does not store, or a spec with no write side, is refused
+    as `document_index_invalid` (`:1152`).
+  - Identity declares the unique `username` and the principal-role binding's
+    `(principal_id, role_id, scope_tenant_id)`
+    (`src/forze_identity/authn/application/specs.py:69`,
+    `src/forze_identity/authz/application/specs.py:123`).
+  - Not built: no store keeps the index, the mock included, and the validator does not
+    report one missing. Both are the row's "may". An application spec's required unique
+    index still draws the undeclared-index warning, since the mock does not keep it.
+- **Evidence:** `tests/unit/test_forze/application/contracts/test_document_required_indexes.py:41`,
+  `:57`, `:64`; `tests/unit/test_forze_postgres/test_owned_document_schema.py:178`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-367 — A declared index may count NULL as one value
+
+- **Touches:** row 4 (`ASSUMED`): a declared index matches one with "nulls distinct"; row 26.
+- **Found:** the role binding's required index counts a `NULL` tenant as one value. Under
+  row 4 no catalog index could match it, so the diff would print it forever.
+- **Built:**
+  - `OwnedIndex.nulls_not_distinct` (`src/forze_postgres/kernel/catalog/owned/shapes.py:135`),
+    rendered as `NULLS NOT DISTINCT` (`render.py:163`). A unique index over a nullable key
+    takes it unless it skips nulls, as the validator reads a guarantee.
+  - The matcher compares nulls as declared (`matching.py:417`), and the conflict check does
+    not refuse a `NULLS NOT DISTINCT` index for a target that declares it (`:455`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:560`, `:566`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 4, amended: nulls compare as declared, distinct unless the
+  index says `NULLS NOT DISTINCT`.
+- **Action:** departed.
+
+## D-368 — Which uniqueness a plain index keeps
+
+- **Touches:** row 33 (`ASSUMED`).
+- **Built** (`src/forze_postgres/kernel/catalog/owned/documents.py:343`):
+  - A `UniqueTogether` with a `where` or `holds="commit"` is refused at render too (`:351`):
+    the filter has no SQL rendering, and a deferred uniqueness needs a constraint. No
+    framework spec declares a guarantee today.
+  - A required index leads with `tenant_id` on a tenant-aware route, as a guarantee does
+    (`:333`).
+  - A route's `conflict_target` other than `id` renders a required unique index, which the
+    validator's conflict-target check requires.
+  - A guarantee and a required index over the same keys render one index.
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:348`, `:359`,
+  `:365`, `:381`, `:408`.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0080):** Row 33, narrowed: an unfiltered `UniqueTogether` that holds
+  after every write renders as a required unique index; any other guarantee is refused.
+- **Action:** decided.
+
+## D-369 — History is refused, and the bookkeeping note prints as a comment
+
+- **Touches:** row 35 (`ASSUMED`).
+- **Built:**
+  - A spec with history enabled is refused at render (`documents.py:423`) rather than
+    printed without its history table.
+  - `OwnedRelationShape.notes` (`shapes.py:235`) print above the `CREATE TABLE`, in `sql`
+    and in a diff that creates the table (`render.py:175`). `bookkeeping_strategy="database"`
+    sets one (`documents.py:80`).
+- **Evidence:** `tests/unit/test_forze_postgres/test_owned_document_schema.py:390`, `:420`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-370 — The pages print the render, and the suites create it
+
+- **Touches:** row 37 (`ASSUMED`); `since` (row 44).
+- **Built:**
+  - The identity recipe, the audit page and the progress page print the render under
+    `app.`. Their access-pattern indexes and migrations move to titled blocks, which the page
+    test skips as the store pages' test does.
+  - The recipe names the session table `authn_token_sessions`, binds `("app", name)`, and its
+    mapping table lists only types of the rendered type's family.
+  - The audit and realtime mailbox suites create their tables from the render, through
+    `tests/support/owned_schema.py:create_document_table`.
+  - A derived table's `since` is `0.25.0`, the first release that declares it
+    (`documents.py:49`). Its columns carry none: each is the spec's in the installed release.
+- **Evidence:** `tests/unit/test_document_schema_docs.py:81`, `:93`, `:99`, `:113`, `:118`;
+  `tests/integration/test_forze_authn/test_pg_identity_docs_ddl.py`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-371 — Close-out: forze prints the document tables and runs nothing
+
+- **Touches:** row 1 (`LOCKED`).
+- **Kind:** resolved.
+- **Built:** the document tables go through the store tables' render and diff. Nothing new
+  executes DDL; the integration test creates the tables itself, from the printed SQL.
+- **Evidence:** `tests/integration/test_forze_postgres/test_pg_owned_document_tables.py:58`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 37 holds twelve entries, D-360 to D-371: ten `spec-gap`, one
+departure and one close-out.

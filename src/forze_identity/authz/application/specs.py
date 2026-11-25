@@ -7,7 +7,7 @@ the one table the default authn eligibility gate reads;
 the docs recipe **"Provision identity tables on Postgres"**.
 """
 
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentIndex, DocumentSpec
 
 from ..domain.models.bindings import (
     CreateDelegationGrantCmd,
@@ -117,6 +117,12 @@ principal_role_binding_spec = DocumentSpec(
         "domain": PrincipalRoleBinding,
         "create_cmd": CreatePrincipalRoleBindingCmd,
     },
+    # Assignment checks for an existing binding and then inserts: only the index stops two
+    # concurrent assigns leaving two rows, one of which a revoke would miss. A NULL tenant
+    # (every tenant) counts as one value.
+    required_indexes=(
+        DocumentIndex(fields=("principal_id", "role_id", "scope_tenant_id"), unique=True),
+    ),
 )
 
 principal_permission_binding_spec = DocumentSpec(

@@ -6,7 +6,9 @@ summary: Get the SQL for the Postgres tables forze owns from forze schema, revie
 
 Some Postgres tables belong to forze rather than to your domain: its store tables, for
 durable execution, the outbox and its delivery log, the HLC checkpoint, the inbox,
-idempotency claims, counters, principal epochs and rotating credentials. Your migration
+idempotency claims, counters, principal epochs and rotating credentials; and the tables of
+the document specs forze ships, for identity, audit, progress jobs, the realtime mailbox and
+cursors, and stored files. Your migration
 tool creates and changes them, as it does every other table. `forze schema` writes the SQL so you stop transcribing it from the
 docs on each upgrade. **Forze prints the SQL and never runs it**: not at startup, not from
 the CLI. You review the file and apply it with Flyway or your own runner.
@@ -20,7 +22,10 @@ Two commands do the work:
   earlier migrations named them.
 
 Both take `--deps`, the `PostgresDepsModule` your application wires, as `module:attribute`.
-The relation names come from there. The exact contract is in the
+The relation names come from there. Add `--specs`, your spec registry, to cover the document
+tables too: a route is covered when the registry catalogues its spec as the framework's,
+which each spec's contribution helper does (`forze_identity.spec_contributions()`,
+`audit_spec_contributions`, and the like). The exact contract is in the
 [schema CLI reference](../reference/schema-cli.md).
 
 ## Create a read-only role for the diff
@@ -169,8 +174,11 @@ a recommended index the migration has not built yet. The
 
 ## Limits
 
-- **Store tables only.** The identity, audit and other document tables still take their DDL
-  from their pages.
+- **Framework document tables need `--specs`.** Without it, both commands cover the store
+  tables only. Your own document tables stay yours: a spec a kit derived from yours is not
+  the framework's, and neither command prints its table.
+- **Startup checks the store tables.** The startup step leaves document tables to document
+  schema validation, so a missing column is reported once.
 - **Per-tenant tables need their tenants.** A relation given as a tenant-scoped resolver names
   no single table, so both commands skip it with a warning on stderr, and `diff` exits `11`.
   Pass `--tenant <id>` once per tenant to bind it for each.

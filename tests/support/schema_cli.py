@@ -10,6 +10,11 @@ from forze_postgres.execution.deps.configs import (
     PostgresInboxConfig,
     PostgresOutboxConfig,
 )
+from tests.support.framework_documents import (
+    document_config,
+    framework_contributions,
+    framework_registry,
+)
 from tests.support.schema_snapshots import deps
 
 # ----------------------- #
@@ -47,3 +52,19 @@ cli_deps = PostgresDepsModule(
     durable_schedule=PostgresDurableScheduleConfig(relation=(CLI_SCHEMA, "durable_schedule")),
 )
 """Every owned table under :data:`CLI_SCHEMA`, for ``forze schema`` run end to end."""
+
+with_documents = PostgresDepsModule(
+    client=PostgresClient(),
+    durable_run=PostgresDurableRunConfig(relation=("public", "durable_run")),
+    rw_documents={
+        "jobs": document_config("public", "jobs", tenant_aware=True),
+        "authn_password_accounts": document_config("public", "authn_password_accounts"),
+    },
+)
+"""A store table beside two framework document routes, for ``--specs``."""
+
+specs = framework_contributions()
+"""The spec registry ``--specs`` is pointed at: every framework document spec."""
+
+frozen_specs = framework_registry()
+"""The same registry, frozen, which ``--specs`` takes too."""
