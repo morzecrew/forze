@@ -38,12 +38,15 @@ from forze_postgres.kernel.catalog.introspect.utils import normalize_pg_type
 from forze_postgres.kernel.catalog.owned import (
     BoundOwnedRelation,
     CatalogRelation,
+    OwnedColumn,
+    OwnedIndex,
     OwnedRelationShape,
     diff_relation,
     document_shape,
     render_sql,
 )
 from forze_postgres.kernel.catalog.owned.documents import column_type
+from forze_postgres.kernel.catalog.owned.matching import key_column
 from forze_postgres.kernel.catalog.owned.quoting import unquote_ident
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
@@ -829,3 +832,45 @@ def test_every_framework_table_created_from_its_render_diffs_clean(
 )
 def test_a_quoted_key_reads_back_as_its_name(key: str, name: str) -> None:
     assert unquote_ident(key) == name
+
+
+
+@pytest.mark.parametrize(
+    ("key", "column"),
+    [("name DESC", "name"), ('"order" desc nulls last', "order"), ("lower(name)", "lower(name)")],
+)
+def test_a_declared_key_names_its_column_without_its_order(key: str, column: str) -> None:
+    assert key_column(key) == column
+
+
+def test_a_unique_index_counting_nulls_breaks_a_descending_nullable_target() -> None:
+    # The target's key carries a direction; its column is still nullable, so a NULLS NOT
+    # DISTINCT index over it refuses the second row without a name the adapter writes.
+    shape = OwnedRelationShape(
+        owner="Store",
+        since="0.25.0",
+        columns=(
+            OwnedColumn(name="id", type="uuid", nullable=False),
+            OwnedColumn(name="name", type="text", nullable=True),
+        ),
+        primary_key=("id",),
+        indexes=(OwnedIndex(keys=("name DESC",), unique=True, required=True, comment="c"),),
+    )
+    relation = BoundOwnedRelation(route="x", schema="app", name="x", shape=shape)
+    descending = attrs.evolve(
+        _index(("name",), name="kept"), descending=(True,), nulls_first=(True,)
+    )
+    catalog = CatalogRelation(
+        kind="table",
+        columns=_catalog(shape),
+        primary_key=("id",),
+        indexes=(
+            _index(("id",), name="pkey", primary=True),
+            descending,
+            _index(("name",), name="counts_nulls", nulls_not_distinct=True),
+        ),
+    )
+
+    findings = [block.finding for block in diff_relation(relation, catalog).blocks]
+
+    assert findings == ["conflict_target"]

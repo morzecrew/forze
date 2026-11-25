@@ -21,6 +21,7 @@ from typing import Final
 
 from ..introspect.types import IndexShapeInfo, PostgresType
 from ..introspect.utils import normalize_pg_type, strip_type_modifier
+from .quoting import unquote_ident
 from .shapes import OwnedIndex
 
 # ----------------------- #
@@ -357,6 +358,16 @@ def declared_key(key: str) -> tuple[Tree, bool, bool]:
     nulls_first = descending if nulls is None else nulls == "first"
 
     return (_tree(_tokens(text)), descending, nulls_first)
+
+
+def key_column(key: str) -> str:
+    """The column a declared key names, without its direction or ``NULLS`` clause and
+    unquoted: ``"order" DESC NULLS LAST`` is ``order``. An expression comes back as text."""
+
+    text = re.sub(r"\s+nulls\s+(first|last)$", "", key.strip(), flags=re.IGNORECASE)
+    text = re.sub(r"\s+(asc|desc)$", "", text, flags=re.IGNORECASE)
+
+    return unquote_ident(text)
 
 
 def catalog_keys(index: IndexShapeInfo) -> tuple[tuple[Tree, bool, bool], ...]:
