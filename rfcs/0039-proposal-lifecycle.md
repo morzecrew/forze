@@ -48,7 +48,9 @@ the kit takes its shape, since a kit built from §2 would fit neither of its two
   is enough (§7 Q4).
 - **Generation is asynchronous, and can fail.** A model call takes minutes, so a request
   creates the proposal `pending`, a worker fills its items, and it becomes `open`, or `failed`
-  with the error. A second request while one is pending for the same scope returns that one.
+  with the error. A second request while one is pending for the same scope and base returns
+  that one; a request against a newer base gets a new proposal, since the old one is already
+  stale.
 - **A proposal is made against a base, and goes stale.** It records the version of the target
   it was proposed against. Deciding it after the target moved is refused as
   `proposal_stale`: propose again. That is the uniqueness rule `superseded` stood for (§7 Q2),
@@ -167,7 +169,7 @@ The same package, with §2.1's shape:
 | 13 | `ASSUMED` | Evidence and confidence are per item, typed by the application; re-evaluating is a new proposal (§7 Q4) |
 | 14 | `ASSUMED` | A proposal records a caller-supplied base; deciding it against a moved base is refused as `proposal_stale`. There is no `superseded` status (§7 Q2) |
 | 15 | `ASSUMED` | Deciding stores the verdicts and runs the application's accept effect in one transaction, and runs no effect when no item is accepted. A long-running effect is queued in that transaction, through the transactional outbox or a durable enqueue that joins it, idempotent per proposal. The effect writes the target conditionally on the proposal's base; the kit's base check is a fast refusal. Departs from §7 Q3's lean on the cheap half only (§2.1) |
-| 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal, or returns the one pending for its scope, and a run stores the proposer's items as `open` or its error as `failed` (§2.1) |
+| 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal, or returns the one pending for its scope and base, and a run stores the proposer's items as `open` or its error as `failed`. A request against a newer base gets a new proposal (§2.1) |
 | 17 | `ASSUMED` | The spec registers as `KIT`: its item models are the application's, so its table is too (RFC 0080 row 28) |
 
 Rows 1–8 are the original decision log, regraded in this table's vocabulary on 2026-11-26
