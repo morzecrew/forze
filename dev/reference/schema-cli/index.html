@@ -6782,8 +6782,8 @@
 <p>The how-to is <a href="../../running-in-prod/upgrading-forze-tables/">Upgrading forze's tables</a>; this
 page is the contract CI relies on. Forze prints SQL and never runs it.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>forze schema sql   --deps MODULE:ATTR
-forze schema diff  --deps MODULE:ATTR [--check] [--keep-retired]
+<div class="highlight"><pre><span></span><code>forze schema sql   --deps MODULE:ATTR [--tenant UUID ...]
+forze schema diff  --deps MODULE:ATTR [--tenant UUID ...] [--check] [--keep-retired]
 </code></pre></div>
 <p><code>--deps</code> names a <code>PostgresDepsModule</code>, or a sequence holding exactly one. Both commands
 cover the store tables it configures: <code>durable_run</code>, <code>durable_step</code> and <code>durable_schedule</code>;
@@ -6793,6 +6793,11 @@ Routes that name one table are one table, with every column and index any of the
 declares; routes of two different stores on one table are refused as a configuration error.
 A relation given as a tenant-scoped resolver is skipped, with a warning on stderr, and
 <code>diff</code> then exits <code>11</code>: a relation it never compared cannot be reported in sync.</p>
+<p><code>--tenant</code>, repeated, binds each such relation once per tenant id: the resolver is called
+for the tenant, and awaited when it returns an awaitable, as the adapters resolve it. The
+route of each table it names carries the tenant, <code>outboxes.orders[&lt;tenant&gt;]</code>, and tenants
+whose resolver names one table bind it once. An id that is not a UUID is a usage error
+(<code>2</code>), and a resolver that refuses a tenant with a configuration error exits <code>78</code>.</p>
 <p><code>sql</code> reads no database. It prints each table, then its required indexes, then its
 recommended ones, under a header naming the forze version, the table and its adapter. A
 tenant-aware table also gets the <code>tenant_id</code>-leading variant of each scan index. A

@@ -2428,6 +2428,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#refuse-to-start-on-a-table-that-cannot-serve" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Refuse to start on a table that cannot serve
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6702,6 +6713,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#refuse-to-start-on-a-table-that-cannot-serve" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Refuse to start on a table that cannot serve
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6959,13 +6981,27 @@ exits by what it found:</p>
 </code></pre></div>
 <p>A forze bump with no migration then fails the job with <code>10</code>. The other codes (<code>2</code>, <code>75</code>,
 <code>78</code>) mean the check did not run, so the job fails with those too.</p>
+<h2 id="refuse-to-start-on-a-table-that-cannot-serve">Refuse to start on a table that cannot serve<a class="headerlink" href="#refuse-to-start-on-a-table-that-cannot-serve" title="Permanent link">&para;</a></h2>
+<p>A deploy that ran before its migration should stop at startup, not at its first write. Pass
+the owned relations to the lifecycle module:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresLifecycleModule</span><span class="p">,</span> <span class="n">owned_relations</span>
+
+<span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://…"</span><span class="p">,</span> <span class="n">owned_schema</span><span class="o">=</span><span class="n">owned_relations</span><span class="p">(</span><span class="n">pg_deps</span><span class="p">))</span>
+</code></pre></div>
+<p>Startup then runs the diff's comparison with the application's own connection, and executes
+nothing. It refuses to start, with <code>postgres_owned_schema_invalid</code> naming each table, when
+an adapter's reads or writes would fail: a table, required column or required index is
+missing or still being built, a column has another type family or refuses the <code>NULL</code> forze
+writes, or a key or unique index breaks the adapter's <code>ON CONFLICT</code>. It logs a warning for anything else, such as
+a recommended index the migration has not built yet. The
+<a href="../../integrations/postgres/">Postgres integration</a> page lists every case.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Store tables only.</strong> The identity, audit and other document tables still take their DDL
   from their pages.</li>
-<li><strong>One table per relation.</strong> A relation given as a tenant-scoped resolver names no single
-  table, so both commands skip it with a warning on stderr, and <code>diff</code> exits <code>11</code>. Diff each
-  tenant's schema through a deps module that names it.</li>
+<li><strong>Per-tenant tables need their tenants.</strong> A relation given as a tenant-scoped resolver names
+  no single table, so both commands skip it with a warning on stderr, and <code>diff</code> exits <code>11</code>.
+  Pass <code>--tenant &lt;id&gt;</code> once per tenant to bind it for each.</li>
 <li><strong>Postgres only.</strong></li>
 </ul>
 

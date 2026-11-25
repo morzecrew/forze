@@ -6968,6 +6968,34 @@ The documents refused before it are then raised, with that error as the cause.</
 <p>A required field must map to a <code>NOT NULL</code> column. On a read relation that is a view or a
 materialized view, nullability is not checked: Postgres records <code>NOT NULL</code> on tables only, so
 each column of a view reads as nullable. A write or history relation keeps the check.</p>
+<p>To check forze's store tables at startup as well, pass the owned relations of the same deps
+module:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">owned_relations</span>
+
+<span class="n">PostgresLifecycleModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span>
+    <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://…"</span><span class="p">,</span>
+    <span class="n">owned_schema</span><span class="o">=</span><span class="n">owned_relations</span><span class="p">(</span><span class="n">pg_deps</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The step runs the comparison <code>forze schema diff</code> runs, and executes nothing it would print. It
+refuses to start, with <code>postgres_owned_schema_invalid</code> naming every table, when a store table
+cannot serve its adapter:</p>
+<ul>
+<li>a missing table, or a missing required column or index;</li>
+<li>a required index still being built with no valid one beside it, since <code>ON CONFLICT</code> cannot
+  use it yet;</li>
+<li>a column of another type family;</li>
+<li>a column that is <code>NOT NULL</code> where forze writes <code>NULL</code>;</li>
+<li>a primary key on other columns, or a deferrable one;</li>
+<li>a unique index that breaks a conflict target;</li>
+<li>a relation that is not a table;</li>
+<li>a partitioned table with no partition.</li>
+</ul>
+<p>It warns about everything else: an optional column or a recommended index missing, a column
+narrower than declared, or an index forze has retired. A relation on a per-tenant resolver is
+skipped with a warning. The step reads every table in one snapshot, and is skipped when the
+introspector needs a tenant that startup has not bound.</p>
 <p>Catalog warmup takes the search configs the deps module already holds. Pass its mappings, so a
 search added later is warmed too:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresLifecycleModule</span><span class="p">(</span>
