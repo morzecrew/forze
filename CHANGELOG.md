@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Audit rows record where the operation came from**: `surface` (`http`, `cli`, …, `unknown`), `execution_id` and `correlation_id`, from the invocation, never its arguments. **Required migration** on Postgres `audit_events`: run `forze schema diff --specs`; until then startup refuses the table.
 
+- **Proposals that stay inert until a human decides them** (`forze_kits.integrations.proposal`): `proposal_spec` over your change and evidence models, and `ProposalKit`'s `request`, `run` and `decide`, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction.
+
 - **The store tables can be checked at startup.** `PostgresLifecycleModule(owned_schema=owned_relations(deps))` refuses to start when a table cannot serve its adapter (`postgres_owned_schema_invalid`), and warns about the rest.
 
 ### Changed
