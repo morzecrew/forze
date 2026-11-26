@@ -10029,3 +10029,44 @@ maintainer as a meter scope (row 38).
   `test_a_client_that_cannot_be_built_closes_its_transport`, both red before the change.
 - **Class:** `spec-gap`.
 - **Action:** decided.
+
+# Unit 42 · RFC 0080 — what the 0.25.0 pre-release audit found in the startup check
+
+Branch `fix/postgres-schema-check`. An audit of the owned-table comparison before 0.25.0,
+each finding reproduced against Postgres 18 first.
+
+- Row 14 (`ASSUMED`) is narrowed by row 49, the maintainer's answer to D-393.
+- Rows 23 and 47 (`ASSUMED`) hold; D-394 fills in where the comparison read a table the
+  store serves as one it cannot.
+
+**Drift count: 1.** Two entries, D-393 and D-394: one `drift`, one `spec-gap`.
+
+## D-393 — A smaller integer refuses startup
+
+- **Touches:** row 14 (`ASSUMED`): startup refuses what makes the adapter's writes fail, and
+  warns on a narrower column.
+- **Found:** an `integer` where forze declares `bigint` passed startup, then every
+  `PostgresHlcCheckpointStore.advance()` failed, since a packed HLC is
+  `physical_ms << 16`. The error named a precondition, not the column.
+- **Built:** the diff emits `narrower_integer` for a smaller integer, which
+  `REFUSED_FINDINGS` refuses (`src/forze_postgres/execution/lifecycle/owned_schema.py`); a
+  length-limited text column keeps `narrower`, which warns.
+- **Evidence:** `test_pg_owned_schema_startup.py`, `test_a_smaller_integer_refuses_startup`,
+  red before the change, and `test_a_length_limited_text_column_only_warns`.
+- **Class:** `drift`.
+- **Action:** the maintainer chose it, 2026-11-26; row 49.
+
+## D-394 — Four shapes the store serves no longer refuse startup
+
+- **Touches:** rows 14 and 47 (`ASSUMED`).
+- **Found:** startup refused four tables the store serves:
+  - a unique index whose columns sit in another order (`ON CONFLICT` infers by the set);
+  - a primary key with `INCLUDE` columns, read as a key on them;
+  - a `name` column, read as an array of `"char"`, since `name` has an element type;
+  - a run table without the optional `coalesce_key`, whose required index went with it.
+- **Built:** `satisfies` compares a unique index's keys as a set; the primary-key read stops
+  at `indnkeyatts`; the column read tests `typcategory = 'A'`; an index over an optional
+  column the table lacks is `index_missing`, which warns.
+- **Evidence:** four tests in `test_pg_owned_schema_startup.py`, each red before the change.
+- **Class:** `spec-gap`.
+- **Action:** decided.

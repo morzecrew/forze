@@ -834,6 +834,7 @@ would not bind it. P2c's page tests fix the recipe.
 | 46 | `ASSUMED` | The diff's file is applied by a tool that stops at its first error. The diff's preamble and the how-to say so, since a retired drop follows the create that replaces it. Accepted by the maintainer on 2026-11-25. (D-347) |
 | 47 | `ASSUMED` | The startup step and the diff share one comparison. The step grades the diff's blocks by a finding code, not by their text. Accepted by the maintainer on 2026-11-25. (D-353) |
 | 48 | `ASSUMED` | `owned_relations(deps, specs=...)` binds the framework document tables into `OwnedRelations.documents`, apart from the store tables, and tells them apart by the table they name, however many routes or tenants name it. The startup step reads only the store tables. A tenant-scoped document route binds per tenant, as a store relation does. Accepted by the maintainer on 2026-11-25. (D-361, D-373) |
+| 49 | `ASSUMED` | The startup step also refuses an integer column smaller than declared: a packed HLC or an epoch in milliseconds overflows it on every write, so it is a column with which the adapter's writes fail (row 14). A length-limited text column still only warns, since a short value fits it. Narrows row 14; the maintainer's, 2026-11-26. (see EXECUTION-LOG.md, D-393) |
 
 ## 12. Phasing
 
