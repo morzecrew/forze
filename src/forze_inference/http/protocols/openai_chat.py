@@ -40,6 +40,7 @@ from .generation import (
     PromptTemplate,
     decode_json_object,
     render_prompt,
+    request_extras,
     response_model,
     single_instance,
     token_usage,
@@ -282,7 +283,7 @@ class OpenAiChatProtocol:
         messages.append({"role": "user", "content": render_prompt(spec, self.prompt, instance)})
 
         body: dict[str, Any] = {
-            **(self.extra_body or {}),
+            **request_extras(self.extra_body),
             "model": model_name,
             "messages": messages,
         }

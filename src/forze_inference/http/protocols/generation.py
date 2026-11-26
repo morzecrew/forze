@@ -242,12 +242,45 @@ def validate_text_output(spec: InferenceSpec[Any, Any]) -> None:
 # ....................... #
 
 
+def _frozen(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _frozen(item) for key, item in cast(Mapping[str, Any], value).items()}
+        )
+
+    if isinstance(value, list):
+        return tuple(_frozen(item) for item in value)  # pyright: ignore[reportUnknownVariableType]
+
+    return value
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in cast(Mapping[str, Any], value).items()}
+
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in cast(Sequence[Any], value)]
+
+    return value
+
+
+def _as_json(value: object) -> Any:
+    """``json.dumps``'s fallback: it serializes a ``dict`` but no other mapping."""
+
+    if isinstance(value, Mapping):
+        return dict(cast(Mapping[str, Any], value))
+
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def copy_extra_body(extra_body: object) -> Mapping[str, Any] | None:
-    """*extra_body* as a read-only, JSON-pure copy, or ``None`` for none.
+    """*extra_body* as a deeply read-only, JSON-pure copy, or ``None`` for none.
 
     A copy, so a mapping the caller changes after wiring cannot change what the route
-    sends; and one taken through JSON, so a value a request could not carry is refused here
-    rather than by the client on every request.
+    sends; read-only all the way down, since a nested value is what a caller would reach
+    for; and taken through JSON, so a value a request could not carry is refused here
+    rather than by the client on every request. Any mapping is accepted, a copy included,
+    so ``attrs.evolve`` on a config works.
 
     :raises CoreException: ``configuration`` for a value that is not a mapping of string
         keys, or one JSON cannot carry.
@@ -269,14 +302,24 @@ def copy_extra_body(extra_body: object) -> Mapping[str, Any] | None:
         raise exc.configuration("HttpInferenceConfig.extra_body keys must be strings.")
 
     try:
-        copied = cast(dict[str, Any], json.loads(json.dumps(fields, allow_nan=False)))
+        copied = json.loads(json.dumps(fields, allow_nan=False, default=_as_json))
 
     except (TypeError, ValueError) as e:
         raise exc.configuration(
             f"HttpInferenceConfig.extra_body cannot be sent as JSON ({e})."
         ) from e
 
-    return MappingProxyType(copied)
+    return cast(Mapping[str, Any], _frozen(copied))
+
+
+def request_extras(extra_body: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A fresh, writable copy of *extra_body* for one request body.
+
+    Fresh for each request, so a client or a test that changes a body it was handed
+    cannot change the next one.
+    """
+
+    return {} if extra_body is None else cast(dict[str, Any], _plain(extra_body))
 
 
 def validate_extra_body(

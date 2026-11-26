@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any, cast
 from uuid import UUID
 
+import attrs
 import httpx
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -184,6 +185,34 @@ class TestADeepSeekShapedRoute:
         await ctx.inference.model(_spec()).predict(_Column(text="a"))
 
         assert (sent[0]["model"], sent[0]["thinking"]) == ("deepseek-chat", {"type": "disabled"})
+
+    def test_a_wired_route_can_be_copied_with_a_change(self) -> None:
+        config = _config(extra_body={"thinking": {"type": "disabled"}})
+
+        assert attrs.evolve(config, temperature=0.5).extra_body == config.extra_body
+
+    def test_the_wired_extras_cannot_be_changed_in_place(self) -> None:
+        extras = _config(extra_body={"thinking": {"type": "disabled"}, "tags": ["a"]}).extra_body
+        assert extras is not None
+
+        with pytest.raises(TypeError):
+            extras["thinking"]["type"] = "enabled"
+
+        with pytest.raises(AttributeError):
+            extras["tags"].append("b")
+
+    @pytest.mark.parametrize(
+        "config", [_config, _anthropic], ids=["openai_chat", "anthropic_messages"]
+    )
+    def test_a_body_changed_after_sending_leaves_the_next_one_alone(
+        self, config: Callable[..., HttpInferenceConfig]
+    ) -> None:
+        wire = config(extra_body={"thinking": {"type": "disabled"}}).wire_protocol()
+        _, first = wire.encode_request(_spec(), [_Column(text="a")], model_name="m")
+        first["thinking"]["type"] = "enabled"
+        _, second = wire.encode_request(_spec(), [_Column(text="b")], model_name="m")
+
+        assert second["thinking"] == {"type": "disabled"}
 
 
 # ....................... #
