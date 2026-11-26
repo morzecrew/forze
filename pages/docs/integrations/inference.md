@@ -70,6 +70,14 @@ the endpoint and failed is not resent, since a model may already have spent toke
 on it. The proxy changes nothing about `acknowledge_data_egress`: the features
 still go to the same endpoint.
 
+!!! warning "A transport replaces the environment's proxy"
+    httpx reads `HTTPS_PROXY` and its siblings only for its own transport. A
+    factory whose transport sets no `proxy` sends straight to the endpoint, so where
+    traffic must leave through an egress proxy, name it in the factory.
+
+The factory runs when the client opens, once. A client that cannot be built, as
+for a base URL with no valid port, closes the transport it was given.
+
 `model_name` accepts a static name or a `(tenant_id) -> name` resolver for
 per-tenant models — the same namespace-tier pattern as a per-tenant bucket or
 database. A `tenant_aware=True` route with no bound tenant fails closed

@@ -7,7 +7,8 @@ import asyncio
 import json
 import logging
 import socket
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from uuid import UUID
 
@@ -422,16 +423,28 @@ def _ok(_request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json=_chat_reply('{"field": "a"}'))
 
 
+@asynccontextmanager
 async def _started(
     base_url: str, factory: Callable[[], httpx.AsyncBaseTransport]
-) -> ExecutionContext:
+) -> AsyncIterator[ExecutionContext]:
     ctx = context_from_modules(
         HttpInferenceDepsModule(client=InferenceHttpClient(), models={_ROUTE: _config()})
     )
     step = inference_http_lifecycle_step(base_url, transport_factory=factory)
     await step.startup(ctx)
 
-    return ctx
+    try:
+        yield ctx
+
+    finally:
+        await step.shutdown(ctx)
+
+
+class _ClosingTransport(httpx.MockTransport):
+    closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class _Secrets:
@@ -448,12 +461,33 @@ class TestTheTransportFactory:
     @pytest.mark.asyncio
     async def test_the_lifecycle_step_builds_its_client_with_it(self) -> None:
         built, factory = _counting_factory(_ok)
-        ctx = await _started("https://api.deepseek.test", factory)
 
-        await ctx.inference.model(_spec()).predict(_Column(text="a"))
-        await ctx.inference.model(_spec()).predict(_Column(text="b"))
+        async with _started("https://api.deepseek.test", factory) as ctx:
+            await ctx.inference.model(_spec()).predict(_Column(text="a"))
+            await ctx.inference.model(_spec()).predict(_Column(text="b"))
 
         assert len(built) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_second_startup_builds_no_second_transport(self) -> None:
+        built, factory = _counting_factory(_ok)
+
+        async with _started("https://api.deepseek.test", factory) as ctx:
+            await inference_http_lifecycle_step(
+                "https://api.deepseek.test", transport_factory=factory
+            ).startup(ctx)
+
+        assert len(built) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_client_that_cannot_be_built_closes_its_transport(self) -> None:
+        transport = _ClosingTransport(_ok)
+
+        with pytest.raises(httpx.InvalidURL):
+            async with _started("http://127.0.0.1:notaport", lambda: transport):
+                pass  # pragma: no cover - startup refuses the URL
+
+        assert transport.closed
 
     @pytest.mark.asyncio
     async def test_the_routed_client_builds_one_per_tenant(self) -> None:
@@ -483,9 +517,11 @@ class TestTheTransportFactory:
         """What a proxy-and-retries transport promises: a refused connection is retried,
         an answered request is not, since it may already have spent tokens."""
 
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            closed_port = probe.getsockname()[1]
+        # Bound and never listening, so the port refuses connections and no other test
+        # can take it while this one runs.
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
 
         answered: list[None] = []
 
@@ -506,17 +542,16 @@ class TestTheTransportFactory:
 
         try:
             with caplog.at_level(logging.DEBUG, logger="httpcore.connection"):
-                refused = await _started(f"http://127.0.0.1:{closed_port}", factory)
+                async with _started(f"http://127.0.0.1:{closed_port}", factory) as refused:
+                    with pytest.raises(CoreException) as unreachable:
+                        await refused.inference.model(_spec()).predict(_Column(text="a"))
 
-                with pytest.raises(CoreException) as unreachable:
-                    await refused.inference.model(_spec()).predict(_Column(text="a"))
-
-            answering = await _started(f"http://127.0.0.1:{open_port}", factory)
-
-            with pytest.raises(CoreException) as failed:
-                await answering.inference.model(_spec()).predict(_Column(text="a"))
+            async with _started(f"http://127.0.0.1:{open_port}", factory) as answering:
+                with pytest.raises(CoreException) as failed:
+                    await answering.inference.model(_spec()).predict(_Column(text="a"))
 
         finally:
+            probe.close()
             server.close()
             await server.wait_closed()
 

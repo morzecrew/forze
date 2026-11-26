@@ -41,7 +41,8 @@ class InferenceHttpStartupHook(LifecycleHook):
 
     transport_factory: InferenceTransportFactory | None = None
     """Builds the client's transport, for a proxy or connection retries; ``None`` keeps
-    httpx's default."""
+    httpx's default. A transport replaces httpx's environment proxy, so a factory names the
+    egress proxy itself where one is required."""
 
     # ....................... #
 
@@ -55,7 +56,7 @@ class InferenceHttpStartupHook(LifecycleHook):
             self.base_url,
             default_headers=self.default_headers,
             timeout_s=self.timeout_s,
-            transport=self.transport_factory() if self.transport_factory is not None else None,
+            transport_factory=self.transport_factory,
         )
 
 
@@ -86,8 +87,9 @@ def inference_http_lifecycle_step(
 
     :param transport_factory: Builds the client's transport, such as
         ``lambda: httpx.AsyncHTTPTransport(proxy=..., retries=2)``; ``None`` keeps httpx's
-        default. Sending through a proxy does not change the egress acknowledgement: the
-        route still sends to the same endpoint.
+        default. A transport replaces httpx's environment proxy, so a factory names the
+        egress proxy itself where one is required. Sending through a proxy does not change
+        the egress acknowledgement: the route still sends to the same endpoint.
     """
 
     return LifecycleStep(

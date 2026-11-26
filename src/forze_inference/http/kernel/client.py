@@ -31,7 +31,11 @@ type InferenceTransportFactory = Callable[[], httpx.AsyncBaseTransport]
 
 A factory rather than a transport because a transport owns its connection pool, and a routed
 client opens one endpoint client per tenant. ``retries`` there covers establishing the
-connection only, so a request is resent only when it never reached the model."""
+connection only, so a request is resent only when it never reached the model.
+
+A transport replaces httpx's own, and with it the proxy httpx reads from ``HTTPS_PROXY`` and
+its siblings: a factory whose transport sets no ``proxy`` sends straight to the endpoint.
+Where traffic must leave through an egress proxy, the factory names it."""
 
 
 def _translate_status(status: int, body_bytes: int) -> Exception:
@@ -107,7 +111,21 @@ class InferenceHttpClient(InferenceHttpClientPort):
         default_headers: Mapping[str, str] | None = None,
         timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S,
         transport: httpx.AsyncBaseTransport | None = None,
+        transport_factory: InferenceTransportFactory | None = None,
     ) -> None:
+        """Open the client, once; a call on an open client does nothing.
+
+        :param transport: The transport to use, which the client then owns.
+        :param transport_factory: Builds the transport, only when the client opens, so a
+            repeated call builds none. Not with *transport*.
+        :raises CoreException: ``configuration`` when both are given.
+        """
+
+        if transport is not None and transport_factory is not None:
+            raise exc.configuration(
+                "InferenceHttpClient.initialize takes a transport or a transport factory, not both."
+            )
+
         async def setup() -> None:
             client_kwargs: dict[str, Any] = {
                 "base_url": base_url,
@@ -115,10 +133,21 @@ class InferenceHttpClient(InferenceHttpClientPort):
                 "headers": dict(default_headers or {}),
             }
 
-            if transport is not None:
-                client_kwargs["transport"] = transport
+            used = transport_factory() if transport_factory is not None else transport
 
-            self.__client = httpx.AsyncClient(**client_kwargs)
+            if used is not None:
+                client_kwargs["transport"] = used
+
+            # The client owns the transport once it exists; until then nothing does, so a
+            # client that cannot be built, as for a base URL with no valid port, closes it.
+            try:
+                self.__client = httpx.AsyncClient(**client_kwargs)
+
+            except BaseException:
+                if used is not None:
+                    await used.aclose()
+
+                raise
 
         await self.__lifecycle.initialize(
             setup,
