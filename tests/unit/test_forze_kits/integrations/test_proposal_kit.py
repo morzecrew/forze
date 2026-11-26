@@ -304,6 +304,17 @@ class TestRequestAndRun:
         assert ran.status is ProposalStatus.FAILED
         assert "items.0.proposed" in (ran.error or "")
 
+    async def test_a_confidence_outside_zero_to_one_fails_the_proposal(self) -> None:
+        async def propose(ctx: ExecutionContext, request: ProposalRequest) -> Any:
+            return ProposalDraft(
+                items=[SPEC.item(key="a", proposed=Mapping(field="f"), confidence=4)]
+            )
+
+        ran = await _open(_kit(propose), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "confidence" in (ran.error or "")
+
     async def test_a_proposer_cannot_hand_in_a_verdict(self) -> None:
         accepted = _item("a").model_copy(
             update={"verdict": ItemVerdict.ACCEPTED, "decided": Mapping(field="x")}

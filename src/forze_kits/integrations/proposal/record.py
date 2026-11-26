@@ -75,7 +75,7 @@ class ProposalItem(BaseModel, Generic[C, E]):
     reason: str = ""
     """Why the proposer proposes it, in words."""
 
-    confidence: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     """How sure the proposer is, from 0 to 1, when it says. It may rank a review queue; it
     never decides an item."""
 
