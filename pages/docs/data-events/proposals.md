@@ -97,7 +97,9 @@ scheduled after the commit, and lost to a crash in between, would leave it pendi
 At most one proposal is pending per scope and base, and the collection declares that as a
 uniqueness among its pending rows. Two requests that arrive together both find nothing
 pending, so the store's uniqueness refuses the second as a `conflict`, and nothing it
-dispatched commits. Asking again returns the first.
+dispatched commits. The conflict says the scope and base already have a proposal: read the
+latest one for them rather than requesting again, which returns it only while it is still
+pending. Once its run has finished, a request makes a new proposal, as any re-evaluation does.
 
 A verdict is `VerdictDTO(key, accept, change=None)`. Accepting with a `change` records the
 amendment as what was decided; accepting a question needs one. The item keeps both what was
