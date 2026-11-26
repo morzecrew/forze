@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
 
+### Security
+
+- **Delegation grants and identity mappings are unique per pair.** `delegation_grant_spec` requires a unique index on `(actor_id, subject_id)` and `identity_mapping_spec` one on `(issuer, subject)`, which `forze schema diff --specs` prints; remove duplicate rows before building them. `revoke_delegation` removes every grant of the pair.
+
 ## [0.24.1] - 2026-11-10
 
 ### Fixed

@@ -73,6 +73,7 @@ def _grant_adapter(*, principal_exists: bool = True) -> DelegationGrantAdapter:
     grant_cmd.spec = _secure_spec("delegation_grants_cmd", ReadDelegationGrant)
     grant_cmd.create = AsyncMock()
     grant_cmd.kill = AsyncMock()
+    grant_cmd.kill_many = AsyncMock()
 
     return DelegationGrantAdapter(
         spec=AuthzSpec(name="main"),
@@ -135,11 +136,36 @@ async def test_revoke_delegation_kills_binding() -> None:
     adapter = _grant_adapter()
     actor, subject = uuid4(), uuid4()
     grant = _read_grant(actor, subject)
-    adapter.grant_qry.find = AsyncMock(return_value=grant)  # type: ignore[method-assign]
+    adapter.grant_qry.find_stream = streaming(grant)  # type: ignore[method-assign]
 
     await adapter.revoke_delegation(actor, subject)
 
-    adapter.grant_cmd.kill.assert_awaited_once_with(grant.id)  # type: ignore[attr-defined]
+    adapter.grant_cmd.kill_many.assert_awaited_once_with([grant.id])  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_revoke_delegation_kills_every_row_of_the_pair() -> None:
+    # A table without the unique index can hold two rows for one pair; a revoke that killed
+    # one would leave the actor delegated.
+    adapter = _grant_adapter()
+    actor, subject = uuid4(), uuid4()
+    first, second = _read_grant(actor, subject), _read_grant(actor, subject)
+    adapter.grant_qry.find_stream = streaming(first, second)  # type: ignore[method-assign]
+
+    await adapter.revoke_delegation(actor, subject)
+
+    adapter.grant_cmd.kill_many.assert_awaited_once_with(  # type: ignore[attr-defined]
+        [first.id, second.id]
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_delegation_with_no_grant_kills_nothing() -> None:
+    adapter = _grant_adapter()
+
+    await adapter.revoke_delegation(uuid4(), uuid4())
+
+    adapter.grant_cmd.kill_many.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

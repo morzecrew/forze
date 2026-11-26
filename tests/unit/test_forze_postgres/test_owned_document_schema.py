@@ -208,6 +208,23 @@ def test_the_identity_indexes_render_as_required() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("name", "keys"),
+    [
+        ("authz_delegation_grants", ("actor_id", "subject_id")),
+        ("authn_identity_mappings", ("issuer", "subject")),
+    ],
+)
+def test_a_pair_identity_finds_before_creating_renders_a_required_unique_index(
+    name: str, keys: tuple[str, ...]
+) -> None:
+    # Each table is written check-then-create: only the index stops two concurrent writes
+    # leaving a second row for one pair.
+    shape = document_shape(_schema_spec({str(spec.name): spec for spec in _SPECS}[name]))
+
+    assert [(i.keys, i.unique, i.required) for i in shape.indexes] == [(keys, True, True)]
+
+
 # ....................... #
 
 

@@ -142,12 +142,14 @@ class DelegationGrantAdapter(DelegationGrantPort):
         actor_id = subject_for_grant_query(actor)
         subject_id = subject_for_grant_query(subject)
 
-        grant = await self._find_grant(actor_id, subject_id)
+        # Every row of the pair: a table without the unique index can hold more than one.
+        rows = await fetch_all_document_hits(
+            self.grant_qry,
+            filters={"$values": {"actor_id": actor_id, "subject_id": subject_id}},
+        )
 
-        if grant is None:
-            return
-
-        await self.grant_cmd.kill(grant.id)
+        if rows:
+            await self.grant_cmd.kill_many([row.id for row in rows])
 
     # ....................... #
 
