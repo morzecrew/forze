@@ -194,9 +194,11 @@ CREATE UNIQUE INDEX ON app.authz_principal_role_bindings
 A table with a `tenant_id` column, one role catalog shared by tenant-aware ports, holds one
 row per tenant for the same pair: group by `tenant_id, principal_id, role_id` in the guard and
 lead the index with `tenant_id`, as `forze schema diff` prints it. A store kept per tenant, a
-routed client's database or a relation per tenant, backfills its tenant in the same migration,
-in each tenant's store. Its old rows otherwise read as held in every tenant, which a revoke
-inside the tenant refuses and a detach leaves in place:
+routed client's database or a relation per tenant, whose ports are not tenant-aware under
+`tenancy_mode="global"`, backfills its tenant in the same migration, in each tenant's store.
+Its old rows otherwise read as held in every tenant, which a revoke inside the tenant refuses
+and a detach leaves in place. Tenant-aware ports and `require_invocation_tenant` need no
+backfill:
 
 ```sql title="Migration: a store kept per tenant"
 UPDATE app.authz_principal_role_bindings
