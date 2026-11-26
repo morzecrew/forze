@@ -72,7 +72,8 @@ operations = kit.registry(tx_route="main")
 Bind `MAPPINGS.document` in your document deps module like any document spec, and merge
 `kit.spec_contributions()` into your spec inventory. The proposer is a plain function here; a
 model-backed one calls an inference port inside it (see [Inference](inference.md)) and returns
-the same draft, with `model`, `tokens` and `latency_ms` filled in.
+the same draft. Its `model`, `tokens` and `latency_ms` are yours to fill: an inference port
+records a call's usage on its span, and does not yet hand it back to the caller.
 
 ## The operations
 
