@@ -22,7 +22,7 @@ from forze.application.contracts.inventory import SpecPlane, SpecSource
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze.testing import context_from_modules
 from forze_kits.integrations.proposal import (
@@ -40,6 +40,7 @@ from forze_kits.integrations.proposal import (
     proposal_spec,
 )
 from forze_mock import MockDepsModule, MockInferenceRegistry
+from forze_mock.adapters.document import MockDocumentAdapter
 
 pytestmark = pytest.mark.unit
 
@@ -283,6 +284,36 @@ class TestRequestAndRun:
 
         assert (ran.status, ran.error) == (ProposalStatus.FAILED, "the model timed out")
 
+    async def test_a_draft_the_store_refuses_fails_the_proposal(self) -> None:
+        # JSON has no NaN: the stored draft cannot be read back as the evidence model. Left
+        # pending, the proposal would block its scope and rerun the proposer on every retry.
+        draft = SPEC.item(key="a", proposed=Mapping(field="f"), evidence=Seen(filled=float("nan")))
+
+        ran = await _open(_kit(_proposer(draft)), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert ran.error
+
+    async def test_a_draft_the_store_cannot_write_fails_the_proposal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # As Postgres refuses a NUL byte in a jsonb value: the draft's write is refused, and
+        # the proposal must fail rather than stay pending.
+        written = MockDocumentAdapter.update
+
+        async def refusing(self: Any, pk: Any, rev: Any, dto: Any, **kwargs: Any) -> Any:
+            if getattr(dto, "status", None) == ProposalStatus.OPEN:
+                raise exc.precondition("Invalid value (data too long or invalid format).")
+
+            return await written(self, pk, rev, dto, **kwargs)
+
+        monkeypatch.setattr(MockDocumentAdapter, "update", refusing)
+
+        ran = await _open(_kit(_proposer(_item("a"))), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "Invalid value" in (ran.error or "")
+
     @pytest.mark.parametrize(
         ("items", "message"),
         [((("a", "f"), ("a", "g")), "more than once"), ((("a", None),), "propose nothing")],
@@ -397,6 +428,29 @@ class TestDecide:
         assert (caught.value.kind, caught.value.code) == (
             ExceptionKind.AUTHENTICATION,
             "proposal_principal_required",
+        )
+        assert await _applied(ctx) == []
+
+    async def test_an_agent_acting_for_a_principal_cannot_decide(self) -> None:
+        # Inert until a human decides: an agent's tool call carries the human as its subject,
+        # and accepting through it would run the effect on the agent's say.
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+        proposal = await _open(kit, ctx)
+        delegated = AuthnIdentity(principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4()))
+
+        with pytest.raises(CoreException) as caught:
+            await _op(
+                kit,
+                "decide",
+                _decide(proposal, VerdictDTO[Mapping](key="a", accept=True)),
+                ctx,
+                delegated,
+            )
+
+        assert (caught.value.kind, caught.value.code) == (
+            ExceptionKind.AUTHORIZATION,
+            "proposal_human_required",
         )
         assert await _applied(ctx) == []
 

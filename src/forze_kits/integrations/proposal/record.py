@@ -111,7 +111,8 @@ class _ProposalFields(BaseModel, Generic[C, E]):
     """How long the proposer took."""
 
     decided_by: UUID | None = None
-    """Who decided it: the nearest actor of a delegated call, as an audit row's actor."""
+    """Who decided it: the principal, which acted for itself, since a delegated call cannot
+    decide."""
 
     decided_at: datetime | None = None
     note: str = ""

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Audit rows record where the operation came from**: `surface` (`http`, `cli`, …, `unknown`), `execution_id` and `correlation_id`, from the invocation, never its arguments. **Required migration** on Postgres `audit_events`: run `forze schema diff --specs`; until then startup refuses the table.
 
-- **Proposals that stay inert until a human decides them** (`forze_kits.integrations.proposal`): `proposal_spec` over your change and evidence models, and `ProposalKit`'s `request`, `run` and `decide`, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction.
+- **Proposals that stay inert until a human decides them** (`forze_kits.integrations.proposal`): `proposal_spec` over your change and evidence models, and `ProposalKit`'s `request`, `run` and `decide`, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction. `decide` refuses an agent acting for a principal (`proposal_human_required`).
 
 - **A caller can read what its inference calls spent.** `async with ctx.inference.metered() as meter:` sums the tokens every request inside it reported, retries and failed decodes included, per model, with the scope's time (`InferenceMeter`). `predict` is unchanged and the span keeps the same numbers. A custom adapter reports through `record_inference_usage`, and a custom `WireProtocol` names the answering model with `response_model`.
 

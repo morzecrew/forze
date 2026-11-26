@@ -152,9 +152,10 @@ the first already moved.
 | Code | Kind | When |
 | --- | --- | --- |
 | `proposal_principal_required` | `authentication` | `decide` with no authenticated principal. |
+| `proposal_human_required` | `authorization` | `decide` by an agent acting for a principal, as an MCP tool call is. |
 | `proposal_pending` | `conflict` | `decide` before the proposer finished. |
 | `proposal_decided` | `conflict` | `decide` on a proposal already decided. |
-| `revision_mismatch` | `precondition` | The second of two concurrent `decide` calls on one proposal: it read the proposal before the first stored its verdicts. |
+| `revision_mismatch` | `precondition` | The second of two concurrent `decide` calls on one proposal: it read the proposal before the first stored its verdicts. A store with revision history raises `historical_consistency_violation` (`conflict`) instead, and the mock store `serialization_failure` (`concurrency`). |
 | `proposal_stale` | `conflict` | `decide` after `base_of` moved past the proposal's base. |
 | `proposal_verdict_unknown` | `validation` | A verdict names an item the proposal does not have. |
 | `proposal_verdict_repeated` | `validation` | Two verdicts name one item. |
@@ -162,8 +163,8 @@ the first already moved.
 
 ## What stays out
 
-- **No automatic acceptance.** Nothing in the kit accepts without a principal, and no
-  threshold accepts at all. An application that wants automation composes a deterministic
+- **No automatic acceptance.** Nothing in the kit accepts without a principal acting for
+  itself, so an agent acting for one cannot decide, and no threshold accepts at all. An application that wants automation composes a deterministic
   proposer with its own handler, visibly.
 - **The guarantee is the kit's operations, not the table.** Proposals are documents, so
   any code holding the document port can still change one. Enforcement lives in `decide`,
@@ -178,6 +179,9 @@ that includes the index behind the pending uniqueness:
 CREATE UNIQUE INDEX mappings_one_pending ON mappings (scope, base)
     NULLS NOT DISTINCT WHERE status = 'pending';
 ```
+
+A tenant-aware collection leads that index with `tenant_id`, `(tenant_id, scope, base)`, or
+one tenant's pending proposal blocks the same scope in every other tenant.
 
 A store that cannot keep a filtered uniqueness refuses the collection when it is wired. To replace
 a generated operation, pass `handlers=`; to add one, `extra_ops=`.
