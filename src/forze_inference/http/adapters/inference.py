@@ -14,6 +14,7 @@ from forze.application.contracts.inference import (
     InferencePort,
     InferenceRunOptions,
     InferenceSpec,
+    record_inference_usage,
     validate_batch_size,
 )
 from forze.application.contracts.resolution import resolve_scoped_namespace
@@ -30,6 +31,7 @@ from forze.base.primitives import OnceCell, remaining_time
 
 from ..kernel import InferenceHttpClientPort
 from ..protocols import WireProtocol
+from ..protocols.generation import USAGE_INPUT_TOKENS_ATTRIBUTE, USAGE_OUTPUT_TOKENS_ATTRIBUTE
 
 if TYPE_CHECKING:
     from ..execution.deps.configs import HttpInferenceConfig
@@ -126,18 +128,48 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             timeout=remaining_time(),
         )
 
-        # Same fallback as the batch declaration: a dialect from before this member
-        # reports no usage rather than failing the call.
-        report = getattr(self.protocol, "usage_attributes", None)
-
-        for attribute, value in (report(response) if report is not None else {}).items():  # pyright: ignore[reportUnknownVariableType]
-            usage[attribute] = usage.get(attribute, 0) + value  # pyright: ignore[reportUnknownArgumentType]
+        self._account(response, model_name=model_name, usage=usage)
 
         return self.protocol.decode_response(
             self.spec,
             response,
             expected=len(group),
         )
+
+    # ....................... #
+
+    def _account(
+        self,
+        response: Mapping[str, Any],
+        *,
+        model_name: str,
+        usage: dict[str, int],
+    ) -> None:
+        """Add what one request spent to the call's span total and to the caller's meters.
+
+        Per request rather than per port call for the meter: its scope sums, and the model
+        that answered is a property of one response. Before decoding, so a response that
+        fails to decode is still counted: its tokens were spent.
+        """
+
+        # Same fallback as the batch declaration: a dialect from before these members
+        # reports no usage rather than failing the call.
+        report = getattr(self.protocol, "usage_attributes", None)
+        named = getattr(self.protocol, "response_model", None)
+        counts: Mapping[str, int] = report(response) if report is not None else {}
+        answered: str | None = named(response) if named is not None else None
+
+        for attribute, value in counts.items():
+            usage[attribute] = usage.get(attribute, 0) + value
+
+        # A reply naming its model but no usage still tells the meter which model ran, with
+        # its counts unknown. One naming neither, as a scoring dialect's does, says nothing.
+        if counts or answered:
+            record_inference_usage(
+                answered or model_name,
+                input_tokens=counts.get(USAGE_INPUT_TOKENS_ATTRIBUTE),
+                output_tokens=counts.get(USAGE_OUTPUT_TOKENS_ATTRIBUTE),
+            )
 
     # ....................... #
 

@@ -41,6 +41,8 @@ from .generation import (
     PromptTemplate,
     decode_json_object,
     render_prompt,
+    request_extras,
+    response_model,
     single_instance,
     token_usage,
 )
@@ -59,6 +61,11 @@ MESSAGES_PATH = "/v1/messages"
 ``/v1`` — the dialect owns the version segment, as every dialect on this plane does."""
 
 _DIALECT = "anthropic_messages"
+
+MESSAGES_REQUEST_KEYS: Final[frozenset[str]] = frozenset(
+    {"model", "max_tokens", "messages", "system", "output_config", "temperature"}
+)
+"""Every top-level key the dialect writes, whatever the route's config."""
 
 _COMPLETE_STOP_REASONS: Final[frozenset[str]] = frozenset({"end_turn", "stop_sequence"})
 """The two ways a message ends with the whole answer in it.
@@ -342,6 +349,9 @@ class AnthropicMessagesProtocol:
 
     output_mode: InferenceOutputMode = "structured"
     temperature: float | None = None
+    extra_body: Mapping[str, Any] | None = None
+    """Merged into every request under the keys the dialect writes, which the config
+    keeps it from naming."""
 
     # ....................... #
 
@@ -355,6 +365,9 @@ class AnthropicMessagesProtocol:
     def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
         return token_usage(body, input_key="input_tokens", output_key="output_tokens")
 
+    def response_model(self, body: Mapping[str, Any]) -> str | None:
+        return response_model(body)
+
     # ....................... #
 
     def encode_request(
@@ -367,6 +380,7 @@ class AnthropicMessagesProtocol:
         instance = single_instance(spec, instances, dialect=_DIALECT)
 
         body: dict[str, Any] = {
+            **request_extras(self.extra_body),
             "model": model_name,
             "max_tokens": self.max_output_tokens,
             "messages": [{"role": "user", "content": render_prompt(spec, self.prompt, instance)}],

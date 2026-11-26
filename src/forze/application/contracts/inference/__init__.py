@@ -19,6 +19,11 @@ from .deps import (
     InferenceDepPort,
     InferenceDeps,
 )
+from .metering import (
+    InferenceMeter,
+    InferenceUsage,
+    record_inference_usage,
+)
 from .ports import (
     BaseInferencePort,
     InferencePort,
@@ -40,9 +45,12 @@ __all__ = [
     "InferenceDepKey",
     "InferenceDepPort",
     "InferenceDeps",
+    "InferenceMeter",
     "InferencePort",
     "InferenceRunOptions",
     "InferenceSpec",
+    "InferenceUsage",
+    "record_inference_usage",
     "validate_batch_size",
     "validate_inference_spec",
     "validate_stream_supported",

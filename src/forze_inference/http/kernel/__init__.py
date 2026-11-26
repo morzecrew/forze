@@ -1,6 +1,6 @@
 """Inference HTTP kernel: the endpoint client and its port."""
 
-from .client import DEFAULT_REQUEST_TIMEOUT_S, InferenceHttpClient
+from .client import DEFAULT_REQUEST_TIMEOUT_S, InferenceHttpClient, InferenceTransportFactory
 from .port import InferenceHttpClientPort
 from .routed_client import RoutedInferenceHttpClient
 from .routing_credentials import (
@@ -16,6 +16,7 @@ __all__ = [
     "InferenceHttpClient",
     "InferenceHttpClientPort",
     "InferenceHttpRoutingCredentials",
+    "InferenceTransportFactory",
     "RoutedInferenceHttpClient",
     "credential_headers",
     "routing_fingerprint",

@@ -12,7 +12,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
 
-from .client import DEFAULT_REQUEST_TIMEOUT_S, InferenceHttpClient
+from .client import DEFAULT_REQUEST_TIMEOUT_S, InferenceHttpClient, InferenceTransportFactory
 from .port import InferenceHttpClientPort
 from .routing_credentials import (
     InferenceHttpRoutingCredentials,
@@ -41,6 +41,11 @@ class RoutedInferenceHttpClient(
     secrets: SecretsPort
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
     timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S
+    transport_factory: InferenceTransportFactory | None = None
+    """Called once for each tenant's client; ``None`` keeps httpx's default transport. A
+    transport replaces httpx's environment proxy, so a factory names the egress proxy
+    itself where one is required."""
+
     max_cached_tenants: int = 100
     creds_type: type[BaseModel] = attrs.field(
         default=InferenceHttpRoutingCredentials,
@@ -70,6 +75,7 @@ class RoutedInferenceHttpClient(
             creds.base_url,
             default_headers=credential_headers(creds),
             timeout_s=self.timeout_s,
+            transport_factory=self.transport_factory,
         )
 
         return client

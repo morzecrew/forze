@@ -1,5 +1,6 @@
 """Route configs for served-model inference over HTTP."""
 
+from collections.abc import Mapping
 from math import isfinite
 from typing import Any, Literal, final, get_args
 
@@ -12,7 +13,10 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 
 from ...protocols import (
+    CHAT_REQUEST_KEYS,
+    MESSAGES_REQUEST_KEYS,
     AnthropicMessagesProtocol,
+    ChatTokenCapField,
     InferenceOutputMode,
     InferenceStructuredOutput,
     KserveV2Protocol,
@@ -21,8 +25,10 @@ from ...protocols import (
     PromptTemplate,
     WireProtocol,
     chat_output_schema,
+    copy_extra_body,
     json_object_instruction,
     messages_output_schema,
+    validate_extra_body,
     validate_flat_scalar_fields,
     validate_prompt_template,
     validate_text_output,
@@ -43,6 +49,7 @@ the check exists to prevent."""
 _PROTOCOL_NAMES = frozenset(get_args(InferenceWireProtocolName))
 _OUTPUT_MODES = frozenset(get_args(InferenceOutputMode))
 _STRUCTURED_OUTPUTS = frozenset(get_args(InferenceStructuredOutput))
+_TOKEN_CAP_FIELDS = frozenset(get_args(ChatTokenCapField))
 """The closed sets behind the literal annotations, read off the aliases so they cannot
 drift. `attrs` does not enforce a `Literal` at runtime, and none of these values would fail
 loudly on its own if let through: an unknown protocol would reach `wire_protocol()` as an
@@ -56,12 +63,20 @@ A route names its dialect, so which ceiling applies is known at wiring — and a
 it is rejected by the provider on every request, which is a boot error wearing a runtime
 error's clothes."""
 
+_REQUEST_KEYS: dict[str, frozenset[str]] = {
+    "openai_chat": CHAT_REQUEST_KEYS,
+    "anthropic_messages": MESSAGES_REQUEST_KEYS,
+}
+"""The keys each generation dialect writes itself, which ``extra_body`` may not name."""
+
 _GENERATION_FIELDS = (
     "prompt",
     "output_mode",
     "structured_output",
     "temperature",
     "max_output_tokens",
+    "max_output_tokens_field",
+    "extra_body",
 )
 """Fields only a generation dialect reads. Refused on the others rather than ignored: a
 prompt on a KServe route is a wiring mistake, and silently dropping it would send the model
@@ -150,11 +165,33 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     **required** on ``anthropic_messages``, whose endpoint requires ``max_tokens`` on every
     request, so a route without one could not make a single valid call."""
 
+    max_output_tokens_field: ChatTokenCapField | None = None
+    """``openai_chat`` only: the request field that carries ``max_output_tokens``.
+    Defaults to ``max_completion_tokens``, OpenAI's current name; a host that documents only
+    ``max_tokens`` (DeepSeek) takes that one. Refused without ``max_output_tokens``, since
+    it would name a field nothing fills."""
+
+    extra_body: Mapping[str, Any] | None = attrs.field(default=None, converter=copy_extra_body)
+    """Generation dialects only: fields merged into every request, for a host's own switches,
+    such as DeepSeek's ``{"thinking": {"type": "disabled"}}``.
+
+    Config, as sampling is, and refused at wiring when it names a key the dialect writes
+    itself, so an extra cannot replace the prompt, the constraint or the cap, or when it
+    names ``stream`` or ``n``, which change the reply's shape. The route keeps a copy taken
+    at wiring."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         self._validate_vocabulary()
         self._validate_limits()
+
+        if self.extra_body is not None and self.protocol in _REQUEST_KEYS:
+            validate_extra_body(
+                self.extra_body,
+                dialect=self.protocol,
+                written=_REQUEST_KEYS[self.protocol],
+            )
 
         # Sensitivity is not a choice here: a served model needs real values, so a route
         # always carries them out. The shared gate is called with that fixed, which is why
@@ -199,6 +236,15 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 f"HttpInferenceConfig.structured_output={self.structured_output!r} is not a "
                 f"structured-output strategy; choose one of "
                 f"{', '.join(sorted(_STRUCTURED_OUTPUTS))}."
+            )
+
+        if self.max_output_tokens_field is not None and not _in_closed_set(
+            self.max_output_tokens_field, _TOKEN_CAP_FIELDS
+        ):
+            raise exc.configuration(
+                f"HttpInferenceConfig.max_output_tokens_field="
+                f"{self.max_output_tokens_field!r} is not a token-cap field; choose one of "
+                f"{', '.join(sorted(_TOKEN_CAP_FIELDS))}."
             )
 
     # ....................... #
@@ -322,6 +368,15 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                     "is read by the openai_chat dialect in output_mode='structured' only."
                 )
 
+            if self.max_output_tokens_field is not None and (
+                self.protocol != "openai_chat" or self.max_output_tokens is None
+            ):
+                raise exc.configuration(
+                    f"HttpInferenceConfig(protocol={self.protocol!r}) does not read "
+                    "max_output_tokens_field; it names the openai_chat request field that "
+                    "carries max_output_tokens, so it needs both."
+                )
+
         else:
             offending = [field for field in _GENERATION_FIELDS if getattr(self, field) is not None]
 
@@ -329,7 +384,7 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 raise exc.configuration(
                     f"HttpInferenceConfig(protocol={self.protocol!r}) does not read "
                     f"{', '.join(offending)}; {'that field is' if len(offending) == 1 else 'those fields are'} "
-                    "read by the openai_chat dialect only."
+                    "read by a generation dialect only."
                 )
 
     # ....................... #
@@ -396,6 +451,8 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 structured_output=self._structured_output,
                 temperature=self.temperature,
                 max_output_tokens=self.max_output_tokens,
+                max_output_tokens_field=self.max_output_tokens_field or "max_completion_tokens",
+                extra_body=self.extra_body,
             )
 
         if self.max_output_tokens is None:  # pragma: no cover - refused in __attrs_post_init__
@@ -409,4 +466,5 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
             max_output_tokens=self.max_output_tokens,
             output_mode=self._output_mode,
             temperature=self.temperature,
+            extra_body=self.extra_body,
         )

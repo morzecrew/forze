@@ -23,7 +23,7 @@ into sequential calls.
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, cast, final
+from typing import Any, Final, Literal, cast, final, get_args
 from weakref import WeakKeyDictionary
 
 import attrs
@@ -40,6 +40,8 @@ from .generation import (
     PromptTemplate,
     decode_json_object,
     render_prompt,
+    request_extras,
+    response_model,
     single_instance,
     token_usage,
 )
@@ -53,6 +55,16 @@ CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 ``kserve_v2`` owns ``/v2/models``."""
 
 _DIALECT = "openai_chat"
+
+ChatTokenCapField = Literal["max_completion_tokens", "max_tokens"]
+"""The request field that carries the token cap: OpenAI's current name, or the older one a
+host such as DeepSeek still documents alone."""
+
+CHAT_REQUEST_KEYS: Final[frozenset[str]] = frozenset(
+    {"model", "messages", "response_format", "temperature", *get_args(ChatTokenCapField)}
+)
+"""Every top-level key the dialect writes, whatever the route's config. Both cap names are
+in it: an extra carrying the other one would send the endpoint two caps."""
 
 InferenceStructuredOutput = Literal["json_schema", "json_object"]
 """How a structured ``openai_chat`` route asks for its output.
@@ -223,6 +235,10 @@ class OpenAiChatProtocol:
     structured_output: InferenceStructuredOutput = "json_schema"
     temperature: float | None = None
     max_output_tokens: int | None = None
+    max_output_tokens_field: ChatTokenCapField = "max_completion_tokens"
+    extra_body: Mapping[str, Any] | None = None
+    """Merged into every request under the keys the dialect writes, which the config
+    keeps it from naming."""
 
     # ....................... #
 
@@ -236,6 +252,9 @@ class OpenAiChatProtocol:
 
     def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
         return token_usage(body, input_key="prompt_tokens", output_key="completion_tokens")
+
+    def response_model(self, body: Mapping[str, Any]) -> str | None:
+        return response_model(body)
 
     # ....................... #
 
@@ -263,7 +282,11 @@ class OpenAiChatProtocol:
 
         messages.append({"role": "user", "content": render_prompt(spec, self.prompt, instance)})
 
-        body: dict[str, Any] = {"model": model_name, "messages": messages}
+        body: dict[str, Any] = {
+            **request_extras(self.extra_body),
+            "model": model_name,
+            "messages": messages,
+        }
 
         if json_object:
             body["response_format"] = {"type": "json_object"}
@@ -284,7 +307,7 @@ class OpenAiChatProtocol:
             body["temperature"] = self.temperature
 
         if self.max_output_tokens is not None:
-            body["max_completion_tokens"] = self.max_output_tokens
+            body[self.max_output_tokens_field] = self.max_output_tokens
 
         return (CHAT_COMPLETIONS_PATH, body)
 
