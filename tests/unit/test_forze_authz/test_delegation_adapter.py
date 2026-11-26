@@ -11,7 +11,7 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authz.adapters.delegation import (
     DelegationGrantAdapter,
     DelegationQueryAdapter,
@@ -144,6 +144,20 @@ async def test_a_grant_that_lost_a_race_to_the_same_grant_succeeds() -> None:
     )
 
     await adapter.grant_delegation(actor, subject)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_grant_other_than_a_conflict_is_raised_unread() -> None:
+    adapter = _grant_adapter()
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.infrastructure("The store is unreachable.")
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+    assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    adapter.grant_qry.find.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
