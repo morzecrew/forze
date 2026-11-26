@@ -54,8 +54,8 @@ class InferenceDeps(ConvenientDeps):
         """A scope that sums what the inference calls inside it spent.
 
         ``async with ctx.inference.metered() as meter:`` — the meter reads the usage every
-        request inside the scope reported, its retries and failures included, with the time
-        the scope took. ``predict`` is unchanged, and the span keeps the same numbers.
+        response inside the scope reported, its retries and failures included, with the time
+        the scope took. An attempt abandoned in flight reports nothing. ``predict`` is unchanged, and the span keeps the same numbers.
         """
 
         return inference_meter_scope()

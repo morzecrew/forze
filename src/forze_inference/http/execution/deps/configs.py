@@ -171,7 +171,10 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     ``max_tokens`` (DeepSeek) takes that one. Refused without ``max_output_tokens``, since
     it would name a field nothing fills."""
 
-    extra_body: Mapping[str, Any] | None = attrs.field(default=None, converter=copy_extra_body)
+    # Out of the hash: a read-only mapping has none, and equal configs still hash alike.
+    extra_body: Mapping[str, Any] | None = attrs.field(
+        default=None, converter=copy_extra_body, hash=False
+    )
     """Generation dialects only: fields merged into every request, for a host's own switches,
     such as DeepSeek's ``{"thinking": {"type": "disabled"}}``.
 

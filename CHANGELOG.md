@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Proposals that stay inert until a human decides them** (`forze_kits.integrations.proposal`): `proposal_spec` over your change and evidence models, and `ProposalKit`'s `request`, `run` and `decide`, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction. `decide` refuses an agent acting for a principal (`proposal_human_required`).
 
-- **A caller can read what its inference calls spent.** `async with ctx.inference.metered() as meter:` sums the tokens every request inside it reported, retries and failed decodes included, per model, with the scope's time (`InferenceMeter`). `predict` is unchanged and the span keeps the same numbers. A custom adapter reports through `record_inference_usage`, and a custom `WireProtocol` names the answering model with `response_model`.
+- **A caller can read what its inference calls spent.** `async with ctx.inference.metered() as meter:` sums the tokens every response inside it reported, retries and failed decodes included, per model, with the scope's time (`InferenceMeter`). `predict` is unchanged and the span keeps the same numbers. A custom adapter reports through `record_inference_usage`, and a custom `WireProtocol` names the answering model with `response_model`.
 
 - **A generation route takes `extra_body`**, merged into every request; a key the dialect writes, or `stream` or `n`, is refused at wiring. `openai_chat` takes `max_output_tokens_field="max_tokens"` for a host such as DeepSeek. `inference_http_lifecycle_step` and `RoutedInferenceHttpClient` take a `transport_factory`, for a proxy or connection retries.
 

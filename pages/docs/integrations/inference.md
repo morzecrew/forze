@@ -301,7 +301,9 @@ with the completion prose; any other output model is refused at wiring.
 
   The meter sums every request inside the scope, per model (`by_model`), under
   the name the provider reports. That includes retries, hedges and tasks the
-  scope started, and a reply that failed to decode. `model` is set only when one
+  scope started, and a reply that failed to decode. It counts what a response
+  reported: an attempt abandoned in flight, as a hedge's loser or one a timeout
+  cancels, may still be billed, and the meter never sees it. `model` is set only when one
   model answered. `latency_ms` is the scope's wall-clock time, not the calls'
   durations added up. A count no call reported reads `None`, never `0`; a scoring
   route or an in-process model reports none. A scope inside another reports to

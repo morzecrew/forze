@@ -262,11 +262,26 @@ class TestExtrasTheRouteRefuses:
 
     @pytest.mark.parametrize(
         "extra_body",
-        [["thinking"], {1: "one"}, {"budget": float("nan")}, {"when": object()}],
-        ids=["not-a-mapping", "non-string-key", "nan", "not-json"],
+        [
+            ["thinking"],
+            {1: "one"},
+            {"thinking": {1: "x", "1": "y"}},
+            {"tools": [{2: "x"}]},
+            {"budget": float("nan")},
+            {"when": object()},
+        ],
+        ids=["not-a-mapping", "non-string-key", "nested-key", "key-in-a-list", "nan", "not-json"],
     )
     def test_a_body_a_request_could_not_carry(self, extra_body: Any) -> None:
+        # JSON turns a key of 1 into "1" without complaint, and drops one of two that collide.
         _refusal(lambda: _config(extra_body=extra_body))
+
+    def test_a_route_with_extras_still_hashes_and_compares(self) -> None:
+        config = _config(extra_body={"thinking": {"type": "disabled"}})
+
+        assert hash(config) == hash(_config(extra_body={"thinking": {"type": "disabled"}}))
+        assert config == _config(extra_body={"thinking": {"type": "disabled"}})
+        assert config != _config(extra_body={"thinking": {"type": "enabled"}})
 
     def test_extras_on_a_scoring_route(self) -> None:
         refused = _refusal(
