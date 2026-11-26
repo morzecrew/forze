@@ -3935,6 +3935,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/proposals/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-check" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5M9 15l2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Proposals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/agent-tools/" class="md-nav__link">
         
   
@@ -11371,6 +11400,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Audit rows record where the operation came from</strong>: <code>surface</code> (<code>http</code>, <code>cli</code>, …, <code>unknown</code>), <code>execution_id</code> and <code>correlation_id</code>, from the invocation, never its arguments. <strong>Required migration</strong> on Postgres <code>audit_events</code>: run <code>forze schema diff --specs</code>; until then startup refuses the table.</p>
+</li>
+<li>
+<p><strong>Proposals that stay inert until a human decides them</strong> (<code>forze_kits.integrations.proposal</code>): <code>proposal_spec</code> over your change and evidence models, and <code>ProposalKit</code>'s <code>request</code>, <code>run</code> and <code>decide</code>, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction.</p>
 </li>
 <li>
 <p><strong>The store tables can be checked at startup.</strong> <code>PostgresLifecycleModule(owned_schema=owned_relations(deps))</code> refuses to start when a table cannot serve its adapter (<code>postgres_owned_schema_invalid</code>), and warns about the rest.</p>
