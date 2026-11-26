@@ -1,4 +1,4 @@
-"""The proposal kit: request, run and decide as operations over one collection (RFC 0039)."""
+"""The proposal kit: request, run and decide as operations over one collection."""
 
 from collections.abc import Mapping
 from typing import Any, Generic, TypeVar, final

@@ -1,4 +1,4 @@
-"""Integration: the proposal kit on Postgres (RFC 0039).
+"""Integration: the proposal kit on Postgres.
 
 Three things the mock cannot show. The items are the application's models nested in a list,
 stored as ``jsonb`` and read back into those models; the accept effect lands in the same

@@ -1,8 +1,8 @@
-"""The handlers behind the proposal kit's operations (RFC 0039 §5.1).
+"""The handlers behind the proposal kit's operations.
 
 Acceptance needs a principal, and that is enforced here, in the decide handler: the
 collection is an ordinary document, so a port could not stop a sibling document port from
-flipping a status (RFC 0039 row 3). What the kit can promise is that its own operations never
+flipping a status. What the kit can promise is that its own operations never
 accept without one, and never automatically.
 """
 

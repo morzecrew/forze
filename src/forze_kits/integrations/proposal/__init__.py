@@ -1,4 +1,4 @@
-"""Proposals — machine-authored changes that stay inert until a human decides them (RFC 0039).
+"""Proposals — machine-authored changes that stay inert until a human decides them.
 
 A proposer, a plain function or one that calls a model, proposes a batch of changes with the
 evidence it saw; a reviewer accepts some, possibly amended, and rejects the rest; what is
