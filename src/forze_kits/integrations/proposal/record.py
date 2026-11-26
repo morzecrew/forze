@@ -1,4 +1,4 @@
-"""The proposal collection — one row per proposal, its items and their verdicts (RFC 0039).
+"""The proposal collection — one row per proposal, its items and their verdicts.
 
 A proposal is machine-authored and inert until a human decides it. It is a batch of items,
 each proposing one change with the evidence the proposer saw, and each decided on its own:

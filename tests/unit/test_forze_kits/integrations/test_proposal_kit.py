@@ -1,6 +1,6 @@
-"""The proposal kit: request, run and decide over one collection (RFC 0039).
+"""The proposal kit: request, run and decide over one collection.
 
-The property the kit exists for is row 7's: a proposal that is not accepted changes nothing
+The property the kit exists for: a proposal that is not accepted changes nothing
 downstream. The accept effect here writes a document, so every leg can count what it wrote,
 and the legs that must not write assert the count stayed at zero.
 """
@@ -491,7 +491,7 @@ class TestDecide:
 
 
 class TestNothingUnacceptedTakesEffect:
-    """RFC 0039 row 7: an un-accepted proposal changes no downstream state."""
+    """An un-accepted proposal changes no downstream state."""
 
     async def test_requesting_running_and_rejecting_write_nothing_downstream(self) -> None:
         ctx = _ctx()
@@ -539,7 +539,7 @@ class _Count:
 
 
 # ....................... #
-# RFC 0039 row 6: the deterministic proposer above first, a model-backed one second, through
+# The deterministic proposer above first, a model-backed one second, through
 # the same kit and no API of its own.
 
 

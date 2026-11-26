@@ -164,5 +164,4 @@ CREATE UNIQUE INDEX mappings_one_pending ON mappings (scope, base)
 ```
 
 A store that cannot keep a filtered uniqueness refuses the collection when it is wired. To replace
-a generated operation, pass `handlers=`; to add one, `extra_ops=`. The design and its
-decisions are in RFC 0039.
+a generated operation, pass `handlers=`; to add one, `extra_ops=`.

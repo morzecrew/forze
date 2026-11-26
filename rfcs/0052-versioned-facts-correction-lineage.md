@@ -89,7 +89,7 @@ declining to describe backend config.
 - **Not a replacement for `history_enabled`.** History stays what it is: a per-revision snapshot
   of the row. A versioned aggregate may enable both; they answer different questions.
 - **Not an approval workflow.** A correction applies immediately. Proposal-then-acceptance is
-  [RFC 0039](0039-proposal-lifecycle.md).
+  RFC 0039, retired and shipped as `forze_kits.integrations.proposal`.
 
 ## 5. Design
 
