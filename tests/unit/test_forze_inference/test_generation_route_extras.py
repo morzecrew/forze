@@ -209,12 +209,13 @@ class TestADeepSeekShapedRoute:
     def test_a_body_changed_after_sending_leaves_the_next_one_alone(
         self, config: Callable[..., HttpInferenceConfig]
     ) -> None:
-        wire = config(extra_body={"thinking": {"type": "disabled"}}).wire_protocol()
+        wire = config(extra_body={"thinking": {"type": "disabled"}, "tags": ["a"]}).wire_protocol()
         _, first = wire.encode_request(_spec(), [_Column(text="a")], model_name="m")
         first["thinking"]["type"] = "enabled"
+        first["tags"].append("b")
         _, second = wire.encode_request(_spec(), [_Column(text="b")], model_name="m")
 
-        assert second["thinking"] == {"type": "disabled"}
+        assert (second["thinking"], second["tags"]) == ({"type": "disabled"}, ["a"])
 
 
 # ....................... #
@@ -478,6 +479,17 @@ class TestTheTransportFactory:
             ).startup(ctx)
 
         assert len(built) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_transport_and_a_factory_together_are_refused(self) -> None:
+        with pytest.raises(CoreException) as refused:
+            await InferenceHttpClient().initialize(
+                "https://api.deepseek.test",
+                transport=httpx.MockTransport(_ok),
+                transport_factory=lambda: httpx.MockTransport(_ok),
+            )
+
+        assert refused.value.kind is ExceptionKind.CONFIGURATION
 
     @pytest.mark.asyncio
     async def test_a_client_that_cannot_be_built_closes_its_transport(self) -> None:
