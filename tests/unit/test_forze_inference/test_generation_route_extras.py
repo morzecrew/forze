@@ -28,6 +28,7 @@ from forze_inference.http import (
     HttpInferenceConfig,
     HttpInferenceDepsModule,
     InferenceHttpClient,
+    InferenceWireProtocolName,
     PromptTemplate,
     RoutedInferenceHttpClient,
     inference_http_lifecycle_step,
@@ -351,6 +352,15 @@ class TestReadingWhatTheCallsSpent:
         }
 
     @pytest.mark.asyncio
+    async def test_a_reply_reporting_no_usage_still_names_its_model(self) -> None:
+        ctx = await _ctx(_replying([], lambda: _chat_reply('{"field": "a"}')), _config())
+
+        async with ctx.inference.metered() as meter:
+            await ctx.inference.model(_spec()).predict(_Column(text="a"))
+
+        assert (meter.model, meter.tokens) == ("deepseek-chat", None)
+
+    @pytest.mark.asyncio
     async def test_a_reply_that_fails_to_decode_still_counts(self) -> None:
         reply = _chat_reply("not json", usage={"prompt_tokens": 30, "completion_tokens": 12})
         ctx = await _ctx(_replying([], lambda: reply), _config())
@@ -362,12 +372,29 @@ class TestReadingWhatTheCallsSpent:
         assert meter.tokens == 42
 
     @pytest.mark.asyncio
-    async def test_a_scoring_route_adds_nothing(self) -> None:
+    @pytest.mark.parametrize(
+        ("protocol", "reply"),
+        [
+            ("mlflow", {"predictions": [{"field": "a"}]}),
+            (
+                "kserve_v2",
+                {
+                    "model_name": "m",
+                    "outputs": [
+                        {"name": "field", "datatype": "BYTES", "shape": [1], "data": ["a"]}
+                    ],
+                },
+            ),
+        ],
+    )
+    async def test_a_scoring_route_adds_nothing(
+        self, protocol: InferenceWireProtocolName, reply: dict[str, Any]
+    ) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"predictions": [{"field": "a"}]})
+            return httpx.Response(200, json=reply)
 
         config = HttpInferenceConfig(
-            protocol="mlflow", model_name="m", acknowledge_data_egress=True
+            protocol=protocol, model_name="m", acknowledge_data_egress=True
         )
         ctx = await _ctx(handler, config)
 

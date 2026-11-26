@@ -155,21 +155,21 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
         # Same fallback as the batch declaration: a dialect from before these members
         # reports no usage rather than failing the call.
         report = getattr(self.protocol, "usage_attributes", None)
+        named = getattr(self.protocol, "response_model", None)
         counts: Mapping[str, int] = report(response) if report is not None else {}
-
-        if not counts:
-            return
+        answered: str | None = named(response) if named is not None else None
 
         for attribute, value in counts.items():
             usage[attribute] = usage.get(attribute, 0) + value
 
-        reported = getattr(self.protocol, "response_model", None)
-
-        record_inference_usage(
-            (reported(response) if reported is not None else None) or model_name,
-            input_tokens=counts.get(USAGE_INPUT_TOKENS_ATTRIBUTE),
-            output_tokens=counts.get(USAGE_OUTPUT_TOKENS_ATTRIBUTE),
-        )
+        # A reply naming its model but no usage still tells the meter which model ran, with
+        # its counts unknown. One naming neither, as a scoring dialect's does, says nothing.
+        if counts or answered:
+            record_inference_usage(
+                answered or model_name,
+                input_tokens=counts.get(USAGE_INPUT_TOKENS_ATTRIBUTE),
+                output_tokens=counts.get(USAGE_OUTPUT_TOKENS_ATTRIBUTE),
+            )
 
     # ....................... #
 

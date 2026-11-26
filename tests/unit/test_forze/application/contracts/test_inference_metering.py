@@ -49,8 +49,8 @@ async def test_nothing_reported_reads_as_unknown_not_zero() -> None:
 @pytest.mark.asyncio
 async def test_a_count_one_call_left_out_does_not_erase_the_others() -> None:
     async with InferenceDeps().metered() as meter:
-        record_inference_usage("m", input_tokens=3)
         record_inference_usage("m", input_tokens=2, output_tokens=1)
+        record_inference_usage("m", input_tokens=3)
 
     assert (meter.input_tokens, meter.output_tokens) == (5, 1)
 
