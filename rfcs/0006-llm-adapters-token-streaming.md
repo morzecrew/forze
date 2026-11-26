@@ -191,8 +191,10 @@ moving, and each is a gap here rather than in bi.
    `{"thinking": {"type": "disabled"}}`, and bi sends that on every short call and leaves it off
    for the author. The dialect writes only the model, the messages, `response_format`, the
    temperature and the token cap. A generation route takes `extra_body`, merged into each
-   request, and a key the dialect writes itself is refused at wiring, so an extra cannot
-   override the constraint or the cap (row 34). It is config, as row 6 requires.
+   request. Two kinds of key are refused at wiring: one the dialect writes itself, so an extra
+   cannot override the constraint or the cap, and one that changes the reply's shape, `stream`
+   and `n`, since the decoder reads one JSON body with one choice (row 34). It is config, as
+   row 6 requires.
 3. **The token cap's field name is fixed.** The chat dialect sends `max_completion_tokens`,
    OpenAI's current name. DeepSeek's chat API documents only `max_tokens`. Whether it ignores
    the unknown field, losing the cap, or refuses the request is believed rather than verified,
@@ -250,7 +252,7 @@ P6 is done when:
 1. A route in DeepSeek's shape, `json_object` with
    `extra_body={"thinking": {"type": "disabled"}}` and the `max_tokens` cap field, sends exactly
    that body, asserted against `httpx.MockTransport`.
-2. An `extra_body` key the dialect writes is a boot error naming the key.
+2. An `extra_body` key the dialect writes, or `stream` or `n`, is a boot error naming the key.
 3. The usage of two calls read the way row 33 settles is their sum, and the span attributes
    carry the same numbers.
 4. A transport factory reaches both the pooled and the routed client, and a refused connection
@@ -326,7 +328,7 @@ because it is the record that the design once believed otherwise.*
 | 31 | A **sampling temperature above the endpoint's ceiling is refused at wiring**, per dialect (2 for chat completions, 1 for Messages). The endpoint rejects the request otherwise, which makes a route that never worked look like a model outage on its first call; the ceiling is a published per-endpoint fact, so it belongs beside the dialect that knows it. Added by execution 2026-09-17 — see `logs/T-0006-P2.md` (Review round 1, finding 5) | `ASSUMED` |
 | 32 | `pattern` is **served over a subset** rather than refused outright: the native constraint enforces it, so refusing the keyword would cost a route the constraint it asked for, and what the subset leaves out (word boundaries, lookaround, backreferences) is refused **by name**. Deciding which constructs are active needs a scan that tracks escape parity and character-class boundaries, not a search — three review rounds found the same lexer wrong in three ways, all of them over-refusals. If a fourth arrives, the honest fix is to parse the pattern rather than scan it. Added by execution 2026-09-17 — see `logs/T-0006-P2.md` (Review rounds 5, 7 and 8) | `ASSUMED` |
 | 33 | How a caller reads what a call cost: an envelope method, a per-call sink in `InferenceRunOptions`, or a meter scope over `ctx.inference`; the lean is the scope (§5.1). Reopens row 7, so it is the maintainer's | `OPEN` |
-| 34 | A generation route takes `extra_body`, merged into each request; a key the dialect writes itself (model, messages, `response_format`, temperature, the token cap) is refused at wiring. Config, per row 6 (§5.1) | `ASSUMED` |
+| 34 | A generation route takes `extra_body`, merged into each request; a key the dialect writes itself (model, messages, `response_format`, temperature, the token cap) or one that changes the reply's shape (`stream`, `n`) is refused at wiring. Config, per row 6 (§5.1) | `ASSUMED` |
 | 35 | The chat dialect's token-cap field is config, `max_completion_tokens` by default or `max_tokens`. Whether DeepSeek ignores or refuses the default is believed, not verified, row 25's class (§5.1) | `ASSUMED` |
 | 36 | The inference-HTTP lifecycle step and routed client take a transport factory, called once per client, so a proxy and connection retries are wiring; the egress acknowledgement is unchanged (§5.1) | `ASSUMED` |
 | 37 | A per-call schema, a runtime system prompt and per-call token caps stay out: the output model, the prompt and the cap are route wiring (rows 1, 6), and a consumer needing more checks after decoding or wires a second route (§5.1) | `ASSUMED` |
