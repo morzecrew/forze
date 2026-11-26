@@ -1,8 +1,9 @@
 """Proposals — machine-authored changes that stay inert until a human decides them.
 
 A proposer, a plain function or one that calls a model, proposes a batch of changes with the
-evidence it saw; a reviewer accepts some, possibly amended, and rejects the rest; what is
-accepted is applied in the same transaction as the verdicts. Nothing accepts on its own.
+evidence it saw; a reviewer accepts some, possibly amended, and rejects the rest. The kit's
+``on_accept`` effect, when it has one, applies what is accepted in the same transaction as the
+verdicts. Nothing accepts on its own.
 
 - :func:`proposal_spec` — the collection, over the application's change and evidence models.
 - :class:`ProposalKit` — the ``request``, ``run`` and ``decide`` operations over it.
