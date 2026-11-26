@@ -11,7 +11,7 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_identity.authz.adapters.delegation import (
     DelegationGrantAdapter,
     DelegationQueryAdapter,
@@ -128,6 +128,32 @@ async def test_grant_delegation_unknown_principal_raises() -> None:
     adapter = _grant_adapter(principal_exists=False)
 
     with pytest.raises(CoreException, match="Policy principal not found"):
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_a_grant_that_lost_a_race_to_the_same_grant_succeeds() -> None:
+    # Both calls found no grant; the unique index refused the second insert.
+    adapter = _grant_adapter()
+    actor, subject = uuid4(), uuid4()
+    adapter.grant_qry.find = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[None, _read_grant(actor, subject)]
+    )
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    await adapter.grant_delegation(actor, subject)
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_with_no_grant_behind_it_is_raised() -> None:
+    adapter = _grant_adapter()
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    with pytest.raises(CoreException):
         await adapter.grant_delegation(uuid4(), uuid4())
 
 

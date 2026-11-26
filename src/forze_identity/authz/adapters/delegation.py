@@ -17,7 +17,7 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..domain.models.bindings import (
     CreateDelegationGrantCmd,
@@ -120,10 +120,19 @@ class DelegationGrantAdapter(DelegationGrantPort):
         if existing is not None:
             return
 
-        await self.grant_cmd.create(
-            CreateDelegationGrantCmd(actor_id=actor_id, subject_id=subject_id),
-            return_new=False,
-        )
+        try:
+            await self.grant_cmd.create(
+                CreateDelegationGrantCmd(actor_id=actor_id, subject_id=subject_id),
+                return_new=False,
+            )
+
+        except CoreException as error:
+            # A concurrent grant of the same pair won the unique index: the grant exists.
+            if error.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            if await self._find_grant(actor_id, subject_id) is None:
+                raise
 
     # ....................... #
 
