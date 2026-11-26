@@ -148,23 +148,23 @@ class RunProposal:
 
         request = ProposalRequest(id=proposal.id, scope=proposal.scope, base=proposal.base)
 
+        # Building the update is inside the try: it is what checks an item against the
+        # collection's models, and a draft that fails it must fail, not stay pending.
         try:
             draft = await self.proposer(self.ctx, request)
             items = _checked(draft.items)
-
-        except Exception as error:
-            update = self.spec.update_cmd(
-                status=ProposalStatus.FAILED,
-                error=(str(error) or type(error).__name__)[-_ERROR_CHARS:],
-            )
-
-        else:
             update = self.spec.update_cmd(
                 status=ProposalStatus.OPEN if items else ProposalStatus.DECIDED,
                 items=items,
                 model=draft.model,
                 tokens=draft.tokens,
                 latency_ms=draft.latency_ms,
+            )
+
+        except Exception as error:
+            update = self.spec.update_cmd(
+                status=ProposalStatus.FAILED,
+                error=(str(error) or type(error).__name__)[-_ERROR_CHARS:],
             )
 
         return await _command(self.ctx, self.spec).update(proposal.id, proposal.rev, update)

@@ -295,6 +295,15 @@ class TestRequestAndRun:
         assert ran.status is ProposalStatus.FAILED
         assert message in (ran.error or "")
 
+    async def test_an_item_of_the_wrong_models_fails_the_proposal(self) -> None:
+        # The bare generic item takes any model; only the collection's own item type checks
+        # it, so that check has to fail the proposal rather than leave it pending.
+        wrong = ProposalItem(key="a", proposed=Seen(filled=1.0))
+        ran = await _open(_kit(_proposer(wrong)), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "items.0.proposed" in (ran.error or "")
+
     async def test_a_proposer_cannot_hand_in_a_verdict(self) -> None:
         accepted = _item("a").model_copy(
             update={"verdict": ItemVerdict.ACCEPTED, "decided": Mapping(field="x")}
