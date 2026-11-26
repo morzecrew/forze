@@ -6928,7 +6928,9 @@ them, and <code>ProposalKit</code> gives you its operations:</p>
 <p>Bind <code>MAPPINGS.document</code> in your document deps module like any document spec, and merge
 <code>kit.spec_contributions()</code> into your spec inventory. The proposer is a plain function here; a
 model-backed one calls an inference port inside it (see <a href="../inference/">Inference</a>) and returns
-the same draft, with <code>model</code>, <code>tokens</code> and <code>latency_ms</code> filled in.</p>
+the same draft. Its <code>model</code>, <code>tokens</code> and <code>latency_ms</code> are yours to fill: no inference port
+hands a call's usage back to its caller yet, and only an HTTP generation route records it, on
+the call's span.</p>
 <h2 id="the-operations">The operations<a class="headerlink" href="#the-operations" title="Permanent link">&para;</a></h2>
 <p>Three operations, keyed under the collection's name (<code>mappings.request</code>, <code>mappings.run</code>,
 <code>mappings.decide</code>):</p>
