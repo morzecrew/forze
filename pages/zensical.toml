@@ -64,6 +64,7 @@ nav = [
             "data-events/analytics.md",
             "data-events/dynamic-read.md",
             "data-events/inference.md",
+            "data-events/proposals.md",
             "data-events/agent-tools.md",
             "data-events/sandbox.md",
             "data-events/caching.md",
