@@ -9804,10 +9804,10 @@ Branch `feat/proposal-kit`, stacked on the amendment that settled §7 Q1 (#958).
 amended: the collection over the application's models, its contribution, and `request`, `run`
 and `decide` as operations, built against a deterministic proposer and then a model-backed one.
 
-- Rows 9–17 (`ASSUMED`) hold; D-381 to D-384 fill in what they leave open.
+- Rows 9–17 (`ASSUMED`) hold; D-381 to D-384 and D-386 fill in what they leave open.
 - Row 6 (`LOCKED`) holds, and D-385 closes it out without the `factories.py` §5 sketched.
 
-**Drift count: 0.** Five entries, D-381 to D-385: four `spec-gap`, one of them a departure
+**Drift count: 0.** Six entries, D-381 to D-386: five `spec-gap`, one of them a departure
 (D-383), and one close-out.
 
 ## D-381 — The collection is generic over the application's two models
@@ -9815,7 +9815,7 @@ and `decide` as operations, built against a deterministic proposer and then a mo
 - **Touches:** row 13 (`ASSUMED`): evidence and confidence per item, typed by the application.
 - **Built:** `proposal_spec(name, *, change=, evidence=)` returns a `ProposalSpec` holding a
   `DocumentSpec` over pydantic generic models, `ProposalDoc[C, E]` and its siblings
-  (`src/forze_kits/integrations/proposal/record.py:171`). Pydantic caches each
+  (`src/forze_kits/integrations/proposal/record.py:167`). Pydantic caches each
   parametrization, so two specs over the same models are one spec in a registry.
 - **Evidence:** `tests/unit/test_forze_kits/integrations/test_proposal_kit.py`,
   `test_two_specs_over_the_same_models_are_one_spec`;
@@ -9830,9 +9830,9 @@ and `decide` as operations, built against a deterministic proposer and then a mo
 
 - **Touches:** row 16 (`ASSUMED`).
 - **Built:** a proposal no longer `pending` is returned unchanged, so a retried worker writes
-  nothing (`handlers.py:129`). An exception from the proposer, or items sharing a key or
-  proposing and asking nothing (`proposal_items_invalid`, `:83`), fails the proposal with the
-  error's last 2,000 characters (`:138`). A verdict the proposer hands in is reset to `pending`.
+  nothing (`handlers.py:146`). An exception from the proposer, or items sharing a key or
+  proposing and asking nothing (`proposal_items_invalid`, `:100`), fails the proposal with the
+  error's last 2,000 characters (`:157`). A verdict the proposer hands in is reset to `pending`.
 - **Evidence:** `test_proposal_kit.py`, `TestRequestAndRun`.
 - **Class:** `spec-gap`.
 - **Action:** decided.
@@ -9843,11 +9843,11 @@ and `decide` as operations, built against a deterministic proposer and then a mo
 - **Found:** the order inside the transaction was unstated. Storing the verdicts first, at the
   revision read, makes a concurrent second decision fail before its effect runs.
 - **Built:** the `decide` operation is bound in a transaction on the kit's `tx_route`
-  (`kit.py:135`). It updates the proposal at the revision it read, then runs `on_accept` with
+  (`kit.py:143`). It updates the proposal at the revision it read, then runs `on_accept` with
   the decided proposal and its accepted items. An effect that raises rolls the verdicts back. A
   decision that loses a race fails the document's revision check (`revision_mismatch`) rather
   than `proposal_decided`, which a later read gets.
-- **Evidence:** `test_proposal_kit.py:366`; `test_pg_proposal_kit.py`,
+- **Evidence:** `test_proposal_kit.py:411`; `test_pg_proposal_kit.py`,
   `test_an_effect_that_fails_leaves_the_proposal_open`, on Postgres.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0039):** Row 15, extended: the verdicts are stored first, at the
@@ -9859,7 +9859,7 @@ and `decide` as operations, built against a deterministic proposer and then a mo
 - **Touches:** row 12 (`ASSUMED`) and §2's "acceptance requires a principal".
 - **Built:** `decide` refuses with no authenticated principal (`proposal_principal_required`)
   and records `decided_by` as the identity's performer, the nearest actor of a delegated call,
-  as an audit row records its actor (`handlers.py:218`).
+  as an audit row records its actor (`handlers.py:235`).
 - **Evidence:** `test_proposal_kit.py`, `test_deciding_needs_a_principal`.
 - **Class:** `spec-gap`.
 - **Action:** decided.
@@ -9872,9 +9872,27 @@ and `decide` as operations, built against a deterministic proposer and then a mo
   calling `ctx.inference.model(spec).predict(...)`, and runs through the same kit, so §5's
   factory taking "an `InferenceSpec` **or** a plain callable" adds nothing a function does not
   already do, and is not built.
-- **Evidence:** `test_proposal_kit.py:475`, `TestAModelBackedProposer`, after the
-  deterministic legs; `test_proposal_kit.py:387`, row 7's property.
+- **Evidence:** `test_proposal_kit.py:520`, `TestAModelBackedProposer`, after the
+  deterministic legs; `test_proposal_kit.py:435`, row 7's property.
 - **Action:** decided.
 
-**Drift count: 0.** Unit 40 holds five entries, D-381 to D-385: four `spec-gap` and one
+## D-386 — `request` dispatches the run in its transaction, through an optional hook
+
+- **Touches:** rows 15 and 16 (`ASSUMED`), as #958 amended them: the run is scheduled in the
+  transaction that creates the proposal, and a pending proposal is reused only on the same
+  scope and base.
+- **Found:** the rows say where the run is scheduled, not who schedules it. The kit cannot
+  enqueue on the application's run store itself, and an application that runs the proposer
+  inline, as the tests do, schedules nothing.
+- **Built:** `ProposalKit(dispatch=None)`. `request` resolves the base first, from the request
+  or `base_of`, and looks for a pending proposal on that scope and base, a missing base
+  matching only a missing one (`handlers.py:75`). Otherwise it creates one and calls
+  `dispatch(ctx, created)` (`:91`), inside `request`'s transaction on `tx_route`
+  (`kit.py:143`). A dispatch that raises rolls the new proposal back. Without the hook the
+  caller schedules the run, and the docs page says what a crash after the commit costs.
+- **Evidence:** `test_proposal_kit.py:192`, `:210`, `:224`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 40 holds six entries, D-381 to D-386: five `spec-gap` and one
 close-out.
