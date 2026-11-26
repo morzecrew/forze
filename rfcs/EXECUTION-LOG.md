@@ -9874,6 +9874,10 @@ and `decide` as operations, built against a deterministic proposer and then a mo
   already do, and is not built.
 - **Evidence:** `test_proposal_kit.py`, `TestAModelBackedProposer`, after the deterministic
   legs, and `test_requesting_running_and_rejecting_write_nothing_downstream`, row 7's property.
+- **Proposed row (RFC 0039):** `ASSUMED`. The proposer is a plain callable from the request to
+  the draft, and a model-backed one is the application's function calling `ctx.inference`;
+  there is no factory over an `InferenceSpec`. Supersedes §5's `factories.py` and §5.1's
+  "or one built from an `InferenceSpec`".
 - **Action:** decided.
 
 ## D-386 — `request` dispatches the run in its transaction, through an optional hook
