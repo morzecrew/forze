@@ -87,11 +87,16 @@ def _resolve_runtime_tracer(
 # ....................... #
 
 
-def _declares(provider: object, protocol: type) -> bool:
+def _declares(provider: object, protocol: type, method: str) -> bool:
     """Whether *provider* implements *protocol*. A class registered as a factory carries the
-    protocol's method unbound, so only an instance declares."""
+    protocol's method unbound, so only an instance declares; and the protocol check reads
+    only the attribute's name, so a field of that name that is no method declares nothing."""
 
-    return not isinstance(provider, type) and isinstance(provider, protocol)
+    return (
+        not isinstance(provider, type)
+        and isinstance(provider, protocol)
+        and callable(getattr(provider, method, None))
+    )
 
 
 # ....................... #
@@ -112,7 +117,7 @@ def _refuse_unbound_requirements(store: ProviderStore) -> None:
     remedies: dict[str, None] = {}
 
     for key, route, provider in store.providers():
-        if not _declares(provider, DeclaresRequirements):
+        if not _declares(provider, DeclaresRequirements, "requirements"):
             continue
 
         for requirement in cast(DeclaresRequirements, provider).requirements():
@@ -143,7 +148,7 @@ def _provider_findings(store: ProviderStore) -> Iterator[WiringFinding]:
     which no module carries to the freeze."""
 
     for _, _, provider in store.providers():
-        if _declares(provider, PostureAware):
+        if _declares(provider, PostureAware, "posture_findings"):
             yield from cast(PostureAware, provider).posture_findings()
 
 

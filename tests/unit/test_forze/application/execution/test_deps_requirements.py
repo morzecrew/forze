@@ -148,3 +148,15 @@ def test_a_module_and_its_provider_report_one_finding_once() -> None:
     frozen = DepsRegistry.from_modules(_Module()).freeze()
 
     assert [f.render() for f in frozen.posture_findings] == ["thing:main: is unsafe"]
+
+
+@attrs.define
+class _Settings:
+    requirements: tuple[str, ...] = ("a",)
+    posture_findings: tuple[str, ...] = ()
+
+
+def test_a_provider_with_a_field_of_a_declaring_name_freezes() -> None:
+    # The protocols are checked by attribute name; a field that is no method declares
+    # nothing, and must not be called.
+    DepsRegistry.from_deps(Deps.plain({DepKey[object]("settings"): _Settings()})).freeze()
