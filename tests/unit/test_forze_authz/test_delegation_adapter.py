@@ -147,6 +147,23 @@ async def test_a_grant_that_lost_a_race_to_the_same_grant_succeeds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_conflict_whose_recovery_read_fails_is_raised_as_the_conflict() -> None:
+    # Inside a caller's transaction the refused insert aborted it, so the read fails too.
+    adapter = _grant_adapter()
+    adapter.grant_qry.find = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[None, exc.infrastructure("current transaction is aborted")]
+    )
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+    assert caught.value.kind is ExceptionKind.CONFLICT
+
+
+@pytest.mark.asyncio
 async def test_a_failed_grant_other_than_a_conflict_is_raised_unread() -> None:
     adapter = _grant_adapter()
     adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]

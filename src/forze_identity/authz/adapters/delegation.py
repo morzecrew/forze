@@ -131,7 +131,15 @@ class DelegationGrantAdapter(DelegationGrantPort):
             if error.kind is not ExceptionKind.CONFLICT:
                 raise
 
-            if await self._find_grant(actor_id, subject_id) is None:
+            try:
+                existing = await self._find_grant(actor_id, subject_id)
+
+            except CoreException:
+                # Inside a caller's transaction the refused insert aborted it, and the read
+                # fails with it: the conflict is the error that caller can act on.
+                raise error from None
+
+            if existing is None:
                 raise
 
     # ....................... #
