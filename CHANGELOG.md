@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A spec declares the indexes it relies on that are not guarantees**: `DocumentSpec(required_indexes=(DocumentIndex(...),))`, as identity does for `username` and role bindings. `Int64` in `forze.base.primitives` marks an `int` needing 64 bits (`bigint`), as the realtime `hlc` and stored-file `size` now are.
 
-- **Audit rows record where the operation came from**: `surface` (`http`, `cli`, …, `unknown`), `execution_id` and `correlation_id`, from the invocation, never its arguments. **Required migration** on Postgres `audit_events`: run `forze schema diff --specs`; until then startup refuses the table.
+- **Audit rows record where the operation came from** (**Breaking** on Postgres): `surface` (`http`, `cli`, …, `unknown`), `execution_id` and `correlation_id`, from the invocation, never its arguments. **Required migration** on Postgres `audit_events`: run `forze schema diff --specs` before upgrading. Until the columns exist every audited write fails, and the operation it audits rolls back with it; startup refuses the table only where document schema validation is on.
 
 - **Proposals that stay inert until a human decides them** (`forze_kits.integrations.proposal`): `proposal_spec` over your change and evidence models, and `ProposalKit`'s `request`, `run` and `decide`, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction. `decide` refuses an agent acting for a principal (`proposal_human_required`).
 
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`eligibility="allow_all"` is a production posture finding** (**Breaking**): under a `ProductionPosture`, an unset environment included, each route refuses the boot unless `Exempt(target="authn_eligibility:<route>", reason=...)` covers it, as with `eligibility=ConfigurableAllowAllEligibility(...)`. Constructing the module logs a warning.
 
-- **An unregistered dependency a provider declares refuses the boot** (**Breaking**): `DepsRegistry.freeze()` raises `dependency_requirement_unbound`. The default eligibility gate needs `authz_policy_principals` (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle.
+- **An unregistered dependency a provider declares refuses the boot** (**Breaking**): `DepsRegistry.freeze()` raises `dependency_requirement_unbound`. The default eligibility gate needs `authz_policy_principals` (a plain fallback counts); deactivation needs the authz principal registry and its route's token lifecycle, and `ConfigurablePrincipalDeactivation` takes a required `route=`.
 
 - **Inside a tenant, `assign_role` and `revoke_role` act in that tenant** (**Breaking**): an unscoped `assign_role` in a tenant-bound invocation binds the role there, not in every tenant. `revoke_role` there refuses a role held in every tenant (`authz.role_held_globally`); revoke it with no tenant bound.
 
