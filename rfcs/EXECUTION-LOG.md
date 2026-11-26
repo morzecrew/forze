@@ -9931,10 +9931,11 @@ maintainer as a meter scope (row 38).
 
 - Row 7 (`LOCKED`) holds as row 38 narrows it: `predict` returns `Out` alone, and the span
   keeps the numbers.
-- Rows 34–36 (`ASSUMED`) hold; D-388 to D-390 fill in what they and row 38 leave open.
+- Rows 34–36 (`ASSUMED`) hold; D-388 to D-390 and D-392 fill in what they and row 38 leave
+  open.
 - Row 35's belief about DeepSeek is still unverified: nothing here calls its API.
 
-**Drift count: 0.** Four entries, D-388 to D-391: three `spec-gap` and one close-out.
+**Drift count: 0.** Five entries, D-388 to D-392: four `spec-gap` and one close-out.
 
 ## D-388 — The meter is fed once per request, under the model the provider names
 
@@ -9943,17 +9944,19 @@ maintainer as a meter scope (row 38).
   while a meter sums, and the model that answered is a property of one response. Neither
   dialect told the adapter which model answered.
 - **Built:** `WireProtocol.response_model(body)`, the response's top-level `model` on both
-  generation dialects and `None` on the scoring ones (`protocols/generation.py:408`). The
+  generation dialects and `None` on the scoring ones (`protocols/generation.py:451`). The
   adapter reports each request to the open meters before decoding it, so a reply that fails
   to decode still counts, and under the route's own model name when the reply names none
   (`adapters/inference.py:141`). A dialect without the member reports under the route's
-  name, the fallback `usage_attributes` already has. A request whose reply reports no usage
-  is not reported at all.
+  name, the fallback `usage_attributes` already has. A reply naming its model but no usage
+  is reported with its counts unknown; one naming neither, as a scoring reply, is not
+  reported.
 - **Evidence:** `tests/unit/test_forze_inference/test_generation_route_extras.py`,
   `test_two_calls_sum_to_what_their_spans_carry`,
   `test_the_model_is_the_one_the_provider_says_answered`,
-  `test_a_reply_that_fails_to_decode_still_counts` and `test_a_scoring_route_adds_nothing`;
-  all four fail with the report removed.
+  `test_a_reply_that_fails_to_decode_still_counts`,
+  `test_a_reply_reporting_no_usage_still_names_its_model` and
+  `test_a_scoring_route_adds_nothing`; all fail with the report removed.
 - **Class:** `spec-gap`.
 - **Action:** decided.
 
@@ -9976,15 +9979,21 @@ maintainer as a meter scope (row 38).
 
 - **Touches:** row 34 (`ASSUMED`).
 - **Found:** a frozen config holding the caller's own mapping sends whatever the caller
-  changes it to later, past the refusal. And a refused-key list kept apart from the encoder
-  drifts when the encoder gains a key.
-- **Built:** an attrs converter takes a read-only copy through JSON, refusing a non-string
-  key and a value JSON cannot carry (`protocols/generation.py:245`). Each dialect names
+  changes it to later, past the refusal, and a nested value the encoder shares with each
+  request body lets one request change the next. And a refused-key list kept apart from the
+  encoder drifts when the encoder gains a key.
+- **Built:** an attrs converter takes a copy through JSON, from any mapping, its own output
+  included, so `attrs.evolve` works, and freezes it all the way down. It refuses a
+  non-string key and a value JSON cannot carry (`protocols/generation.py:276`). Each request
+  gets a fresh, writable copy (`:315`). Each dialect names
   every top-level key it writes beside its encoder (`openai_chat.py:62`,
   `anthropic_messages.py:64`), both cap names included on the chat dialect, so an extra
   cannot add a second cap. `stream` and `n` are refused on both dialects.
 - **Evidence:** `test_generation_route_extras.py`,
-  `test_the_extras_are_the_ones_wired_not_a_later_change` and
+  `test_the_extras_are_the_ones_wired_not_a_later_change`,
+  `test_a_wired_route_can_be_copied_with_a_change`,
+  `test_the_wired_extras_cannot_be_changed_in_place`,
+  `test_a_body_changed_after_sending_leaves_the_next_one_alone` and
   `test_every_key_the_dialect_writes_is_one_it_refuses`, which fails when a key leaves the
   list.
 - **Class:** `spec-gap`.
@@ -10001,4 +10010,22 @@ maintainer as a meter scope (row 38).
   refused port and a server answering 500 through `httpx.AsyncHTTPTransport(retries=1)`, and
   counts two connection attempts for the first and one request for the second.
 - **Class:** close-out.
+- **Action:** decided.
+
+## D-392 — The client builds the transport, once, and closes one it could not use
+
+- **Touches:** row 36 (`ASSUMED`): the transport factory is called once per client.
+- **Found:** the startup hook called the factory before the client's guarded setup. A
+  second startup built a transport the open client never used, and a client that could not
+  be built, as for a base URL with no valid port, left its transport open. A transport also
+  replaces httpx's own, and with it the proxy httpx reads from the environment.
+- **Built:** `InferenceHttpClient.initialize(transport_factory=)`, called inside the guarded
+  setup, and refused alongside `transport=` (`src/forze_inference/http/kernel/client.py:136`).
+  A client that cannot be built closes the transport. The step and the routed client pass
+  the factory through. The docstrings and the docs page say a factory names the egress
+  proxy itself.
+- **Evidence:** `test_generation_route_extras.py`,
+  `test_a_second_startup_builds_no_second_transport` and
+  `test_a_client_that_cannot_be_built_closes_its_transport`, both red before the change.
+- **Class:** `spec-gap`.
 - **Action:** decided.
