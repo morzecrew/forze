@@ -78,6 +78,11 @@ api_key_account_spec = DocumentSpec(
         "update_cmd": UpdateApiKeyAccountCmd,
     },
     sensitive=True,
+    # Every API-key request finds its account by the key's hash.
+    required_indexes=(
+        DocumentIndex(fields=("key_hash",)),
+        DocumentIndex(fields=("principal_id",)),
+    ),
 )
 
 # ....................... #
@@ -117,6 +122,11 @@ session_spec = DocumentSpec(
         "update_cmd": UpdateSessionCmd,
     },
     sensitive=True,
+    # Every refresh finds its session by the token's digest.
+    required_indexes=(
+        DocumentIndex(fields=("refresh_digest",)),
+        DocumentIndex(fields=("principal_id",)),
+    ),
 )
 
 # ....................... #

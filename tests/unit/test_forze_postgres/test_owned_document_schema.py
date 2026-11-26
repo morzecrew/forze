@@ -59,6 +59,7 @@ from forze_postgres.kernel.catalog.validation.validate_schema_types import (
 from forze_kits.integrations.audit import audit_record_spec
 from forze_kits.integrations.progress import job_record_spec
 from forze_kits.integrations.realtime import realtime_mailbox_spec
+from forze_kits.integrations.realtime import realtime_mailbox_spec
 from tests.support.framework_documents import (
     document_config,
     framework_contributions,
@@ -207,6 +208,28 @@ def test_the_identity_indexes_render_as_required() -> None:
         (("principal_id", "role_id", "scope_tenant_id"), True, True)
     ]
 
+
+
+@pytest.mark.parametrize(
+    ("name", "keys"),
+    [
+        ("authn_api_key_accounts", [("key_hash",), ("principal_id",)]),
+        ("authn_token_sessions", [("refresh_digest",), ("principal_id",)]),
+    ],
+)
+def test_a_table_read_by_a_lookup_renders_its_index(
+    name: str, keys: list[tuple[str, ...]]
+) -> None:
+    # Every API-key request and token refresh finds its row by these columns.
+    shape = document_shape(_schema_spec({str(spec.name): spec for spec in _SPECS}[name]))
+
+    assert [(i.keys, i.unique) for i in shape.indexes] == [(key, False) for key in keys]
+
+
+def test_the_mailbox_renders_its_replay_index() -> None:
+    shape = document_shape(_schema_spec(realtime_mailbox_spec()))
+
+    assert [i.keys for i in shape.indexes][-1][-3:] == ("principal", "hlc", "id")
 
 # ....................... #
 

@@ -29,6 +29,7 @@ from pydantic import Field
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import (
     DocumentCommandPort,
+    DocumentIndex,
     DocumentQueryPort,
     DocumentSpec,
 )
@@ -225,6 +226,8 @@ def realtime_mailbox_spec(
         read=_MailboxRead,
         write={"domain": _MailboxDoc, "create_cmd": _MailboxCreate},
         encryption=encryption,
+        # Replay reads one principal's entries past a (hlc, id) mark, in that order.
+        required_indexes=(DocumentIndex(fields=("principal", "hlc", "id")),),
     )
 
 
