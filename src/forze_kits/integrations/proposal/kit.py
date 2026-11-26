@@ -58,7 +58,7 @@ class ProposalKit(Generic[C, E]):
     spec: ProposalSpec[C, E]
     """The collection, from :func:`~.record.proposal_spec`."""
 
-    proposer: Proposer
+    proposer: Proposer[C, E]
     """Proposes a request's items: a deterministic function, or one that calls a model."""
 
     base_of: BaseOf | None = None

@@ -95,7 +95,9 @@ class ProposalDraft(Generic[C, E]):
     latency_ms: int = 0
 
 
-type Proposer = Callable[[ExecutionContext, ProposalRequest], Awaitable[ProposalDraft[Any, Any]]]
+type Proposer[C: BaseModel, E: BaseModel] = Callable[
+    [ExecutionContext, ProposalRequest], Awaitable[ProposalDraft[C, E]]
+]
 """Proposes the items for one request: a plain function, or one that calls a model. It runs
 outside any request, so a model call may take as long as it needs. An exception fails the
 proposal, with its message as the error."""

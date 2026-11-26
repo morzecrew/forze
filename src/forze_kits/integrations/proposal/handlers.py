@@ -136,7 +136,7 @@ class RunProposal:
 
     ctx: ExecutionContext
     spec: ProposalSpec[Any, Any]
-    proposer: Proposer
+    proposer: Proposer[Any, Any]
 
     # ....................... #
 
