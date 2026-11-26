@@ -390,11 +390,13 @@ class PostgresIntrospector:
               a.attnum,
               a.attname AS column_name,
               CASE
-                WHEN t.typelem <> 0 THEN format_type(t.typelem, a.atttypmod)
+                WHEN t.typcategory = 'A' AND t.typelem <> 0
+                  THEN format_type(t.typelem, a.atttypmod)
                 ELSE NULL
               END AS array_elem_type,
               format_type(a.atttypid, a.atttypmod) AS full_type,
-              (t.typelem <> 0) AS is_array,
+              -- Not typelem <> 0 alone: name and point have an element type too.
+              (t.typcategory = 'A' AND t.typelem <> 0) AS is_array,
               a.attnotnull AS not_null
             FROM rel
             JOIN pg_attribute a ON a.attrelid = rel.oid
@@ -505,7 +507,8 @@ class PostgresIntrospector:
                   ON a.attrelid = i.indrelid
                  AND a.attnum = u.attnum
                  AND NOT a.attisdropped
-                WHERE u.attnum <> 0
+                -- INCLUDE columns sit past indnkeyatts and are no part of the key.
+                WHERE u.attnum <> 0 AND u.ord <= i.indnkeyatts
               ) AS columns,
               EXISTS (
                 SELECT 1 FROM unnest(i.indkey) AS k(attnum) WHERE k.attnum = 0

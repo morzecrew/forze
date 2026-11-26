@@ -49,9 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Leaving a tenant drops the roles held in it** (**Breaking**): `detach_principal` first calls the new `RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)`, which a custom port must add. `TenancyDepsModule(tenant_management=...)` must name `authz_route=...` or pass `detach_keeps_roles=True`.
 
+- **The store-table startup check refuses an integer smaller than declared** (**Breaking**), since a packed HLC or an epoch in milliseconds overflows it on every write. A length-limited text column still only warns.
+
 ### Fixed
 
 - **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
+
+- **The store-table check no longer refuses a table the store can serve**: a unique index in another column order, a primary key with `INCLUDE` columns, a `name` column (read as an array), or a missing optional column whose index went with it. `forze schema diff` prints no duplicate index for them.
 
 ## [0.24.1] - 2026-11-10
 

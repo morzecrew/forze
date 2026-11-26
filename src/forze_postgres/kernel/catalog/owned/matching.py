@@ -16,6 +16,7 @@ duplicates a scan index. A retired one read as different is refused rather than 
 """
 
 import re
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from typing import Final
 
@@ -391,6 +392,16 @@ def same_keys(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     )
 
 
+def same_key_set(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
+    """Whether *index* is a b-tree over the declared keys in any order and direction. That
+    is all that decides for a unique index: ``ON CONFLICT`` infers its arbiter from the set of
+    columns, and a uniqueness holds over the set alone."""
+
+    return index.method == "btree" and Counter(
+        tree for tree, _, _ in catalog_keys(index)
+    ) == Counter(declared_key(key)[0] for key in declared.keys)
+
+
 def same_predicate(
     declared: OwnedIndex,
     index: IndexShapeInfo,
@@ -409,8 +420,9 @@ def satisfies(
     index: IndexShapeInfo,
     text_columns: frozenset[str] = frozenset(),
 ) -> bool:
-    """Whether *index* is the declared index: the same keys, uniqueness and predicate, with
-    default operator classes and collations, and nulls compared as declared (distinct, as
+    """Whether *index* is the declared index: the same keys (in order for a scan index, as a
+    set for a unique one), uniqueness and predicate, with default operator classes and
+    collations, and nulls compared as declared (distinct, as
     Postgres has them by default, unless the index says ``NULLS NOT DISTINCT``). A unique one
     must also be immediate, since ``ON CONFLICT`` never takes a deferrable index as its
     arbiter.
@@ -420,7 +432,7 @@ def satisfies(
     """
 
     return (
-        same_keys(declared, index)
+        (same_key_set(declared, index) if declared.unique else same_keys(declared, index))
         and index.unique == declared.unique
         and same_predicate(declared, index, text_columns)
         and index.default_opclasses

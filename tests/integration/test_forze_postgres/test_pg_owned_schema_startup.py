@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
 import pytest
@@ -9,11 +10,15 @@ from psycopg import sql
 
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
+from forze.base.primitives.hlc import HlcTimestamp
 from forze_postgres import PostgresClient, PostgresDepsModule, owned_relations
+from forze_postgres.adapters.hlc_checkpoint import PostgresHlcCheckpointStore
 from forze_postgres.execution.deps.configs import (
     PostgresCounterConfig,
     PostgresDurableRunConfig,
+    PostgresHlcCheckpointConfig,
     PostgresInboxConfig,
+    PostgresOutboxConfig,
 )
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.lifecycle import PostgresOwnedSchemaValidationHook
@@ -32,8 +37,14 @@ def _deps(schema: str) -> PostgresDepsModule:
         client=PostgresClient(),
         durable_run=PostgresDurableRunConfig(relation=(schema, "durable_run")),
         inboxes={"events": PostgresInboxConfig(relation=(schema, "inbox"))},
+        outboxes={"events": PostgresOutboxConfig(relation=(schema, "outbox"))},
         counters={"orders": PostgresCounterConfig(relation=(schema, "counters"))},
+        hlc_checkpoint=_hlc_config(schema),
     )
+
+
+def _hlc_config(schema: str) -> PostgresHlcCheckpointConfig:
+    return PostgresHlcCheckpointConfig(relation=(schema, "hlc"), node_key="n1")
 
 
 async def _create(pg_client: PostgresClient, schema: str) -> PostgresDepsModule:
@@ -126,3 +137,102 @@ async def test_a_missing_required_index_refuses_startup(pg_client: PostgresClien
         await _check(pg_client, deps)
 
     assert "idempotency_key" in str(caught.value)
+
+
+async def test_a_smaller_integer_refuses_startup(pg_client: PostgresClient) -> None:
+    # A packed HLC never fits in four bytes, so every write to this column would fail.
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    await pg_client.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN hlc TYPE integer").format(
+            sql.Identifier(schema, "hlc")
+        )
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await _check(pg_client, deps)
+
+    assert "narrower than forze's bigint" in str(caught.value)
+
+
+async def test_a_length_limited_text_column_only_warns(pg_client: PostgresClient) -> None:
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    await pg_client.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN inbox_route TYPE varchar(64)").format(
+            sql.Identifier(schema, "inbox")
+        )
+    )
+
+    await _check(pg_client, deps)
+
+
+async def test_a_name_column_reads_as_narrower_text_not_an_array(
+    pg_client: PostgresClient,
+) -> None:
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    await pg_client.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN inbox_route TYPE name").format(
+            sql.Identifier(schema, "inbox")
+        )
+    )
+    columns = await PostgresIntrospector(client=pg_client).get_column_types(
+        schema=schema, relation="inbox"
+    )
+
+    assert not columns["inbox_route"].is_array
+    await _check(pg_client, deps)
+
+
+async def test_an_optional_column_missing_with_its_index_only_warns(
+    pg_client: PostgresClient,
+) -> None:
+    # A run table from before coalescing: the store reads coalesce_key only when an enqueue
+    # names one, and dropping the column drops the index over it.
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    await pg_client.execute(
+        sql.SQL("ALTER TABLE {} DROP COLUMN coalesce_key").format(
+            sql.Identifier(schema, "durable_run")
+        )
+    )
+
+    await _check(pg_client, deps)
+
+
+async def test_a_conflict_target_index_in_another_column_order_passes(
+    pg_client: PostgresClient,
+) -> None:
+    # ON CONFLICT infers a unique index from its set of columns, whatever their order.
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    name = await pg_client.fetch_value(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = %s AND tablename = 'outbox' "
+        "AND indexdef LIKE '%%UNIQUE%%(outbox_route, event_id)'",
+        [schema],
+    )
+    await pg_client.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier(schema, str(name))))
+    await pg_client.execute(
+        sql.SQL("CREATE UNIQUE INDEX ON {} (event_id, outbox_route)").format(
+            sql.Identifier(schema, "outbox")
+        )
+    )
+
+    await _check(pg_client, deps)
+
+
+async def test_a_primary_key_with_included_columns_passes(pg_client: PostgresClient) -> None:
+    schema = f"owned_start_{uuid4().hex[:8]}"
+    deps = await _create(pg_client, schema)
+    await pg_client.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(schema, "hlc")))
+    await pg_client.execute(
+        sql.SQL(
+            "CREATE TABLE {} (node_key text NOT NULL, hlc bigint NOT NULL, "
+            "PRIMARY KEY (node_key) INCLUDE (hlc))"
+        ).format(sql.Identifier(schema, "hlc"))
+    )
+    store = PostgresHlcCheckpointStore(client=pg_client, config=_hlc_config(schema))
+    await store.advance(HlcTimestamp(physical_ms=int(time.time() * 1000), logical=0))
+
+    await _check(pg_client, deps)

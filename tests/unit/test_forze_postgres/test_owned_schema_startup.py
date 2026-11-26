@@ -211,15 +211,25 @@ class TestGrade:
             "app.counters needs: ALTER TABLE app.counters ADD COLUMN expires_at timestamptz;",
         )
 
-    def test_a_type_of_another_family_is_refused_and_a_narrower_one_warns(self) -> None:
+    def test_a_type_of_another_family_or_a_smaller_integer_is_refused(self) -> None:
         relation = _counter()
         other = PostgresType(base="uuid", is_array=False, not_null=True)
         narrow = PostgresType(base="int4", is_array=False, not_null=True, formatted="integer")
 
         refused = grade([relation], [diff_relation(relation, _catalog(relation, suffix=other))])
-        warned = grade([relation], [diff_relation(relation, _catalog(relation, value=narrow))])
+        smaller = grade([relation], [diff_relation(relation, _catalog(relation, value=narrow))])
 
         assert len(refused.refusals) == 1 and "uuid" in refused.refusals[0]
+        assert len(smaller.refusals) == 1 and "narrower" in smaller.refusals[0]
+
+    def test_a_length_limited_text_column_warns(self) -> None:
+        relation = _counter()
+        limited = PostgresType(
+            base="varchar", is_array=False, not_null=True, formatted="character varying(64)"
+        )
+
+        warned = grade([relation], [diff_relation(relation, _catalog(relation, suffix=limited))])
+
         assert warned.refusals == () and "narrower" in warned.warnings[0]
 
     def test_a_column_found_not_null_where_forze_writes_null_is_refused(self) -> None:
