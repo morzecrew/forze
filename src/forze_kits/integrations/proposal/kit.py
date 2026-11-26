@@ -131,8 +131,8 @@ class ProposalKit(Generic[C, E]):
                     input_type=DecideProposalDTO[spec.change],  # type: ignore[name-defined]
                     output_type=record,
                     description=(
-                        "Accept or reject a proposal's items; what is accepted is applied in "
-                        "the same transaction."
+                        "Accept or reject a proposal's items; with an accept effect, what is "
+                        "accepted is applied in the same transaction."
                     ),
                 ),
             },

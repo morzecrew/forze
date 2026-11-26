@@ -1,6 +1,6 @@
 # RFC 0006 — LLM adapters + token streaming (the standalone LLM block)
 
-- **Status:** 🚧 In progress — **rewritten 2026-09-14**; the 2026-07 draft is superseded in full and §7 records what changed and why. Tier 0 is now **one wire protocol on the shipped inference-HTTP plane**, not two provider submodules with their own clients. Executes the inference seam's LLM direction (decision #18): LLM converges **in-area**; no parallel `contracts/llm`, ever. **P1 shipped 2026-09-16** (#439): the `openai_chat` dialect and `PromptTemplate` with their wiring refusals, `strict` structured outputs, the `inference_content_refused` row, usage as span attributes, a docs section, and `examples/recipes/llm_triage_dst/` — a simulation whose handler calls the seam and whose green run is backed by an ungoverned contrast, which is §1's hole closed and demonstrably so. Row 13 did not survive contact: Anthropic's compatibility endpoint **ignores** `response_format` rather than rejecting it, so the dialect covers it in `text` mode only (row 14) — row 3's gate still needs a named consumer before a native client is built. Departures and the audit are in [`logs/T-0006.md`](../logs/T-0006.md); rows 14–21 are the rows they proposed. **P2 re-scoped 2026-09-16** (rows 22–25): the compatibility endpoint cannot carry a schema constraint at all — it ignores `response_format` *and* a tool's `strict`, and the provider's own page names the native API as the remedy — so P2 is a second **dialect** (`anthropic_messages`, native `/v1/messages`), not the native SDK client it used to be. That client is now P5 and stays gated, because row 3 always gated a *client* and a dialect is not one. **P2 shipped 2026-09-17** (#440): the `anthropic_messages` dialect over the native `/v1/messages`, with the generation half of the plane extracted into one shared module first, a shared schema walk carrying per-dialect rules, `max_output_tokens` required at wiring, the per-dialect temperature ceiling, and a `pattern` constraint served over the subset the constrained decoder runs. Two shapes the P1 dialect had let through are refused for both now — a field whose schema says `additionalProperties: true` and a field with nothing to constrain at all (row 30). Departures, the audit and eight review rounds are in [`logs/T-0006-P2.md`](../logs/T-0006-P2.md); rows 26–32 are the rows they proposed. **P3–P5 remain.**
+- **Status:** 🚧 In progress — **rewritten 2026-09-14**; the 2026-07 draft is superseded in full and §7 records what changed and why. Tier 0 is now **one wire protocol on the shipped inference-HTTP plane**, not two provider submodules with their own clients. Executes the inference seam's LLM direction (decision #18): LLM converges **in-area**; no parallel `contracts/llm`, ever. **P1 shipped 2026-09-16** (#439): the `openai_chat` dialect and `PromptTemplate` with their wiring refusals, `strict` structured outputs, the `inference_content_refused` row, usage as span attributes, a docs section, and `examples/recipes/llm_triage_dst/` — a simulation whose handler calls the seam and whose green run is backed by an ungoverned contrast, which is §1's hole closed and demonstrably so. Row 13 did not survive contact: Anthropic's compatibility endpoint **ignores** `response_format` rather than rejecting it, so the dialect covers it in `text` mode only (row 14) — row 3's gate still needs a named consumer before a native client is built. Departures and the audit are in [`logs/T-0006.md`](../logs/T-0006.md); rows 14–21 are the rows they proposed. **P2 re-scoped 2026-09-16** (rows 22–25): the compatibility endpoint cannot carry a schema constraint at all — it ignores `response_format` *and* a tool's `strict`, and the provider's own page names the native API as the remedy — so P2 is a second **dialect** (`anthropic_messages`, native `/v1/messages`), not the native SDK client it used to be. That client is now P5 and stays gated, because row 3 always gated a *client* and a dialect is not one. **P2 shipped 2026-09-17** (#440): the `anthropic_messages` dialect over the native `/v1/messages`, with the generation half of the plane extracted into one shared module first, a shared schema walk carrying per-dialect rules, `max_output_tokens` required at wiring, the per-dialect temperature ceiling, and a `pattern` constraint served over the subset the constrained decoder runs. Two shapes the P1 dialect had let through are refused for both now — a field whose schema says `additionalProperties: true` and a field with nothing to constrain at all (row 30). Departures, the audit and eight review rounds are in [`logs/T-0006-P2.md`](../logs/T-0006-P2.md); rows 26–32 are the rows they proposed. **P3–P5 remain.** **P6 proposed 2026-11-26** (§5.1): what bi-backend, the first JSON-mode consumer, needs before its own client can go. Row 33 reopens row 7 (`LOCKED`) and awaits the maintainer.
 - **Scope:** Schema-constrained generation as ordinary inference, by teaching `forze_inference.http` one more dialect: an `openai_chat` `WireProtocol` plus **prompt-as-config** (the template is route wiring, exactly like procedure's SQL). No new package, no provider SDK, no provider-specific client code. Tier 1 — intra-response **token streaming** as an additive sibling port (`GenerationStreamPort`) — stays specified and demand-gated. Agent loops, conversation state, tool orchestration and prompt DSLs are permanently app/kits territory.
 - **Related:** the inference seam's LLM direction (tiers fixed 2026-07-13) and its locked decisions (all-or-nothing `predict_many`, `Out` model-only, egress-ack, capabilities). [`forze_inference/http/protocols/base.py`](../src/forze_inference/http/protocols/base.py) — the `WireProtocol` strategy this RFC extends (`kserve_v2` 171 lines, `mlflow` 52); [`configs.py`](../src/forze_inference/http/execution/deps/configs.py) — `HttpInferenceConfig.protocol`, its `wire_protocol()` factory, its `validate_against_spec` hook, and the egress acknowledgement it already enforces. [`MockInferenceAdapter`](../src/forze_mock/adapters/inference.py) — the simulated half of this seam, already shipped. Prompt-as-config precedent — [`procedure/specs.py`](../src/forze/application/contracts/procedure/specs.py). Delta delivery — the realtime egress plane ([realtime.md](../pages/docs/data-events/realtime.md)). [RFC 0022](0022-sensitive-egress-gate.md) (the egress marker, and the doctrine that forze owns no loop), [RFC 0023](0023-operation-tool-bridge.md) (the inbound half: an agent's tools are governed operations, proved under simulation).
 - **Origin:** the inference seam shipped classic-ML shapes first and fixed the LLM direction without building it. The motivating workload is the dominant *backend* LLM use: extraction, classification, scoring, routing, single-shot completion — typed `In → Out` where the model happens to be an LLM. A 2026-09-14 review asked whether that is worth building at all, given that the provider SDKs exist and are better than anything here could be. It is, for one reason that has nothing to do with protocol coverage (§1) — and at roughly a quarter of the original scope (§7).
@@ -154,11 +154,72 @@ class GenerationStreamPort[In: BaseModel](BaseInferencePort, Protocol):
 | P3 *(demand-gated)* | `GenerationDelta` + `GenerationStreamPort` + `token_stream` capability + `ctx.inference.generation`; protocol and mock streaming; realtime-egress recipe |
 | P4 *(deferred)* | Provider batch APIs vs [RFC 0004](0004-batch-inference-plane.md)'s ports — both providers' batch surfaces are inline-requests-plus-poll, a different shape from storage-location ports; investigate before mapping either way |
 | P5 *(demand-gated)* | A native provider client — the phase P2 used to be — only against a named consumer that no *dialect* can serve. What the compatibility endpoint failed at is reachable over the wire, so this now needs a gap in the provider's own HTTP API rather than in one endpoint of it |
+| P6 *(named consumer: bi-backend)* | §5.1's four: a way for the caller to read what a call cost (row 33, `OPEN`), `extra_body` on a generation route, the chat dialect's token-cap field, and a transport factory on the lifecycle step and the routed client |
 
 P1 and P2 add no extra and no package: both dialects ride `inference-http`, and the kernel client
 already takes arbitrary default headers, so `x-api-key` and `anthropic-version` are wiring rather
 than client code. Only P5 would bring a new extra, with the usual registration mechanics
 (pyproject, import-linter, vulture/deptry, changelog, docs).
+
+### 5.1 P6 — what the first JSON-mode consumer needs (2026-11-26)
+
+bi-backend calls an OpenAI-compatible endpoint, DeepSeek's, through its own
+`LlmPort.complete_json` for three agents: the mapping proposer, the spec author and the daily
+narrator. The chat dialect already covers the core of that: bi's fallback for a host that
+refuses `json_schema` is `json_object` with the schema stated in the system message and the
+reply validated on return, which is the dialect's `json_object` mode. Four things stop bi
+moving, and each is a gap here rather than in bi.
+
+1. **The caller cannot read what a call cost.** bi stores the model, the tokens and the latency
+   on every proposal and draft, and the author sums them across its attempts. The proposal kit
+   (`forze_kits.integrations.proposal`) asks for the same three in `ProposalDraft`, and its
+   docs page says a model-backed proposer fills them in, which nothing in `ctx.inference` lets
+   it do: the numbers land on the span (row 7) and `predict` returns `Out` alone. Row 7 is
+   `LOCKED`, so the shape is the maintainer's to choose (row 33):
+   - **an envelope method**, `predict_metered(instance) -> Metered[Out]`, the shape row 7
+     refused;
+   - **a per-call sink** in `InferenceRunOptions`, which keeps the return type but adds a
+     callback to every call site that wants the numbers;
+   - **a meter scope**, `async with ctx.inference.metered() as meter:`, collecting the usage of
+     every call inside it, summed: input and output tokens, the model the provider reported, and
+     the time spent. `predict` is untouched, and several attempts sum without the caller adding
+     them up, which is what bi's author does by hand.
+
+   The lean is the scope. Either way the span keeps the numbers, and the record reads the same
+   ones, so telemetry and the stored cost cannot disagree.
+2. **A request cannot carry extras.** DeepSeek thinks unless the body says
+   `{"thinking": {"type": "disabled"}}`, and bi sends that on every short call and leaves it off
+   for the author. The dialect writes only the model, the messages, `response_format`, the
+   temperature and the token cap. A generation route takes `extra_body`, merged into each
+   request. Two kinds of key are refused at wiring: one the dialect writes itself, so an extra
+   cannot override the constraint or the cap, and one that changes the reply's shape, `stream`
+   and `n`, since the decoder reads one JSON body with one choice (row 34). It is config, as
+   row 6 requires.
+3. **The token cap's field name is fixed.** The chat dialect sends `max_completion_tokens`,
+   OpenAI's current name. DeepSeek's chat API documents only `max_tokens`. Whether it ignores
+   the unknown field, losing the cap, or refuses the request is believed rather than verified,
+   row 25's class. The field name is config on the chat dialect, `max_completion_tokens` by
+   default or `max_tokens` (row 35). The dialect's truncation check runs either way.
+4. **The transport is not wiring.** bi sends its calls through a proxy where the vendor is
+   blocked, and retries a request only when the connection itself failed, since such a request
+   never reached the model. The kernel client already accepts an httpx transport, and
+   `httpx.AsyncHTTPTransport(proxy=..., retries=2)` gives exactly those semantics: its retries
+   cover establishing the connection, nothing after. Neither the lifecycle step nor the routed
+   client passes one. Both take a transport factory, called once per client, because the routed
+   client opens one per tenant and a transport owns its connection pool (row 36). The egress acknowledgement is
+   unchanged: a proxy is a hop on the way to the same destination.
+
+What bi adapts instead, so P6 stays four items (row 37):
+
+- **Its per-call schema.** The proposer's schema lists the candidate keys of that call as an
+  `enum`. Here the constraint is derived from the output model at wiring, so the proposer
+  checks the keys after decoding. Under `json_object` the stated schema was only advice anyway.
+- **Its dynamic system prompt.** The author's system message carries reference text built at
+  runtime; that moves into a slot of the user template.
+- **Its per-call token caps.** One route per setting, as the author's separate timeout already
+  is.
+- **Its chat.** The assistant's tool loop stays on its agent library (row 12); its tools
+  already come from RFC 0023's bridge.
 
 ## 6. Acceptance
 
@@ -185,6 +246,17 @@ P2 is done when:
    `max_tokens` is refused as a truncated completion, as the chat dialect already does.
 4. The docs' Anthropic paragraph names the dialect instead of the text-mode-only limitation, and
    still says where a vendor SDK is the better tool.
+
+P6 is done when:
+
+1. A route in DeepSeek's shape, `json_object` with
+   `extra_body={"thinking": {"type": "disabled"}}` and the `max_tokens` cap field, sends exactly
+   that body, asserted against `httpx.MockTransport`.
+2. An `extra_body` key the dialect writes, or `stream` or `n`, is a boot error naming the key.
+3. The usage of two calls read the way row 33 settles is their sum, and the span attributes
+   carry the same numbers.
+4. A transport factory reaches both the pooled and the routed client, and a refused connection
+   is retried where a 5xx is not.
 
 ## 7. What the 2026-07 draft said, and what changed
 
@@ -217,7 +289,8 @@ to be reconstructed from the diff. The table below is renumbered and, for the fi
 
 *Rows 1–13 are the design's. Rows 14–21 were proposed by execution and each cites the log entry
 that produced it; row 13 is superseded by the first of them. Rows 22–25 are the design's again —
-P2 re-scoped against what row 14 turned up. The table is append-only: a superseded row stays,
+P2 re-scoped against what row 14 turned up. Rows 33–37 are the design's, from the first
+JSON-mode consumer (§5.1). The table is append-only: a superseded row stays,
 because it is the record that the design once believed otherwise.*
 
 | # | Decision | Grade |
@@ -254,3 +327,8 @@ because it is the record that the design once believed otherwise.*
 | 30 | Two further shapes the constraint cannot express are refused at wiring, in the **shared walk**, for every dialect: a schema whose `additionalProperties` is `true` (a bare `dict`, or a model with `extra="allow"`), and a node carrying none of `type`, `$ref`, `anyOf`, `enum` or `const` (`Any`, `object`, a bare `list`'s member). The first is refused rather than narrowed because row 18's licence to tighten is that closing an object only narrows what the declared output model already means — and for a field declared to take any keys, that is exactly what it does not mean; `tighten` had been rewriting it to `false`, leaving a constraint that permitted only `{}`. This closes the P1 dialect's hole, which is where the shape came from. Added by execution 2026-09-17 — see `logs/T-0006-P2.md` (Unlisted, schema shapes) | `ASSUMED` |
 | 31 | A **sampling temperature above the endpoint's ceiling is refused at wiring**, per dialect (2 for chat completions, 1 for Messages). The endpoint rejects the request otherwise, which makes a route that never worked look like a model outage on its first call; the ceiling is a published per-endpoint fact, so it belongs beside the dialect that knows it. Added by execution 2026-09-17 — see `logs/T-0006-P2.md` (Review round 1, finding 5) | `ASSUMED` |
 | 32 | `pattern` is **served over a subset** rather than refused outright: the native constraint enforces it, so refusing the keyword would cost a route the constraint it asked for, and what the subset leaves out (word boundaries, lookaround, backreferences) is refused **by name**. Deciding which constructs are active needs a scan that tracks escape parity and character-class boundaries, not a search — three review rounds found the same lexer wrong in three ways, all of them over-refusals. If a fourth arrives, the honest fix is to parse the pattern rather than scan it. Added by execution 2026-09-17 — see `logs/T-0006-P2.md` (Review rounds 5, 7 and 8) | `ASSUMED` |
+| 33 | How a caller reads what a call cost: an envelope method, a per-call sink in `InferenceRunOptions`, or a meter scope over `ctx.inference`; the lean is the scope (§5.1). Reopens row 7, so it is the maintainer's | `OPEN` |
+| 34 | A generation route takes `extra_body`, merged into each request; a key the dialect writes itself (model, messages, `response_format`, temperature, the token cap) or one that changes the reply's shape (`stream`, `n`) is refused at wiring. Config, per row 6 (§5.1) | `ASSUMED` |
+| 35 | The chat dialect's token-cap field is config, `max_completion_tokens` by default or `max_tokens`. Whether DeepSeek ignores or refuses the default is believed, not verified, row 25's class (§5.1) | `ASSUMED` |
+| 36 | The inference-HTTP lifecycle step and routed client take a transport factory, called once per client, so a proxy and connection retries are wiring; the egress acknowledgement is unchanged (§5.1) | `ASSUMED` |
+| 37 | A per-call schema, a runtime system prompt and per-call token caps stay out: the output model, the prompt and the cap are route wiring (rows 1, 6), and a consumer needing more checks after decoding or wires a second route (§5.1) | `ASSUMED` |
