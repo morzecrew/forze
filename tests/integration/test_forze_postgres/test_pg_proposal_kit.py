@@ -1,8 +1,9 @@
 """Integration: the proposal kit on Postgres (RFC 0039).
 
-Two things the mock cannot show. The items are the application's models nested in a list,
-stored as ``jsonb`` and read back into those models; and the accept effect lands in the same
-Postgres transaction as the verdicts, so an effect that fails leaves the proposal open.
+Three things the mock cannot show. The items are the application's models nested in a list,
+stored as ``jsonb`` and read back into those models; the accept effect lands in the same
+Postgres transaction as the verdicts, so an effect that fails leaves the proposal open; and a
+partial unique index keeps one proposal pending per scope and base.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
+import attrs
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
@@ -25,6 +27,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.integrations.proposal import (
     DecideProposalDTO,
@@ -115,7 +118,14 @@ def _ctx(pg_client: PostgresClient) -> ExecutionContext:
 @pytest_asyncio.fixture(autouse=True)
 async def _tables(pg_client: PostgresClient):
     await pg_client.execute("DROP TABLE IF EXISTS pg_proposals; DROP TABLE IF EXISTS pg_applied;")
-    await create_document_table(pg_client, SPEC.document, "public", "pg_proposals")
+    # The renderer prints only plain unique indexes, so the pending uniqueness is added the
+    # way an application's own migration would add it.
+    unguarded = attrs.evolve(SPEC.document, guarantees=())
+    await create_document_table(pg_client, unguarded, "public", "pg_proposals")
+    await pg_client.execute(
+        "CREATE UNIQUE INDEX pg_proposals_one_pending ON pg_proposals (scope, base) "
+        "NULLS NOT DISTINCT WHERE status = 'pending';"
+    )
     await create_document_table(pg_client, APPLIED, "public", "pg_applied")
     yield
 
@@ -203,3 +213,24 @@ async def test_an_effect_that_fails_leaves_the_proposal_open(pg_client: Postgres
 
     assert [row["status"] for row in rows] == ["open"]
     assert await _applied(pg_client) == []
+
+
+async def test_one_proposal_is_pending_per_scope_and_base(pg_client: PostgresClient) -> None:
+    # A second pending create stands in for the request that lost the race: both found
+    # nothing pending, so only the index refuses it.
+    ctx = _ctx(pg_client)
+    kit = ProposalKit(spec=SPEC, proposer=_propose)
+    command = ctx.document.command(SPEC.document)
+
+    for base in ("r1", None):
+        first = await _op(kit, "request", RequestProposalDTO(scope="orders", base=base), ctx)
+
+        with pytest.raises(CoreException) as refused:
+            await command.create(SPEC.create_cmd(scope="orders", base=base))
+
+        assert refused.value.kind is ExceptionKind.CONFLICT
+
+        await _op(kit, "run", ProposalIdDTO(id=first.id), ctx)
+        again = await _op(kit, "request", RequestProposalDTO(scope="orders", base=base), ctx)
+
+        assert again.id != first.id

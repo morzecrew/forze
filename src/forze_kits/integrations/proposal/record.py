@@ -19,6 +19,7 @@ import attrs
 from pydantic import BaseModel, Field
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.guarantees import UniqueTogether
 from forze.domain.models import BaseDTO, Document, ReadDocument
 
 # ----------------------- #
@@ -199,6 +200,14 @@ def _document(spec: ProposalSpec[Any, Any]) -> DocumentSpec[Any, Any, Any, Any]:
             domain=ProposalDoc[change, evidence],  # type: ignore[valid-type]
             create_cmd=CreateProposalCmd[change, evidence],  # type: ignore[valid-type]
             update_cmd=UpdateProposalCmd[change, evidence],  # type: ignore[valid-type]
+        ),
+        # Finding a pending proposal and then creating one lets two concurrent requests both
+        # create one; this stops the second. A missing base counts as one value.
+        guarantees=(
+            UniqueTogether(
+                fields=("scope", "base"),
+                where={"$values": {"status": ProposalStatus.PENDING}},
+            ),
         ),
     )
 

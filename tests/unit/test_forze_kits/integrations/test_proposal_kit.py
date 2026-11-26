@@ -7,6 +7,7 @@ and the legs that must not write assert the count stayed at zero.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any, Final
 from uuid import uuid4
@@ -206,6 +207,30 @@ class TestRequestAndRun:
         assert newer.base == "r2"
         assert unbased.id not in (old.id, newer.id)
         assert unbased_again.id == unbased.id
+
+    async def test_concurrent_requests_leave_one_proposal_pending(self) -> None:
+        # Both find nothing pending before either commits; only the collection's uniqueness
+        # over pending proposals stops the second create. Dispatch holds each request open
+        # until both have created theirs.
+        ctx = _ctx()
+        both_created = asyncio.Barrier(2)
+
+        async def dispatch(ctx: ExecutionContext, proposal: Any) -> None:
+            await both_created.wait()
+
+        kit = _kit(_proposer(_item("a")), dispatch=dispatch)
+        args = RequestProposalDTO(scope="s", base="r1")
+        outcomes = await asyncio.gather(
+            _op(kit, "request", args, ctx), _op(kit, "request", args, ctx), return_exceptions=True
+        )
+
+        won = [o for o in outcomes if not isinstance(o, BaseException)]
+        lost = [o for o in outcomes if isinstance(o, CoreException)]
+
+        assert len(won) == 1
+        assert [e.kind for e in lost] == [ExceptionKind.CONFLICT]
+        assert await ctx.document.query(SPEC.document).count() == 1
+        assert (await _op(kit, "request", args, ctx)).id == won[0].id
 
     async def test_a_new_proposal_dispatches_its_run_in_the_requests_transaction(self) -> None:
         # A reused proposal is never re-dispatched, so the first dispatch has to commit with it.
