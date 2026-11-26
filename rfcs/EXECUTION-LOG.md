@@ -9923,3 +9923,82 @@ and `decide` as operations, built against a deterministic proposer and then a mo
 
 **Drift count: 0.** Unit 40 holds seven entries, D-381 to D-387: five `spec-gap`, one
 `discovery` and one close-out.
+
+# Unit 41 · RFC 0006 P6 — what the first JSON-mode consumer needs
+
+Branch `feat/inference-p6-consumer-gaps`. §5.1's four items, with row 33 settled by the
+maintainer as a meter scope (row 38).
+
+- Row 7 (`LOCKED`) holds as row 38 narrows it: `predict` returns `Out` alone, and the span
+  keeps the numbers.
+- Rows 34–36 (`ASSUMED`) hold; D-388 to D-390 fill in what they and row 38 leave open.
+- Row 35's belief about DeepSeek is still unverified: nothing here calls its API.
+
+**Drift count: 0.** Four entries, D-388 to D-391: three `spec-gap` and one close-out.
+
+## D-388 — The meter is fed once per request, under the model the provider names
+
+- **Touches:** row 38 (`LOCKED`): the meter sums per model what the calls reported.
+- **Found:** the span is written once per port call, because an attribute is overwritten,
+  while a meter sums, and the model that answered is a property of one response. Neither
+  dialect told the adapter which model answered.
+- **Built:** `WireProtocol.response_model(body)`, the response's top-level `model` on both
+  generation dialects and `None` on the scoring ones (`protocols/generation.py:408`). The
+  adapter reports each request to the open meters before decoding it, so a reply that fails
+  to decode still counts, and under the route's own model name when the reply names none
+  (`adapters/inference.py:141`). A dialect without the member reports under the route's
+  name, the fallback `usage_attributes` already has. A request whose reply reports no usage
+  is not reported at all.
+- **Evidence:** `tests/unit/test_forze_inference/test_generation_route_extras.py`,
+  `test_two_calls_sum_to_what_their_spans_carry`,
+  `test_the_model_is_the_one_the_provider_says_answered`,
+  `test_a_reply_that_fails_to_decode_still_counts` and `test_a_scoring_route_adds_nothing`;
+  all four fail with the report removed.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-389 — A closed scope stops counting; the scopes around it do not
+
+- **Touches:** row 38 (`LOCKED`).
+- **Found:** a task started inside a scope inherits it and can outlive it. Counting its
+  calls would change a meter whose `latency_ms` has already stopped, after the caller stored
+  what it read.
+- **Built:** the scope freezes its counts and its time at exit. A report walks every open
+  scope from the innermost out and skips the closed ones
+  (`src/forze/application/contracts/inference/metering.py:187`), so an enclosing scope still
+  counts the late task.
+- **Evidence:** `tests/unit/test_forze/application/contracts/test_inference_metering.py`,
+  `test_a_closed_scope_stops_counting_but_the_one_around_it_does_not`.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-390 — `extra_body` is copied at wiring, and its key list is the encoder's
+
+- **Touches:** row 34 (`ASSUMED`).
+- **Found:** a frozen config holding the caller's own mapping sends whatever the caller
+  changes it to later, past the refusal. And a refused-key list kept apart from the encoder
+  drifts when the encoder gains a key.
+- **Built:** an attrs converter takes a read-only copy through JSON, refusing a non-string
+  key and a value JSON cannot carry (`protocols/generation.py:245`). Each dialect names
+  every top-level key it writes beside its encoder (`openai_chat.py:62`,
+  `anthropic_messages.py:64`), both cap names included on the chat dialect, so an extra
+  cannot add a second cap. `stream` and `n` are refused on both dialects.
+- **Evidence:** `test_generation_route_extras.py`,
+  `test_the_extras_are_the_ones_wired_not_a_later_change` and
+  `test_every_key_the_dialect_writes_is_one_it_refuses`, which fails when a key leaves the
+  list.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-391 — Close-out: P6 is done as §6 states it
+
+- **Touches:** §6, P6's four items.
+- **Built:** item 1, `test_it_sends_exactly_the_body_it_was_wired_for`; item 2, the two
+  parametrized refusal tests; item 3, `test_two_calls_sum_to_what_their_spans_carry`; item 4,
+  `test_the_lifecycle_step_builds_its_client_with_it`,
+  `test_the_routed_client_builds_one_per_tenant` and
+  `test_connection_retries_resend_what_never_arrived_and_nothing_else`. The last runs a
+  refused port and a server answering 500 through `httpx.AsyncHTTPTransport(retries=1)`, and
+  counts two connection attempts for the first and one request for the second.
+- **Class:** close-out.
+- **Action:** decided.
