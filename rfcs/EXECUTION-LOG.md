@@ -9804,18 +9804,18 @@ Branch `feat/proposal-kit`, stacked on the amendment that settled §7 Q1 (#958).
 amended: the collection over the application's models, its contribution, and `request`, `run`
 and `decide` as operations, built against a deterministic proposer and then a model-backed one.
 
-- Rows 9–17 (`ASSUMED`) hold; D-381 to D-384 and D-386 fill in what they leave open.
+- Rows 9–17 (`ASSUMED`) hold; D-381 to D-384, D-386 and D-387 fill in what they leave open.
 - Row 6 (`LOCKED`) holds, and D-385 closes it out without the `factories.py` §5 sketched.
 
-**Drift count: 0.** Six entries, D-381 to D-386: five `spec-gap`, one of them a departure
-(D-383), and one close-out.
+**Drift count: 0.** Seven entries, D-381 to D-387: five `spec-gap`, one of them a departure
+(D-383), one `discovery` and one close-out.
 
 ## D-381 — The collection is generic over the application's two models
 
 - **Touches:** row 13 (`ASSUMED`): evidence and confidence per item, typed by the application.
 - **Built:** `proposal_spec(name, *, change=, evidence=)` returns a `ProposalSpec` holding a
   `DocumentSpec` over pydantic generic models, `ProposalDoc[C, E]` and its siblings
-  (`src/forze_kits/integrations/proposal/record.py:167`). Pydantic caches each
+  (`src/forze_kits/integrations/proposal/record.py:168`). Pydantic caches each
   parametrization, so two specs over the same models are one spec in a registry.
 - **Evidence:** `tests/unit/test_forze_kits/integrations/test_proposal_kit.py`,
   `test_two_specs_over_the_same_models_are_one_spec`;
@@ -9847,7 +9847,7 @@ and `decide` as operations, built against a deterministic proposer and then a mo
   the decided proposal and its accepted items. An effect that raises rolls the verdicts back. A
   decision that loses a race fails the document's revision check (`revision_mismatch`) rather
   than `proposal_decided`, which a later read gets.
-- **Evidence:** `test_proposal_kit.py:411`; `test_pg_proposal_kit.py`,
+- **Evidence:** `test_proposal_kit.py`, `test_an_effect_that_fails_rolls_the_verdicts_back`; `test_pg_proposal_kit.py`,
   `test_an_effect_that_fails_leaves_the_proposal_open`, on Postgres.
 - **Class:** `spec-gap`.
 - **Proposed row (RFC 0039):** Row 15, extended: the verdicts are stored first, at the
@@ -9872,8 +9872,8 @@ and `decide` as operations, built against a deterministic proposer and then a mo
   calling `ctx.inference.model(spec).predict(...)`, and runs through the same kit, so §5's
   factory taking "an `InferenceSpec` **or** a plain callable" adds nothing a function does not
   already do, and is not built.
-- **Evidence:** `test_proposal_kit.py:520`, `TestAModelBackedProposer`, after the
-  deterministic legs; `test_proposal_kit.py:435`, row 7's property.
+- **Evidence:** `test_proposal_kit.py`, `TestAModelBackedProposer`, after the deterministic
+  legs, and `test_requesting_running_and_rejecting_write_nothing_downstream`, row 7's property.
 - **Action:** decided.
 
 ## D-386 — `request` dispatches the run in its transaction, through an optional hook
@@ -9890,9 +9890,32 @@ and `decide` as operations, built against a deterministic proposer and then a mo
   `dispatch(ctx, created)` (`:91`), inside `request`'s transaction on `tx_route`
   (`kit.py:143`). A dispatch that raises rolls the new proposal back. Without the hook the
   caller schedules the run, and the docs page says what a crash after the commit costs.
-- **Evidence:** `test_proposal_kit.py:192`, `:210`, `:224`.
+- **Evidence:** `test_proposal_kit.py`, `test_a_request_against_a_newer_base_gets_a_new_proposal`,
+  `test_a_new_proposal_dispatches_its_run_in_the_requests_transaction` and
+  `test_a_dispatch_that_fails_leaves_no_pending_proposal`.
 - **Class:** `spec-gap`.
 - **Action:** decided.
 
-**Drift count: 0.** Unit 40 holds six entries, D-381 to D-386: five `spec-gap` and one
-close-out.
+## D-387 — The pending uniqueness is a filtered guarantee that the renderer does not print
+
+- **Touches:** row 16 (`ASSUMED`), as #958 amended it: at most one proposal pending per scope
+  and base, under concurrent requests.
+- **Found:** two concurrent requests both found nothing pending and both created a proposal,
+  each dispatching a run. The fix needs no new field: `UniqueTogether` takes a `where`, so the
+  collection declares `UniqueTogether(("scope", "base"), where=status pending)`
+  (`record.py:206`). Postgres and Mongo keep a filtered uniqueness
+  (`unique_together_filtered`), and a store that cannot keep one refuses at wiring. RFC 0080's
+  `document_shape` refuses a filtered uniqueness, since a plain unique index cannot keep it
+  (`src/forze_postgres/kernel/catalog/owned/documents.py:383`). The collection is `KIT`, so
+  nothing prints it anyway, and the application's migration adds the partial index, as the
+  docs page shows.
+- **Built:** the guarantee; the losing request's create fails as a `conflict`, and nothing
+  it dispatched commits.
+- **Evidence:** `test_proposal_kit.py`, `test_concurrent_requests_leave_one_proposal_pending`,
+  red before the guarantee; `test_pg_proposal_kit.py`,
+  `test_one_proposal_is_pending_per_scope_and_base`, which fails when the index is not unique.
+- **Class:** `discovery`.
+- **Action:** decided.
+
+**Drift count: 0.** Unit 40 holds seven entries, D-381 to D-387: five `spec-gap`, one
+`discovery` and one close-out.
