@@ -81,7 +81,7 @@ Three operations, keyed under the collection's name (`mappings.request`, `mappin
 
 | Operation | Takes | Does |
 | --- | --- | --- |
-| `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope and base and calls `dispatch` for it, in one transaction on `tx_route`, or returns the one already pending there; a newer base gets a new proposal. Without a `base`, the kit's `base_of` supplies it. |
+| `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope and base and calls the kit's `dispatch` for it, when it has one, in one transaction on `tx_route`, or returns the one already pending there; a newer base gets a new proposal. Without a `base`, the kit's `base_of` supplies it. |
 | `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, or two items with one key, fails the proposal with the error. A proposal no longer `pending` is returned as it is. |
 | `decide` | `DecideProposalDTO(id, verdicts, note)` | Records each item's verdict and runs `on_accept`, in one transaction on `tx_route`. An item left out is rejected. |
 
@@ -89,8 +89,10 @@ Three operations, keyed under the collection's name (`mappings.request`, `mappin
 holds a request open. A retried worker is a no-op on a proposal it already ran.
 
 Schedule that `run` with `dispatch(ctx, proposal)`, which `request` calls for each new proposal
-inside its transaction: enqueue your durable function on a run store that joins it, or emit an
-event on the [transactional outbox](../recipes/transactional-outbox.md). A pending proposal is
+inside its transaction. The example above has none, so nothing schedules its runs: pass one
+in production, and call `run` yourself only where the request and the run are one process, as
+in a test. A dispatch enqueues your durable function on a run store that joins the
+transaction, or emits an event on the [transactional outbox](../recipes/transactional-outbox.md). A pending proposal is
 reused by every later request for its scope and base and never dispatched again, so a run
 scheduled after the commit, and lost to a crash in between, would leave it pending for good.
 
