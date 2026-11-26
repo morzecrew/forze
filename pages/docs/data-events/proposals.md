@@ -139,6 +139,7 @@ the first already moved.
 | `revision_mismatch` | `precondition` | The second of two concurrent `decide` calls on one proposal: it read the proposal before the first stored its verdicts. |
 | `proposal_stale` | `conflict` | `decide` after `base_of` moved past the proposal's base. |
 | `proposal_verdict_unknown` | `validation` | A verdict names an item the proposal does not have. |
+| `proposal_verdict_repeated` | `validation` | Two verdicts name one item. |
 | `proposal_answer_required` | `validation` | Accepting a question, or an item that proposes nothing, without a `change`. |
 
 ## What stays out

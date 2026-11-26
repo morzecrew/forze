@@ -442,6 +442,22 @@ class TestDecide:
 
         assert caught.value.code == "proposal_verdict_unknown"
 
+    async def test_two_verdicts_on_one_item_are_refused(self) -> None:
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+        proposal = await _open(kit, ctx)
+        twice = _decide(
+            proposal,
+            VerdictDTO[Mapping](key="a", accept=False),
+            VerdictDTO[Mapping](key="a", accept=True),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await _op(kit, "decide", twice, ctx)
+
+        assert caught.value.code == "proposal_verdict_repeated"
+        assert await _applied(ctx) == []
+
     async def test_an_effect_that_fails_rolls_the_verdicts_back(self) -> None:
         ctx = _ctx()
 

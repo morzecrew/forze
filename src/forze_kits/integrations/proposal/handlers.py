@@ -186,7 +186,8 @@ class DecideProposal:
     :raises CoreException: ``authentication``, code ``proposal_principal_required``, with no
         authenticated principal; ``conflict``, codes ``proposal_pending``,
         ``proposal_decided`` and ``proposal_stale``; ``validation``, codes
-        ``proposal_verdict_unknown`` and ``proposal_answer_required``.
+        ``proposal_verdict_unknown``, ``proposal_verdict_repeated`` and
+        ``proposal_answer_required``.
     """
 
     ctx: ExecutionContext
@@ -251,6 +252,14 @@ class DecideProposal:
         proposal: ProposalRecord[Any, Any],
         args: DecideProposalDTO[Any],
     ) -> list[ProposalItem[Any, Any]]:
+        keys = Counter(verdict.key for verdict in args.verdicts)
+
+        if repeated := sorted(key for key, n in keys.items() if n > 1):
+            raise exc.validation(
+                f"The verdicts name item(s) {repeated} more than once; give each item one.",
+                code="proposal_verdict_repeated",
+            )
+
         verdicts = {verdict.key: verdict for verdict in args.verdicts}
 
         if unknown := sorted(set(verdicts) - {item.key for item in proposal.items}):
