@@ -56,11 +56,11 @@ the kit takes its shape, since a kit built from §2 would fit neither of its two
   good, with every later request reusing it.
 - **At most one proposal is pending per scope and base.** Finding none and then creating one
   does not stop two concurrent requests from both creating one, and so both paying for a run.
-  A proposal therefore holds a key derived from its scope and base while it is pending, and
-  drops it once its run finishes, under a unique index that skips nulls. The losing request's
-  create fails on that index, and it returns the proposal that won. A store that cannot keep
-  the index falls back to finding first, where a race costs a duplicate run: each proposal is
-  still decided under the rules below.
+  The collection therefore declares a uniqueness over scope and base among its pending rows,
+  a missing base counting as one value; on Postgres it is a partial unique index. The losing
+  request's create fails on it as a conflict, with nothing it dispatched committed, and asking
+  again returns the proposal that won. A store that cannot keep a filtered uniqueness refuses
+  the collection at wiring, as it would any guarantee it cannot keep.
 - **A proposal is made against a base, and goes stale.** It records the version of the target
   it was proposed against. Deciding it after the target moved is refused as
   `proposal_stale`: propose again. That is the uniqueness rule `superseded` stood for (§7 Q2),
@@ -137,7 +137,8 @@ The same package, with §2.1's shape:
 - The operations:
   - **request** creates a `pending` proposal for a scope and a base, and dispatches its run in
     the same transaction, or returns the one already pending for that scope and base, which a
-    unique index over a key held only while pending keeps to one under concurrent requests;
+    uniqueness over scope and base among pending proposals keeps to one under concurrent
+    requests;
   - **run** calls the proposer for a `pending` proposal and stores its items as `open`, or its
     error as `failed`; the application calls it from its own worker or durable function;
   - **decide** takes the verdicts, refuses without an authenticated principal, refuses a
@@ -180,7 +181,7 @@ The same package, with §2.1's shape:
 | 13 | `ASSUMED` | Evidence and confidence are per item, typed by the application; re-evaluating is a new proposal (§7 Q4) |
 | 14 | `ASSUMED` | A proposal records a caller-supplied base; deciding it against a moved base is refused as `proposal_stale`. There is no `superseded` status (§7 Q2) |
 | 15 | `ASSUMED` | Deciding stores the verdicts and runs the application's accept effect in one transaction, and runs no effect when no item is accepted. A long-running effect is queued in that transaction, through the transactional outbox or a durable enqueue that joins it, idempotent per proposal. The effect writes the target conditionally on the proposal's base; the kit's base check is a fast refusal. Departs from §7 Q3's lean on the cheap half only (§2.1) |
-| 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal and dispatches its run in the same transaction, or returns the one pending for its scope and base, and a run stores the proposer's items as `open` or its error as `failed`. A request against a newer base gets a new proposal. At most one proposal is pending per scope and base: it holds a key derived from them until its run finishes, under a unique index that skips nulls, and the request that loses the race returns the winner (§2.1) |
+| 16 | `ASSUMED` | Generation runs outside the request: a request creates a `pending` proposal and dispatches its run in the same transaction, or returns the one pending for its scope and base, and a run stores the proposer's items as `open` or its error as `failed`. A request against a newer base gets a new proposal. At most one proposal is pending per scope and base, kept by a uniqueness over them among pending proposals; the request that loses the race fails as a conflict, and asking again returns the winner (§2.1) |
 | 17 | `ASSUMED` | The spec registers as `KIT`: its item models are the application's, so its table is too (RFC 0080 row 28) |
 
 Rows 1–8 are the original decision log, regraded in this table's vocabulary on 2026-11-26
