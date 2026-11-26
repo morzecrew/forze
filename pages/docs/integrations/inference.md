@@ -51,6 +51,25 @@ scalar fields** (`bool` / `int` / `float` / `str`); anything else is refused at
 wiring with the offending fields named. `protocol="mlflow"` posts
 `{"instances": [...]}` records and accepts nested models.
 
+The step takes a `transport_factory` for what sits between the client and the
+endpoint. A proxy, and retries of a connection that never opened, are one transport:
+
+```python
+import httpx
+
+steps = [
+    inference_http_lifecycle_step(
+        "https://api.deepseek.com",
+        transport_factory=lambda: httpx.AsyncHTTPTransport(proxy="http://egress:3128", retries=2),
+    )
+]
+```
+
+httpx's `retries` covers establishing the connection only. A request that reached
+the endpoint and failed is not resent, since a model may already have spent tokens
+on it. The proxy changes nothing about `acknowledge_data_egress`: the features
+still go to the same endpoint.
+
 `model_name` accepts a static name or a `(tenant_id) -> name` resolver for
 per-tenant models — the same namespace-tier pattern as a per-tenant bucket or
 database. A `tenant_aware=True` route with no bound tenant fails closed
@@ -220,9 +239,20 @@ HttpInferenceConfig(
     model_name="deepseek-chat",                  # base URL https://api.deepseek.com
     prompt=PromptTemplate(template="Triage this ticket:\n\n{text}"),
     structured_output="json_object",
+    max_output_tokens=512,
+    max_output_tokens_field="max_tokens",        # the only cap field DeepSeek documents
+    extra_body={"thinking": {"type": "disabled"}},
     acknowledge_data_egress=True,
 )
 ```
+
+`extra_body` is merged into every request, for a host's own switches. Wiring
+refuses a key the dialect writes itself, so an extra cannot replace the prompt,
+the constraint or the cap. It also refuses `stream` and `n`, because the route
+reads one JSON reply with one choice. The route keeps a copy taken at wiring.
+`max_output_tokens_field` names the request field that carries
+`max_output_tokens` on `openai_chat`: `max_completion_tokens`, OpenAI's current
+name, by default, or `max_tokens`. A truncated answer is refused under either.
 
 The output model's JSON schema is appended to the system prompt (or becomes it),
 the request asks only for valid JSON, and the reply is validated against the
@@ -251,6 +281,23 @@ with the completion prose; any other output model is refused at wiring.
   so a cost dashboard reads them untaught — summed over the fan-out and recorded
   even when a request part-way through fails. There is no envelope method; cost
   accounting does not belong in every handler's return type.
+- **A caller that stores the cost opens a meter.** The same numbers reach every
+  meter scope open around the call:
+
+  ```python
+  async with ctx.inference.metered() as meter:
+      mapping = await ctx.inference.model(MAPPER).predict(column)
+
+  record = Draft(mapping=mapping, model=meter.model, tokens=meter.tokens or 0, latency_ms=meter.latency_ms)
+  ```
+
+  The meter sums every request inside the scope, per model (`by_model`), under
+  the name the provider reports. That includes retries, hedges and tasks the
+  scope started, and a reply that failed to decode. `model` is set only when one
+  model answered. `latency_ms` is the scope's wall-clock time, not the calls'
+  durations added up. A count no call reported reads `None`, never `0`; a scoring
+  route or an in-process model reports none. A scope inside another reports to
+  both, and a closed scope stops counting.
 - **A safety refusal is not a wire defect.** A provider declining on content
   grounds raises `precondition` (`inference_content_refused`), non-retryable —
   reported as `message.refusal` or a `finish_reason` by one dialect, and as a
@@ -354,6 +401,9 @@ each tenant invokes under its own AWS identity and endpoint access is enforced
 by IAM rather than only by the endpoint name your app resolved. Static
 credentials are required there — falling back to the ambient botocore chain
 would put every tenant back on one principal, defeating the isolation.
+
+`transport_factory=` works here as on the lifecycle step, called once for each
+tenant's client, since a transport owns its connection pool.
 
 Clients are built lazily per tenant and cached (`max_cached_tenants`, LRU);
 rotating a tenant's secret changes its fingerprint and rebuilds that client

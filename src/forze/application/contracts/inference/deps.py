@@ -1,10 +1,12 @@
 """Inference dependency key and router (read-plane)."""
 
+from contextlib import AbstractAsyncContextManager
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from .metering import InferenceMeter, inference_meter_scope
 from .ports import InferencePort
 from .specs import InferenceSpec
 
@@ -47,3 +49,13 @@ class InferenceDeps(ConvenientDeps):
             spec,
             route=spec.name,
         )
+
+    def metered(self) -> AbstractAsyncContextManager[InferenceMeter]:
+        """A scope that sums what the inference calls inside it spent.
+
+        ``async with ctx.inference.metered() as meter:`` — the meter reads the usage every
+        request inside the scope reported, its retries and failures included, with the time
+        the scope took. ``predict`` is unchanged, and the span keeps the same numbers.
+        """
+
+        return inference_meter_scope()

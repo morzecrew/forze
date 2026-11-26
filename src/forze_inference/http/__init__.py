@@ -30,6 +30,7 @@ from .kernel import (
     InferenceHttpClient,
     InferenceHttpClientPort,
     InferenceHttpRoutingCredentials,
+    InferenceTransportFactory,
     RoutedInferenceHttpClient,
 )
 from .protocols import (
@@ -67,6 +68,7 @@ __all__ = [
     "MlflowProtocol",
     "OpenAiChatProtocol",
     "PromptTemplate",
+    "InferenceTransportFactory",
     "RoutedInferenceHttpClient",
     "WireProtocol",
     "inference_http_lifecycle_step",

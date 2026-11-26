@@ -14,6 +14,7 @@ or a provider.
 import json
 from collections.abc import Mapping, Sequence
 from string import Formatter
+from types import MappingProxyType
 from typing import Any, Final, Literal, cast, final
 
 import attrs
@@ -35,12 +36,19 @@ USAGE_INPUT_TOKENS_ATTRIBUTE: Final[str] = "gen_ai.usage.input_tokens"
 USAGE_OUTPUT_TOKENS_ATTRIBUTE: Final[str] = "gen_ai.usage.output_tokens"
 """Span attributes carrying what a generation consumed. Usage is telemetry here, never a
 return value: an envelope method would put cost accounting in every handler's way, and the
-numbers a caller acts on belong on the same span as the call that spent them.
+numbers a caller acts on belong on the same span as the call that spent them. A caller that
+stores them reads the same numbers through ``ctx.inference.metered()``, fed by the adapter
+where it records these.
 
 OpenTelemetry's GenAI names rather than a ``forze.`` one, so a collector or dashboard that
 already understands model cost reads these without being taught. That convention is still
 marked experimental upstream; a rename there would be a rename here, which is why the names
 live in these two constants and nowhere else."""
+
+REPLY_SHAPE_KEYS: Final[frozenset[str]] = frozenset({"stream", "n"})
+"""Request keys that change what the reply is: a stream of events, or several choices. The
+decoder reads one JSON body with one choice, so an ``extra_body`` naming either is refused
+at wiring, whichever the dialect."""
 
 InferenceOutputMode = Literal["structured", "text"]
 """``structured`` constrains the completion to the output model's JSON schema; ``text``
@@ -234,6 +242,73 @@ def validate_text_output(spec: InferenceSpec[Any, Any]) -> None:
 # ....................... #
 
 
+def copy_extra_body(extra_body: object) -> Mapping[str, Any] | None:
+    """*extra_body* as a read-only, JSON-pure copy, or ``None`` for none.
+
+    A copy, so a mapping the caller changes after wiring cannot change what the route
+    sends; and one taken through JSON, so a value a request could not carry is refused here
+    rather than by the client on every request.
+
+    :raises CoreException: ``configuration`` for a value that is not a mapping of string
+        keys, or one JSON cannot carry.
+    """
+
+    if extra_body is None:
+        return None
+
+    if not isinstance(extra_body, Mapping):
+        raise exc.configuration(
+            f"HttpInferenceConfig.extra_body must be a mapping of request fields, got "
+            f"{type(extra_body).__name__}."
+        )
+
+    fields = cast(Mapping[object, Any], extra_body)
+
+    # Checked before serializing: JSON turns a key of 1 into "1" without complaint.
+    if not all(isinstance(key, str) for key in fields):
+        raise exc.configuration("HttpInferenceConfig.extra_body keys must be strings.")
+
+    try:
+        copied = cast(dict[str, Any], json.loads(json.dumps(fields, allow_nan=False)))
+
+    except (TypeError, ValueError) as e:
+        raise exc.configuration(
+            f"HttpInferenceConfig.extra_body cannot be sent as JSON ({e})."
+        ) from e
+
+    return MappingProxyType(copied)
+
+
+def validate_extra_body(
+    extra_body: Mapping[str, Any],
+    *,
+    dialect: str,
+    written: frozenset[str],
+) -> None:
+    """Refuse an extra that names a key in *written*, the dialect's own, or one in
+    :data:`REPLY_SHAPE_KEYS`.
+
+    :raises CoreException: ``configuration`` naming the keys.
+    """
+
+    if owned := sorted(set(extra_body) & written):
+        raise exc.configuration(
+            f"HttpInferenceConfig(protocol={dialect!r}).extra_body names {', '.join(owned)}, "
+            "which the dialect writes itself from the route's config; an extra cannot "
+            "replace the prompt, the output constraint or the token cap."
+        )
+
+    if shaping := sorted(set(extra_body) & REPLY_SHAPE_KEYS):
+        raise exc.configuration(
+            f"HttpInferenceConfig(protocol={dialect!r}).extra_body names "
+            f"{', '.join(shaping)}, which changes the reply's shape; the route decodes one "
+            "JSON body with one choice."
+        )
+
+
+# ....................... #
+
+
 def render_prompt(
     spec: InferenceSpec[Any, Any],
     prompt: PromptTemplate,
@@ -325,6 +400,21 @@ def token_usage(
             attributes[attribute] = value
 
     return attributes
+
+
+# ....................... #
+
+
+def response_model(body: Mapping[str, Any]) -> str | None:
+    """The model *body* says answered, or ``None`` when it names none.
+
+    Both dialects report it as a top-level ``model``, which can be more exact than the name
+    the route asked for: a dated snapshot behind an alias.
+    """
+
+    model = body.get("model")
+
+    return model if isinstance(model, str) and model else None
 
 
 # ....................... #

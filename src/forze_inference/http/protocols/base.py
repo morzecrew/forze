@@ -48,6 +48,14 @@ class WireProtocol(Protocol):
         """
         ...  # pragma: no cover
 
+    def response_model(self, body: Mapping[str, Any]) -> str | None:
+        """The model the endpoint says answered, or ``None`` when it names none.
+
+        Read alongside :meth:`usage_attributes` to report a request's usage to the caller's
+        meter scope, under this name or, without one, the name the route asked for.
+        """
+        ...  # pragma: no cover
+
     def encode_request(
         self,
         spec: InferenceSpec[Any, Any],

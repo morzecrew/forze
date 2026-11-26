@@ -32,6 +32,11 @@ class MlflowProtocol:
 
         return {}
 
+    def response_model(self, body: Mapping[str, Any]) -> str | None:
+        _ = body  # reported only alongside usage, which this dialect has none of
+
+        return None
+
     # ....................... #
 
     def encode_request(

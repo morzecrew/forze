@@ -15,6 +15,7 @@ from forze.base.primitives import StrKey
 from ...kernel import (
     DEFAULT_REQUEST_TIMEOUT_S,
     InferenceHttpClient,
+    InferenceTransportFactory,
 )
 from ..deps.keys import InferenceHttpClientDepKey
 
@@ -38,6 +39,10 @@ class InferenceHttpStartupHook(LifecycleHook):
     timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S
     """Client-level request timeout when no invocation deadline tightens it."""
 
+    transport_factory: InferenceTransportFactory | None = None
+    """Builds the client's transport, for a proxy or connection retries; ``None`` keeps
+    httpx's default."""
+
     # ....................... #
 
     async def __call__(self, ctx: "ExecutionContext") -> None:
@@ -50,6 +55,7 @@ class InferenceHttpStartupHook(LifecycleHook):
             self.base_url,
             default_headers=self.default_headers,
             timeout_s=self.timeout_s,
+            transport=self.transport_factory() if self.transport_factory is not None else None,
         )
 
 
@@ -72,10 +78,17 @@ def inference_http_lifecycle_step(
     *,
     default_headers: Mapping[str, str] | None = None,
     timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S,
+    transport_factory: InferenceTransportFactory | None = None,
     name: StrKey = "inference_http_client",
     depends_on: tuple[StrKey, ...] = (),
 ) -> LifecycleStep:
-    """Lifecycle step initializing and closing the served-model endpoint client."""
+    """Lifecycle step initializing and closing the served-model endpoint client.
+
+    :param transport_factory: Builds the client's transport, such as
+        ``lambda: httpx.AsyncHTTPTransport(proxy=..., retries=2)``; ``None`` keeps httpx's
+        default. Sending through a proxy does not change the egress acknowledgement: the
+        route still sends to the same endpoint.
+    """
 
     return LifecycleStep(
         id=name,
@@ -84,6 +97,7 @@ def inference_http_lifecycle_step(
             base_url=base_url,
             default_headers=default_headers,
             timeout_s=timeout_s,
+            transport_factory=transport_factory,
         ),
         shutdown=InferenceHttpShutdownHook(),
     )

@@ -1,6 +1,6 @@
 """Async HTTP client for model-serving endpoints, with inference error taxonomy."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast, final
 
 from forze_inference.http._compat import require_inference_http
@@ -24,6 +24,14 @@ logger = get_logger("forze_inference.http")
 
 DEFAULT_REQUEST_TIMEOUT_S = 30.0
 """Client-level request timeout when no invocation deadline tightens it."""
+
+type InferenceTransportFactory = Callable[[], httpx.AsyncBaseTransport]
+"""Builds the transport for one endpoint client, such as
+``lambda: httpx.AsyncHTTPTransport(proxy=..., retries=2)``.
+
+A factory rather than a transport because a transport owns its connection pool, and a routed
+client opens one endpoint client per tenant. ``retries`` there covers establishing the
+connection only, so a request is resent only when it never reached the model."""
 
 
 def _translate_status(status: int, body_bytes: int) -> Exception:

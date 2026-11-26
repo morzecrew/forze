@@ -72,9 +72,23 @@ operations = kit.registry(tx_route="main")
 Bind `MAPPINGS.document` in your document deps module like any document spec, and merge
 `kit.spec_contributions()` into your spec inventory. The proposer is a plain function here; a
 model-backed one calls an inference port inside it (see [Inference](inference.md)) and returns
-the same draft. Its `model`, `tokens` and `latency_ms` are yours to fill: no inference port
-hands a call's usage back to its caller yet, and only an HTTP generation route records it, on
-the call's span.
+the same draft. Its `model`, `tokens` and `latency_ms` come from a meter scope around the calls,
+which sums every attempt:
+
+```python
+async def propose(ctx: ExecutionContext, request: ProposalRequest) -> ProposalDraft:
+    async with ctx.inference.metered() as meter:
+        mapping = await ctx.inference.model(MAPPER).predict(...)
+
+    return ProposalDraft(
+        items=[...],
+        model=meter.model,
+        tokens=meter.tokens or 0,
+        latency_ms=meter.latency_ms,
+    )
+```
+
+Only an HTTP generation route reports usage, so with any other model the tokens stay `0`.
 
 ## The operations
 
