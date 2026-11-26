@@ -11405,6 +11405,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Proposals that stay inert until a human decides them</strong> (<code>forze_kits.integrations.proposal</code>): <code>proposal_spec</code> over your change and evidence models, and <code>ProposalKit</code>'s <code>request</code>, <code>run</code> and <code>decide</code>, with per-item verdicts, amendments, questions, a stale check and an accept effect in the decide transaction.</p>
 </li>
 <li>
+<p><strong>A caller can read what its inference calls spent.</strong> <code>async with ctx.inference.metered() as meter:</code> sums the tokens every request inside it reported, retries and failed decodes included, per model, with the scope's time (<code>InferenceMeter</code>). <code>predict</code> is unchanged and the span keeps the same numbers. A custom adapter reports through <code>record_inference_usage</code>, and a custom <code>WireProtocol</code> names the answering model with <code>response_model</code>.</p>
+</li>
+<li>
+<p><strong>A generation route takes <code>extra_body</code></strong>, merged into every request; a key the dialect writes, or <code>stream</code> or <code>n</code>, is refused at wiring. <code>openai_chat</code> takes <code>max_output_tokens_field="max_tokens"</code> for a host such as DeepSeek. <code>inference_http_lifecycle_step</code> and <code>RoutedInferenceHttpClient</code> take a <code>transport_factory</code>, for a proxy or connection retries.</p>
+</li>
+<li>
 <p><strong>The store tables can be checked at startup.</strong> <code>PostgresLifecycleModule(owned_schema=owned_relations(deps))</code> refuses to start when a table cannot serve its adapter (<code>postgres_owned_schema_invalid</code>), and warns about the rest.</p>
 </li>
 </ul>
