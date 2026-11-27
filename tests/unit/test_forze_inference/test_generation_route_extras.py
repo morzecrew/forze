@@ -276,6 +276,12 @@ class TestExtrasTheRouteRefuses:
         # JSON turns a key of 1 into "1" without complaint, and drops one of two that collide.
         _refusal(lambda: _config(extra_body=extra_body))
 
+    def test_a_body_that_contains_itself(self) -> None:
+        body: dict[str, Any] = {}
+        body["vendor"] = {"tools": [body]}
+
+        _refusal(lambda: _config(extra_body=body))
+
     def test_a_route_with_extras_still_hashes_and_compares(self) -> None:
         config = _config(extra_body={"thinking": {"type": "disabled"}})
 
