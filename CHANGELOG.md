@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.25.0] - 2026-11-27
+
+### Added
+
 - **Python 3.15 is supported.** On 3.15, PyYAML builds from source (pure Python without a C compiler), and so do zstandard for the `zstd` extra and grpcio-tools for `kms-yc`, which need a C and a C++ toolchain until they publish 3.15 wheels.
 
 - **`AuthnDepsModule(eligibility=...)` takes a gate factory.** A deployment checks its own principal registry with a `(ctx, spec) -> PrincipalEligibilityPort` factory (`EligibilityChoice`). An invalid value is refused at construction (`authn_eligibility_invalid`).
@@ -3132,7 +3146,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.24.1...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/morzecrew/forze/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/morzecrew/forze/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/morzecrew/forze/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/morzecrew/forze/compare/v0.22.0...v0.23.0
