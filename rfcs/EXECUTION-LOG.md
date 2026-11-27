@@ -10038,8 +10038,10 @@ each finding reproduced against Postgres 18 first.
 - Row 14 (`ASSUMED`) is narrowed by row 49, the maintainer's answer to D-393.
 - Rows 23 and 47 (`ASSUMED`) hold; D-394 fills in where the comparison read a table the
   store serves as one it cannot.
+- Row 49 (`ASSUMED`) would refuse one more text type at startup if D-395's proposed row is
+  accepted; D-396 carries D-394's optional-column rule to partitioned tables.
 
-**Drift count: 1.** Two entries, D-393 and D-394: one `drift`, one `spec-gap`.
+**Drift count: 2.** Four entries, D-393 to D-396: two `drift`, two `spec-gap`.
 
 ## D-393 — A smaller integer refuses startup
 
@@ -10068,5 +10070,38 @@ each finding reproduced against Postgres 18 first.
   at `indnkeyatts`; the column read tests `typcategory = 'A'`; an index over an optional
   column the table lacks is `index_missing`, which warns.
 - **Evidence:** four tests in `test_pg_owned_schema_startup.py`, each red before the change.
+- **Class:** `spec-gap`.
+- **Action:** decided.
+
+## D-395 — A `name` column refuses startup
+
+- **Touches:** row 49 (`ASSUMED`): a length-limited text column only warns at startup, and
+  row 23 counts `name` as one.
+- **Found:** in review on #965. A `varchar(n)` refuses a long value with an error, but
+  `name` cuts it to 63 bytes without one, so two inbox routes or keys sharing a prefix
+  become one row. D-394 listed a `name` column among the tables the store serves; it is
+  not one. On `main` startup refused it only because the column read took it for an array.
+- **Built:** the diff emits `truncating` for a `name` column where forze declares text, and
+  `REFUSED_FINDINGS` refuses it (`src/forze_postgres/kernel/catalog/owned/diff.py`,
+  `_narrower_finding`). Every other length-limited text column keeps `narrower`.
+- **Evidence:** `test_owned_schema_startup.py`, `test_a_name_column_is_refused`, red with
+  `truncating` out of `REFUSED_FINDINGS`; `test_pg_owned_schema_startup.py`,
+  `test_a_name_column_reads_as_narrower_text_and_refuses_startup`.
+- **Class:** `drift`.
+- **Proposed row (RFC 0080):** `ASSUMED` — the startup step also refuses a `name` column
+  where forze declares text, since it truncates past 63 bytes without an error; narrows
+  row 49.
+
+## D-396 — An optional column's index waits on a partitioned table too
+
+- **Touches:** row 14 (`ASSUMED`), and D-394's fourth shape.
+- **Found:** in review on #965. D-394 graded a required index over a missing optional
+  column as `index_missing` only on a plain table; a partitioned one still reported
+  `required_index_missing`, which refuses startup.
+- **Built:** both paths take the finding from one helper
+  (`src/forze_postgres/kernel/catalog/owned/diff.py`, `_missing_index_finding`).
+- **Evidence:** `test_owned_store_schema.py`,
+  `test_a_partitioned_log_missing_an_optional_column_and_its_index_starts`, red before the
+  change.
 - **Class:** `spec-gap`.
 - **Action:** decided.
