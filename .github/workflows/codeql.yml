@@ -10,15 +10,9 @@ on:
       - "uv.lock"
       - ".github/workflows/codeql.yml"
       - ".github/codeql/codeql-config.yml"
+  # No paths filter: the main ruleset blocks a pull request until CodeQL reports on it.
   pull_request:
     branches: [main]
-    paths:
-      - "src/**/*.py"
-      - "tests/**/*.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/codeql.yml"
-      - ".github/codeql/codeql-config.yml"
   schedule:
     - cron: "0 3 * * 1"
 
