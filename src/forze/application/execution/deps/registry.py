@@ -90,12 +90,13 @@ def _resolve_runtime_tracer(
 def _declares(provider: object, protocol: type, method: str) -> bool:
     """Whether *provider* implements *protocol*. A class registered as a factory carries the
     protocol's method unbound, so only an instance declares; and the protocol check reads
-    only the attribute's name, so a field of that name that is no method declares nothing."""
+    only the attribute's name, so a field of that name declares nothing, even one holding a
+    callable. A method is looked up on the class, where a field is no callable."""
 
     return (
         not isinstance(provider, type)
         and isinstance(provider, protocol)
-        and callable(getattr(provider, method, None))
+        and callable(getattr(type(provider), method, None))
     )
 
 

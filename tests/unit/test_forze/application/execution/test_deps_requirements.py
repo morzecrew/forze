@@ -150,13 +150,24 @@ def test_a_module_and_its_provider_report_one_finding_once() -> None:
     assert [f.render() for f in frozen.posture_findings] == ["thing:main: is unsafe"]
 
 
+def _lookup(name: str) -> tuple[str, ...]:
+    return (name,)
+
+
 @attrs.define
 class _Settings:
     requirements: tuple[str, ...] = ("a",)
     posture_findings: tuple[str, ...] = ()
 
 
-def test_a_provider_with_a_field_of_a_declaring_name_freezes() -> None:
-    # The protocols are checked by attribute name; a field that is no method declares
-    # nothing, and must not be called.
-    DepsRegistry.from_deps(Deps.plain({DepKey[object]("settings"): _Settings()})).freeze()
+@attrs.define
+class _Hooks:
+    requirements: Any = _lookup
+    posture_findings: Any = _lookup
+
+
+@pytest.mark.parametrize("settings", [_Settings(), _Hooks()], ids=["value", "callable"])
+def test_a_provider_with_a_field_of_a_declaring_name_freezes(settings: object) -> None:
+    # The protocols are checked by attribute name; a field declares nothing, even one that
+    # holds a callable, and must not be called.
+    DepsRegistry.from_deps(Deps.plain({DepKey[object]("settings"): settings})).freeze()
