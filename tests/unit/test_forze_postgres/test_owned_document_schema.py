@@ -226,10 +226,13 @@ def test_a_table_read_by_a_lookup_renders_its_index(
     assert [(i.keys, i.unique) for i in shape.indexes] == [(key, False) for key in keys]
 
 
-def test_the_mailbox_renders_its_replay_index() -> None:
+def test_the_mailbox_renders_its_replay_and_ack_indexes() -> None:
     shape = document_shape(_schema_spec(realtime_mailbox_spec()))
+    keys = [i.keys[-3:] for i in shape.indexes]
 
-    assert [i.keys for i in shape.indexes][-1][-3:] == ("principal", "hlc", "id")
+    assert ("principal", "hlc", "id") in keys
+    # An ack resolves its event to a position by principal and event_id.
+    assert any(k[-2:] == ("principal", "event_id") for k in keys)
 
 # ....................... #
 

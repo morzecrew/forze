@@ -226,8 +226,12 @@ def realtime_mailbox_spec(
         read=_MailboxRead,
         write={"domain": _MailboxDoc, "create_cmd": _MailboxCreate},
         encryption=encryption,
-        # Replay reads one principal's entries past a (hlc, id) mark, in that order.
-        required_indexes=(DocumentIndex(fields=("principal", "hlc", "id")),),
+        # Replay reads one principal's entries past a (hlc, id) mark, in that order, and an
+        # ack resolves its event to a position by principal and event_id.
+        required_indexes=(
+            DocumentIndex(fields=("principal", "hlc", "id")),
+            DocumentIndex(fields=("principal", "event_id")),
+        ),
     )
 
 
