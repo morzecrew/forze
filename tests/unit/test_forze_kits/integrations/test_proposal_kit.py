@@ -13,7 +13,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -63,11 +63,13 @@ SPEC = proposal_spec("mappings", change=Mapping, evidence=Seen)
 
 
 class Scored(BaseModel):
-    """Evidence that forbids extras and derives a field, neither of which a store keeps."""
+    """Evidence that forbids extras, derives a field and keeps private state, none of which
+    a store keeps."""
 
     model_config = ConfigDict(extra="forbid")
 
     filled: float | None = None
+    _source: str | None = PrivateAttr(default=None)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -310,9 +312,12 @@ class TestRequestAndRun:
         assert ran.status is ProposalStatus.FAILED
         assert ran.error
 
-    async def test_a_derived_field_the_store_drops_still_opens(self) -> None:
-        # A model forbidding extras would refuse its own derived field read back.
-        draft = SCORED.item(key="a", proposed=Mapping(field="f"), evidence=Scored(filled=0.5))
+    async def test_what_the_store_drops_still_opens(self) -> None:
+        # A model forbidding extras would refuse its own derived field read back, and private
+        # state is not stored, so it does not read back at all.
+        evidence = Scored(filled=0.5)
+        evidence._source = "row 7"
+        draft = SCORED.item(key="a", proposed=Mapping(field="f"), evidence=evidence)
 
         ran = await _open(ProposalKit(spec=SCORED, proposer=_proposer(draft)), _ctx())
 

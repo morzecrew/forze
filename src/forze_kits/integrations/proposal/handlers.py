@@ -179,10 +179,14 @@ class RunProposal:
                 latency_ms=draft.latency_ms,
             )
             # Through JSON as a store keeps it, derived fields dropped: a NaN passes the
-            # models and reads back null, which only a required field then refuses.
+            # models and reads back null, which only a required field then refuses. Fields
+            # are compared, not models: private state is not stored.
             stored = update.model_dump_json(exclude_computed_fields=True)
+            read = type(update).model_validate_json(stored)
 
-            if type(update).model_validate_json(stored) != update:
+            if read.model_dump(exclude_computed_fields=True) != update.model_dump(
+                exclude_computed_fields=True
+            ):
                 raise ValueError(
                     "The draft does not read back as it was made: a NaN or an infinity "
                     "is stored as null."
