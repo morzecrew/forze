@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
 
-- **The store-table check no longer refuses a table the store can serve**: a unique index in another column order, a primary key with `INCLUDE` columns, a `name` column (read as an array), or a missing optional column whose index went with it. `forze schema diff` prints no duplicate index for them.
+- **The store-table check no longer refuses a table the store can serve**: a unique index in another column order, a primary key with `INCLUDE` columns, a `name` column (read as an array), or a missing optional column whose index went with it, on a partitioned table too. `forze schema diff` prints no duplicate index for them.
 
 - **The identity and realtime mailbox tables declare their lookup indexes**: API-key accounts on `key_hash` and `principal_id`, token sessions on `refresh_digest` and `principal_id`, the mailbox on `(principal, hlc, id)`. `forze schema diff --specs` prints any that are missing.
 

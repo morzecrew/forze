@@ -254,6 +254,25 @@ def _compare_column(
     return refusals
 
 
+def _missing_index_finding(
+    relation: BoundOwnedRelation,
+    index: OwnedIndex,
+    catalog: CatalogRelation,
+) -> str:
+    """The finding for a declared index the table lacks.
+
+    Over an optional column the table lacks, no adapter call needs the index until that
+    column is added: printed after the column, it only warns.
+    """
+
+    optional = {column.name for column in relation.shape.columns if not column.required}
+    waits = any(
+        key_column(key) in optional and key_column(key) not in catalog.columns for key in index.keys
+    )
+
+    return "required_index_missing" if index.required and not waits else "index_missing"
+
+
 def _declared_index(
     relation: BoundOwnedRelation,
     index: OwnedIndex,
@@ -265,16 +284,10 @@ def _declared_index(
     matches = [found for found in catalog.indexes if satisfies(index, found, casts)]
     present = any(found.valid for found in matches)
     invalid = [found for found in matches if not found.valid]
-    # Over an optional column the table lacks, no adapter call needs the index until that
-    # column is added: printed after the column, it only warns.
-    optional = {column.name for column in relation.shape.columns if not column.required}
-    waits = any(
-        key_column(key) in optional and key_column(key) not in catalog.columns for key in index.keys
-    )
     create = Block(
         comments=(index.label,),
         statement=create_index(relation, index, concurrently=True),
-        finding="required_index_missing" if index.required and not waits else "index_missing",
+        finding=_missing_index_finding(relation, index, catalog),
     )
 
     if not invalid:
@@ -340,7 +353,7 @@ def _partitioned_index(
                 index.label,
             ),
             commented=(create_index(relation, index, concurrently=False),),
-            finding="required_index_missing" if index.required else "index_missing",
+            finding=_missing_index_finding(relation, index, catalog),
         )
     ]
 

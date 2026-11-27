@@ -480,6 +480,28 @@ class TestDeliveryLog:
         assert "-- DROP INDEX app.log_route;" in text
         assert "-- retired in 0.25.0: unused" in text
 
+    def test_a_partitioned_log_missing_an_optional_column_and_its_index_starts(self) -> None:
+        from forze_postgres.execution.lifecycle.owned_schema import grade
+
+        relation = self._relation()
+        relation = attrs.evolve(
+            relation,
+            shape=attrs.evolve(
+                relation.shape,
+                columns=(*relation.shape.columns, OwnedColumn(name="tag", type="text", required=False)),
+                indexes=(
+                    *relation.shape.indexes,
+                    OwnedIndex(keys=("tag",), required=True, comment="tag lookups"),
+                ),
+            ),
+        )
+        catalog = self._catalog("partitioned_table", _found(("event_id",), name="log_event"))
+
+        findings = grade([relation], [diff_relation(relation, catalog)])
+
+        assert findings.refusals == ()
+        assert any("tag" in warning for warning in findings.warnings)
+
     @pytest.mark.parametrize(
         "name",
         ["l" * 63, "l" * 55 + "_default", "ж" * 31],
