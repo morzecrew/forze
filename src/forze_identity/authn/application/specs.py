@@ -139,4 +139,7 @@ identity_mapping_spec = DocumentSpec(
         "create_cmd": CreateIdentityMappingCmd,
         "update_cmd": UpdateIdentityMappingCmd,
     },
+    # First sight of a subject checks for a mapping and then inserts: only the index makes the
+    # second of two concurrent first logins conflict and read the first one's principal.
+    required_indexes=(DocumentIndex(fields=("issuer", "subject"), unique=True),),
 )
