@@ -159,6 +159,8 @@ cannot serve its adapter:
   use it yet;
 - a column of another type family, or an integer smaller than declared, which a packed HLC or
   an epoch in milliseconds overflows on every write;
+- a `name` column where forze declares text, which cuts a value past 63 bytes without an
+  error, so two keys sharing a prefix become one;
 - a column that is `NOT NULL` where forze writes `NULL`;
 - a primary key on other columns, or a deferrable one;
 - a unique index that breaks a conflict target;

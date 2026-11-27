@@ -16,6 +16,7 @@ from typing import Final, Literal, final
 import attrs
 
 from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationKind, PostgresType
+from ..introspect.utils import normalize_pg_type
 from .matching import (
     catalog_keys,
     catalog_type_family,
@@ -194,6 +195,23 @@ def _add_column(relation: BoundOwnedRelation, column: OwnedColumn) -> Block:
     )
 
 
+def _narrower_finding(declared: str, found: PostgresType) -> str:
+    """The finding for a column narrower than declared, of the family *declared*.
+
+    Packed HLCs and epoch milliseconds overflow a smaller integer on every write, and
+    ``name`` cuts a value past 63 bytes without an error, so two keys sharing a prefix
+    become one. A length-limited text column refuses only a long value, and says so.
+    """
+
+    if declared == "integer":
+        return "narrower_integer"
+
+    if normalize_pg_type(found.base) == "name":
+        return "truncating"
+
+    return "narrower"
+
+
 def _compare_column(
     relation: BoundOwnedRelation,
     column: OwnedColumn,
@@ -225,9 +243,7 @@ def _compare_column(
             _refusal(
                 f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
                 "A value the adapter writes may not fit; widen the column.",
-                # Packed HLCs and epoch milliseconds overflow a smaller integer on every write,
-                # where a short text value still fits a length-limited column.
-                finding="narrower_integer" if type_family(column.type) == "integer" else "narrower",
+                finding=_narrower_finding(declared, found),
             )
         )
 

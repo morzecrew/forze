@@ -167,9 +167,10 @@ async def test_a_length_limited_text_column_only_warns(pg_client: PostgresClient
     await _check(pg_client, deps)
 
 
-async def test_a_name_column_reads_as_narrower_text_not_an_array(
+async def test_a_name_column_reads_as_narrower_text_and_refuses_startup(
     pg_client: PostgresClient,
 ) -> None:
+    # name is no array, though it has an element type, and it cuts a route past 63 bytes.
     schema = f"owned_start_{uuid4().hex[:8]}"
     deps = await _create(pg_client, schema)
     await pg_client.execute(
@@ -182,7 +183,11 @@ async def test_a_name_column_reads_as_narrower_text_not_an_array(
     )
 
     assert not columns["inbox_route"].is_array
-    await _check(pg_client, deps)
+
+    with pytest.raises(CoreException) as caught:
+        await _check(pg_client, deps)
+
+    assert "inbox_route" in str(caught.value) and "narrower" in str(caught.value)
 
 
 async def test_an_optional_column_missing_with_its_index_only_warns(

@@ -232,6 +232,15 @@ class TestGrade:
 
         assert warned.refusals == () and "narrower" in warned.warnings[0]
 
+    def test_a_name_column_is_refused(self) -> None:
+        # name cuts a value past 63 bytes without an error, so two long keys become one.
+        relation = _counter()
+        name = PostgresType(base="name", is_array=False, not_null=True, formatted="name")
+
+        refused = grade([relation], [diff_relation(relation, _catalog(relation, suffix=name))])
+
+        assert len(refused.refusals) == 1 and "narrower" in refused.refusals[0]
+
     def test_a_column_found_not_null_where_forze_writes_null_is_refused(self) -> None:
         relation = _counter()
         not_null = PostgresType(base="timestamptz", is_array=False, not_null=True)
