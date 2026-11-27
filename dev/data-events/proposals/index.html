@@ -6962,7 +6962,7 @@ which sums every attempt:</p>
 <tr>
 <td><code>run</code></td>
 <td><code>ProposalIdDTO(id)</code></td>
-<td>Calls the proposer and stores its items as <code>open</code>, or <code>decided</code> when it returns none. An exception, or two items with one key, fails the proposal with the error. A proposal no longer <code>pending</code> is returned as it is.</td>
+<td>Calls the proposer and stores its items as <code>open</code>, or <code>decided</code> when it returns none. An exception, two items with one key, or a draft the store would not keep as made, such as a NaN or a value it refuses, fails the proposal with the error. Called inside a transaction, as an inbox consumer's, it writes the draft in a savepoint on <code>tx_route</code>, so a refusal still fails the proposal. A proposal no longer <code>pending</code> is returned as it is.</td>
 </tr>
 <tr>
 <td><code>decide</code></td>
@@ -7024,6 +7024,11 @@ the first already moved.</p>
 <td><code>decide</code> with no authenticated principal.</td>
 </tr>
 <tr>
+<td><code>proposal_human_required</code></td>
+<td><code>authorization</code></td>
+<td><code>decide</code> by an agent acting for a principal, as an <abbr title="Model Context Protocol">MCP</abbr> tool call is.</td>
+</tr>
+<tr>
 <td><code>proposal_pending</code></td>
 <td><code>conflict</code></td>
 <td><code>decide</code> before the proposer finished.</td>
@@ -7036,7 +7041,7 @@ the first already moved.</p>
 <tr>
 <td><code>revision_mismatch</code></td>
 <td><code>precondition</code></td>
-<td>The second of two concurrent <code>decide</code> calls on one proposal: it read the proposal before the first stored its verdicts.</td>
+<td>The second of two concurrent <code>decide</code> calls on one proposal: it read the proposal before the first stored its verdicts. A store with revision history raises <code>historical_consistency_violation</code> (<code>conflict</code>) instead, and the mock store <code>serialization_failure</code> (<code>concurrency</code>).</td>
 </tr>
 <tr>
 <td><code>proposal_stale</code></td>
@@ -7062,9 +7067,12 @@ the first already moved.</p>
 </table>
 <h2 id="what-stays-out">What stays out<a class="headerlink" href="#what-stays-out" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>No automatic acceptance.</strong> Nothing in the kit accepts without a principal, and no
-  threshold accepts at all. An application that wants automation composes a deterministic
+<li><strong>No automatic acceptance.</strong> Nothing in the kit accepts without a principal acting for
+  itself, so an agent acting for one cannot decide, and no threshold accepts at all. An application that wants automation composes a deterministic
   proposer with its own handler, visibly.</li>
+<li><strong>No principal kinds.</strong> A service account calling for itself decides as a person would:
+  an identity carries nothing that tells the two apart. Keep services from deciding with
+  <a href="../../identity-tenancy-enc/identity/#authorization-may-they">authorization</a> on <code>decide</code>.</li>
 <li><strong>The guarantee is the kit's operations, not the table.</strong> Proposals are documents, so
   any code holding the document port can still change one. Enforcement lives in <code>decide</code>,
   and in your choice to route decisions through it.</li>
@@ -7076,6 +7084,8 @@ that includes the index behind the pending uniqueness:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">mappings_one_pending</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">mappings</span><span class="w"> </span><span class="p">(</span><span class="k">scope</span><span class="p">,</span><span class="w"> </span><span class="n">base</span><span class="p">)</span>
 <span class="w">    </span><span class="n">NULLS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">DISTINCT</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="p">;</span>
 </code></pre></div>
+<p>A tenant-aware collection leads that index with <code>tenant_id</code>, <code>(tenant_id, scope, base)</code>, or
+one tenant's pending proposal blocks the same scope in every other tenant.</p>
 <p>A store that cannot keep a filtered uniqueness refuses the collection when it is wired. To replace
 a generated operation, pass <code>handlers=</code>; to add one, <code>extra_ops=</code>.</p>
 
