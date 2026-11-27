@@ -402,7 +402,9 @@ def _indexes(spec: PostgresDocumentSchemaSpec, columns: Sequence[OwnedColumn]) -
                 unique=declared.unique,
                 nulls_not_distinct=declared.unique
                 and counts_nulls(declared.fields, declared.skip_null),
-                required=True,
+                # Without a unique index two writes can each insert a row; without a plain
+                # one, reads are only slower.
+                required=declared.unique,
                 comment=f"{spec.name} relies on it over ({', '.join(declared.fields)})",
             )
         )

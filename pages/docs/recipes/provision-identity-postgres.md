@@ -82,9 +82,9 @@ CREATE TABLE app.authn_api_key_accounts (
     key_hash           text        NOT NULL,
     PRIMARY KEY (id)
 );
--- required: authn_api_key_accounts relies on it over (key_hash)
+-- recommended: authn_api_key_accounts relies on it over (key_hash)
 CREATE INDEX ON app.authn_api_key_accounts (key_hash);
--- required: authn_api_key_accounts relies on it over (principal_id)
+-- recommended: authn_api_key_accounts relies on it over (principal_id)
 CREATE INDEX ON app.authn_api_key_accounts (principal_id);
 ```
 
@@ -106,9 +106,9 @@ CREATE TABLE app.authn_token_sessions (
     expires_at     timestamptz NOT NULL,
     PRIMARY KEY (id)
 );
--- required: authn_token_sessions relies on it over (refresh_digest)
+-- recommended: authn_token_sessions relies on it over (refresh_digest)
 CREATE INDEX ON app.authn_token_sessions (refresh_digest);
--- required: authn_token_sessions relies on it over (principal_id)
+-- recommended: authn_token_sessions relies on it over (principal_id)
 CREATE INDEX ON app.authn_token_sessions (principal_id);
 ```
 
