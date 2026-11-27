@@ -166,8 +166,30 @@ class _Hooks:
     posture_findings: Any = _lookup
 
 
-@pytest.mark.parametrize("settings", [_Settings(), _Hooks()], ids=["value", "callable"])
+class _Types:
+    requirements: Any = int
+    posture_findings: Any = int
+
+
+class _Shadowed:
+    """Declares both methods, and its instance replaces them with values."""
+
+    def __init__(self) -> None:
+        vars(self).update(requirements=(), posture_findings=())
+
+    def requirements(self) -> Iterable[Requirement]:
+        return ()
+
+    def posture_findings(self) -> Iterable[WiringFinding]:
+        return ()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [_Settings(), _Hooks(), _Types(), _Shadowed()],
+    ids=["value", "callable", "type", "shadowed"],
+)
 def test_a_provider_with_a_field_of_a_declaring_name_freezes(settings: object) -> None:
     # The protocols are checked by attribute name; a field declares nothing, even one that
-    # holds a callable, and must not be called.
+    # holds a callable, and must not be called. Only a method bound to the provider is called.
     DepsRegistry.from_deps(Deps.plain({DepKey[object]("settings"): settings})).freeze()

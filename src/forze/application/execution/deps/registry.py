@@ -1,5 +1,6 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
+import inspect
 import os
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Self, cast, final
@@ -88,16 +89,17 @@ def _resolve_runtime_tracer(
 
 
 def _declares(provider: object, protocol: type, method: str) -> bool:
-    """Whether *provider* implements *protocol*. A class registered as a factory carries the
-    protocol's method unbound, so only an instance declares; and the protocol check reads
-    only the attribute's name, so a field of that name declares nothing, even one holding a
-    callable. A method is looked up on the class, where a field is no callable."""
+    """Whether *provider* implements *protocol*: an instance whose attribute of that name is
+    a method bound to it. The protocol check reads only the attribute's name, so a class
+    registered as a factory, which carries the method unbound, declares nothing, and nor
+    does a field of that name, even one holding a callable."""
 
-    return (
-        not isinstance(provider, type)
-        and isinstance(provider, protocol)
-        and callable(getattr(type(provider), method, None))
-    )
+    if isinstance(provider, type) or not isinstance(provider, protocol):
+        return False
+
+    bound = getattr(provider, method, None)
+
+    return inspect.ismethod(bound) and bound.__self__ is provider
 
 
 # ....................... #
