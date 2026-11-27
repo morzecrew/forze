@@ -350,6 +350,39 @@ class TestRequestAndRun:
         assert "Invalid value" in (ran.error or "")
 
     @pytest.mark.parametrize(
+        "error",
+        [
+            exc.precondition("Revision mismatch.", code="revision_mismatch"),
+            exc.infrastructure("The store is unreachable."),
+        ],
+        ids=["lost-race", "outage"],
+    )
+    async def test_a_draft_write_that_may_succeed_on_retry_stays_pending(
+        self, monkeypatch: pytest.MonkeyPatch, error: CoreException
+    ) -> None:
+        # Failing it would throw away a draft a retry could still store.
+        written = MockDocumentAdapter.update
+
+        async def losing(self: Any, pk: Any, rev: Any, dto: Any, **kwargs: Any) -> Any:
+            if getattr(dto, "status", None) == ProposalStatus.OPEN:
+                raise error
+
+            return await written(self, pk, rev, dto, **kwargs)
+
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+        requested = await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+        monkeypatch.setattr(MockDocumentAdapter, "update", losing)
+
+        with pytest.raises(CoreException) as caught:
+            await _op(kit, "run", ProposalIdDTO(id=requested.id), ctx)
+
+        assert caught.value is error
+        assert (await ctx.document.query(SPEC.document).get(requested.id)).status is (
+            ProposalStatus.PENDING
+        )
+
+    @pytest.mark.parametrize(
         ("items", "message"),
         [((("a", "f"), ("a", "g")), "more than once"), ((("a", None),), "propose nothing")],
     )
