@@ -7364,6 +7364,13 @@ platform operator's operation behind a global permission.</p>
 membership, from whichever tenant the caller is bound to. A principal attached again starts with
 no roles in that tenant, and its global roles stay. A tenancy module with <code>tenant_management</code>
 must name <code>authz_route</code> or pass <code>detach_keeps_roles=True</code>.</p>
+<p>A store kept per tenant, through a routed client or a relation per tenant, with ports that are
+not tenant-aware under <code>tenancy_mode="global"</code>, still reads a binding written before
+<code>scope_tenant_id</code> existed as held in every tenant. Tenant-aware ports and
+<code>require_invocation_tenant</code> already read such a binding as the bound tenant's. Inside the tenant a revoke
+refuses it and a detach leaves it, and a revoke with nothing bound cannot reach that store.
+Backfill each tenant's store with its tenant when you add the column
+(<a href="../../recipes/provision-identity-postgres/#authz">the migration</a>).</p>
 <p>A role does not imply membership. Whether a principal may enter a tenant stays the
 <a href="../multi-tenancy/">tenancy plane</a>'s question, and a role can be assigned before the principal
 joins, as an invite does. Tenant-held bindings belong to <code>tenancy_mode="global"</code> over documents
