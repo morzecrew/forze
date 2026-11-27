@@ -1,0 +1,47 @@
+# OpenTelemetry Collector: OTLP in, one Prometheus endpoint out.
+#
+#   every process (each worker, each replica)  --OTLP/http-->  :4318
+#   Prometheus                                 --scrape----->  :8889/metrics
+#
+# For a Prometheus that scrapes, without the rest of the Grafana stack. Each process keeps
+# its own series, told apart by service.instance.id, so nothing is summed across workers.
+#
+# Two decisions, both called out below: metric name suffixes are turned off, and Prometheus
+# must scrape this endpoint with `honor_labels: true`. Together they give the same names
+# and labels as the Grafana stack's config.alloy, so its dashboards and alert rules apply.
+
+receivers:
+  otlp:
+    protocols:
+      # gRPC is left off on purpose: bootstrap_telemetry exports http/protobuf.
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+    # DECISION: no name mangling, as in config.alloy. With suffixes on, every counter grows
+    # a `_total` and `forze.operation.duration` (ms) becomes
+    # `forze_operation_duration_milliseconds`. Off, the Prometheus name is the OTel name with
+    # dots turned into underscores, which is what the shipped dashboards and alert rules
+    # query.
+    add_metric_suffixes: false
+
+    # A process that stops exporting drops out this long after its last export. Keep it
+    # well above the exporters' interval (bootstrap_telemetry's metric_export_interval).
+    metric_expiration: 5m
+
+    # DECISION: `job` and `instance` on every series come from the process: service.name
+    # and service.instance.id. Prometheus keeps them only when its scrape job sets
+    # `honor_labels: true`; otherwise it renames them `exported_job` and
+    # `exported_instance`, and every `by (job)` in the shipped assets groups all services
+    # under the collector's job.
+
+service:
+  pipelines:
+    # Metrics only. Point traces elsewhere, or pass `traces=False` to bootstrap_telemetry:
+    # without a traces pipeline the receiver answers 404 on /v1/traces.
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]

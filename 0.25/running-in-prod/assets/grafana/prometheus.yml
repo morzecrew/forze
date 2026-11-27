@@ -1,0 +1,18 @@
+# Prometheus receives everything by remote-write from Alloy; it scrapes nothing from the
+# application. That is the whole point of the push path: under a pre-fork server, a scrape
+# reaches one worker at random, and per-process cumulative counters interleave into
+# nonsense. Pushed series stay separated by service.instance.id.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Only Prometheus itself. Add node exporter and friends here — they are infrastructure,
+  # and the framework has no opinion about them beyond "not through Alloy's OTLP port".
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

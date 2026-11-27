@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1292" viewBox="0 0 760 1292" role="img" aria-label="Per-seed detection probability with exact intervals per mutant and strategy">
+<rect width="760" height="1292" fill="#fcfcfb" rx="8"/>
+<text x="24" y="28" font-family="Roboto, system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">Per-seed detection probability p̂ (exact 95% CI, N=300)</text>
+<text x="24" y="46" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#52514e">Campaign regimes; the full table is the canonical data view</text>
+<circle cx="28" cy="63" r="4" fill="#2a78d6"/><text x="37" y="67" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b">random</text>
+<circle cx="118" cy="63" r="4" fill="#eb6834"/><text x="127" y="67" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b">pct-d2</text>
+<circle cx="208" cy="63" r="4" fill="#1baf7a"/><text x="217" y="67" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b">pct-d3</text>
+<line x1="240.0" y1="82" x2="240.0" y2="1256" stroke="#e7e6e2" stroke-width="1"/>
+<text x="240.0" y="1272" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">0</text>
+<line x1="360.0" y1="82" x2="360.0" y2="1256" stroke="#e7e6e2" stroke-width="1"/>
+<text x="360.0" y="1272" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">0.25</text>
+<line x1="480.0" y1="82" x2="480.0" y2="1256" stroke="#e7e6e2" stroke-width="1"/>
+<text x="480.0" y="1272" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">0.5</text>
+<line x1="600.0" y1="82" x2="600.0" y2="1256" stroke="#e7e6e2" stroke-width="1"/>
+<text x="600.0" y="1272" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">0.75</text>
+<line x1="720.0" y1="82" x2="720.0" y2="1256" stroke="#e7e6e2" stroke-width="1"/>
+<text x="720.0" y="1272" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">1</text>
+<text x="228" y="121.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T1-blind-write-payment</text>
+<g><title>T1-blind-write-payment · random: p̂=0.059 [0.052, 0.066]</title><line x1="265.2" y1="96" x2="271.5" y2="96" stroke="#2a78d6" stroke-width="2"/><circle cx="268.2" cy="96" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T1-blind-write-payment · pct-d2: p̂=0.062 [0.055, 0.069]</title><line x1="266.4" y1="111" x2="273.0" y2="111" stroke="#eb6834" stroke-width="2"/><circle cx="269.6" cy="111" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T1-blind-write-payment · pct-d3: p̂=0.064 [0.057, 0.071]</title><line x1="267.4" y1="126" x2="274.3" y2="126" stroke="#1baf7a" stroke-width="2"/><circle cx="270.7" cy="126" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="179.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T2-charge-before-guard</text>
+<g><title>T2-charge-before-guard · random: p̂=0.067 [0.060, 0.074]</title><line x1="268.6" y1="154" x2="275.7" y2="154" stroke="#2a78d6" stroke-width="2"/><circle cx="272.0" cy="154" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T2-charge-before-guard · pct-d2: p̂=0.063 [0.056, 0.070]</title><line x1="267.0" y1="169" x2="273.7" y2="169" stroke="#eb6834" stroke-width="2"/><circle cx="270.2" cy="169" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T2-charge-before-guard · pct-d3: p̂=0.064 [0.057, 0.071]</title><line x1="267.4" y1="184" x2="274.2" y2="184" stroke="#1baf7a" stroke-width="2"/><circle cx="270.7" cy="184" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="237.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T3-payment-outside-tx</text>
+<g><title>T3-payment-outside-tx · random: p̂=0.057 [0.050, 0.063]</title><line x1="264.2" y1="212" x2="270.3" y2="212" stroke="#2a78d6" stroke-width="2"/><circle cx="267.1" cy="212" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-payment-outside-tx · pct-d2: p̂=0.063 [0.056, 0.070]</title><line x1="266.9" y1="227" x2="273.6" y2="227" stroke="#eb6834" stroke-width="2"/><circle cx="270.1" cy="227" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-payment-outside-tx · pct-d3: p̂=0.059 [0.052, 0.065]</title><line x1="265.1" y1="242" x2="271.4" y2="242" stroke="#1baf7a" stroke-width="2"/><circle cx="268.1" cy="242" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="295.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T3-torn-activation</text>
+<g><title>T3-torn-activation · random: p̂=0.262 [0.237, 0.289]</title><line x1="353.7" y1="270" x2="378.6" y2="270" stroke="#2a78d6" stroke-width="2"/><circle cx="365.9" cy="270" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-torn-activation · pct-d2: p̂=0.244 [0.220, 0.269]</title><line x1="345.7" y1="285" x2="369.1" y2="285" stroke="#eb6834" stroke-width="2"/><circle cx="357.1" cy="285" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-torn-activation · pct-d3: p̂=0.258 [0.233, 0.285]</title><line x1="352.0" y1="300" x2="376.6" y2="300" stroke="#1baf7a" stroke-width="2"/><circle cx="364.0" cy="300" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="353.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T3-double-torn</text>
+<g><title>T3-double-torn · random: p̂=0.125 [0.112, 0.139]</title><line x1="293.6" y1="328" x2="306.5" y2="328" stroke="#2a78d6" stroke-width="2"/><circle cx="299.9" cy="328" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-double-torn · pct-d2: p̂=0.006 [0.005, 0.006]</title><line x1="242.5" y1="343" x2="243.1" y2="343" stroke="#eb6834" stroke-width="2"/><circle cx="242.8" cy="343" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T3-double-torn · pct-d3: p̂=0.010 [0.009, 0.011]</title><line x1="244.2" y1="358" x2="245.2" y2="358" stroke="#1baf7a" stroke-width="2"/><circle cx="244.7" cy="358" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="411.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T4-weakened-oncall</text>
+<g><title>T4-weakened-oncall · random: p̂=0.031 [0.028, 0.035]</title><line x1="253.3" y1="386" x2="256.7" y2="386" stroke="#2a78d6" stroke-width="2"/><circle cx="254.9" cy="386" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T4-weakened-oncall · pct-d2: p̂=0.034 [0.031, 0.038]</title><line x1="254.7" y1="401" x2="258.4" y2="401" stroke="#eb6834" stroke-width="2"/><circle cx="256.5" cy="401" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T4-weakened-oncall · pct-d3: p̂=0.030 [0.027, 0.034]</title><line x1="252.8" y1="416" x2="256.1" y2="416" stroke="#1baf7a" stroke-width="2"/><circle cx="254.4" cy="416" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="469.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">T5-unchecked-reservation</text>
+<g><title>T5-unchecked-reservation · random: p̂=0.065 [0.058, 0.072]</title><line x1="267.7" y1="444" x2="274.6" y2="444" stroke="#2a78d6" stroke-width="2"/><circle cx="271.0" cy="444" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T5-unchecked-reservation · pct-d2: p̂=0.059 [0.053, 0.066]</title><line x1="265.5" y1="459" x2="271.8" y2="459" stroke="#eb6834" stroke-width="2"/><circle cx="268.5" cy="459" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>T5-unchecked-reservation · pct-d3: p̂=0.060 [0.054, 0.067]</title><line x1="265.8" y1="474" x2="272.2" y2="474" stroke="#1baf7a" stroke-width="2"/><circle cx="268.9" cy="474" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="527.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">I1-retry-without-key</text>
+<g><title>I1-retry-without-key · random: p̂=0.066 [0.059, 0.074]</title><line x1="268.4" y1="502" x2="275.5" y2="502" stroke="#2a78d6" stroke-width="2"/><circle cx="271.8" cy="502" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I1-retry-without-key · pct-d2: p̂=0.063 [0.056, 0.070]</title><line x1="267.1" y1="517" x2="273.8" y2="517" stroke="#eb6834" stroke-width="2"/><circle cx="270.3" cy="517" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I1-retry-without-key · pct-d3: p̂=0.064 [0.057, 0.071]</title><line x1="267.4" y1="532" x2="274.2" y2="532" stroke="#1baf7a" stroke-width="2"/><circle cx="270.7" cy="532" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="585.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">I2-naive-retry-loop</text>
+<g><title>I2-naive-retry-loop · random: p̂=0.065 [0.058, 0.073]</title><line x1="268.0" y1="560" x2="275.0" y2="560" stroke="#2a78d6" stroke-width="2"/><circle cx="271.4" cy="560" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I2-naive-retry-loop · pct-d2: p̂=0.061 [0.055, 0.068]</title><line x1="266.2" y1="575" x2="272.8" y2="575" stroke="#eb6834" stroke-width="2"/><circle cx="269.4" cy="575" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I2-naive-retry-loop · pct-d3: p̂=0.065 [0.058, 0.073]</title><line x1="268.0" y1="590" x2="275.0" y2="590" stroke="#1baf7a" stroke-width="2"/><circle cx="271.4" cy="590" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="643.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">M1-dual-write-shipment</text>
+<g><title>M1-dual-write-shipment · random: p̂=0.522 [0.480, 0.563]</title><line x1="470.4" y1="618" x2="510.4" y2="618" stroke="#2a78d6" stroke-width="2"/><circle cx="490.4" cy="618" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>M1-dual-write-shipment · pct-d2: p̂=0.464 [0.425, 0.503]</title><line x1="443.9" y1="633" x2="481.4" y2="633" stroke="#eb6834" stroke-width="2"/><circle cx="462.6" cy="633" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>M1-dual-write-shipment · pct-d3: p̂=0.441 [0.403, 0.479]</title><line x1="433.4" y1="648" x2="469.8" y2="648" stroke="#1baf7a" stroke-width="2"/><circle cx="451.5" cy="648" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="701.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">I3-ack-before-processing</text>
+<g><title>I3-ack-before-processing · random: p̂=0.377 [0.343, 0.412]</title><line x1="404.7" y1="676" x2="437.6" y2="676" stroke="#2a78d6" stroke-width="2"/><circle cx="420.9" cy="676" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I3-ack-before-processing · pct-d2: p̂=0.348 [0.317, 0.381]</title><line x1="392.0" y1="691" x2="423.0" y2="691" stroke="#eb6834" stroke-width="2"/><circle cx="407.2" cy="691" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>I3-ack-before-processing · pct-d3: p̂=0.367 [0.334, 0.401]</title><line x1="400.1" y1="706" x2="432.4" y2="706" stroke="#1baf7a" stroke-width="2"/><circle cx="416.0" cy="706" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="759.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">M2-consumer-without-inbox</text>
+<g><title>M2-consumer-without-inbox · random: p̂=0.062 [0.056, 0.069]</title><line x1="266.7" y1="734" x2="273.3" y2="734" stroke="#2a78d6" stroke-width="2"/><circle cx="269.9" cy="734" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>M2-consumer-without-inbox · pct-d2: p̂=0.061 [0.054, 0.068]</title><line x1="266.1" y1="749" x2="272.6" y2="749" stroke="#eb6834" stroke-width="2"/><circle cx="269.2" cy="749" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>M2-consumer-without-inbox · pct-d3: p̂=0.067 [0.060, 0.075]</title><line x1="268.9" y1="764" x2="276.1" y2="764" stroke="#1baf7a" stroke-width="2"/><circle cx="272.4" cy="764" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="817.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">D1-skip-lock</text>
+<g><title>D1-skip-lock · random: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="792" x2="720.0" y2="792" stroke="#2a78d6" stroke-width="2"/><circle cx="720.0" cy="792" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D1-skip-lock · pct-d2: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="807" x2="720.0" y2="807" stroke="#eb6834" stroke-width="2"/><circle cx="720.0" cy="807" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D1-skip-lock · pct-d3: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="822" x2="720.0" y2="822" stroke="#1baf7a" stroke-width="2"/><circle cx="720.0" cy="822" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="875.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">D2-early-lease-release</text>
+<g><title>D2-early-lease-release · random: p̂=0.661 [0.615, 0.704]</title><line x1="535.3" y1="850" x2="578.1" y2="850" stroke="#2a78d6" stroke-width="2"/><circle cx="557.2" cy="850" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D2-early-lease-release · pct-d2: p̂=0.965 [0.938, 0.982]</title><line x1="690.0" y1="865" x2="711.5" y2="865" stroke="#eb6834" stroke-width="2"/><circle cx="703.0" cy="865" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D2-early-lease-release · pct-d3: p̂=0.920 [0.885, 0.947]</title><line x1="665.0" y1="880" x2="694.7" y2="880" stroke="#1baf7a" stroke-width="2"/><circle cx="681.7" cy="880" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="933.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">D3-nonatomic-acquire</text>
+<g><title>D3-nonatomic-acquire · random: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="908" x2="720.0" y2="908" stroke="#2a78d6" stroke-width="2"/><circle cx="720.0" cy="908" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D3-nonatomic-acquire · pct-d2: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="923" x2="720.0" y2="923" stroke="#eb6834" stroke-width="2"/><circle cx="720.0" cy="923" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D3-nonatomic-acquire · pct-d3: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="938" x2="720.0" y2="938" stroke="#1baf7a" stroke-width="2"/><circle cx="720.0" cy="938" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="991.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">D4-unmerged-remote-hlc</text>
+<g><title>D4-unmerged-remote-hlc · random: p̂=0.683 [0.638, 0.727]</title><line x1="546.0" y1="966" x2="588.8" y2="966" stroke="#2a78d6" stroke-width="2"/><circle cx="568.0" cy="966" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D4-unmerged-remote-hlc · pct-d2: p̂=0.703 [0.657, 0.746]</title><line x1="555.2" y1="981" x2="597.9" y2="981" stroke="#eb6834" stroke-width="2"/><circle cx="577.2" cy="981" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D4-unmerged-remote-hlc · pct-d3: p̂=0.704 [0.658, 0.747]</title><line x1="556.0" y1="996" x2="598.7" y2="996" stroke="#1baf7a" stroke-width="2"/><circle cx="578.0" cy="996" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="1049.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">D5-wall-clock-ordering</text>
+<g><title>D5-wall-clock-ordering · random: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1024" x2="720.0" y2="1024" stroke="#2a78d6" stroke-width="2"/><circle cx="720.0" cy="1024" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D5-wall-clock-ordering · pct-d2: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1039" x2="720.0" y2="1039" stroke="#eb6834" stroke-width="2"/><circle cx="720.0" cy="1039" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>D5-wall-clock-ordering · pct-d3: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1054" x2="720.0" y2="1054" stroke="#1baf7a" stroke-width="2"/><circle cx="720.0" cy="1054" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="1107.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">N1-drop-tenant-predicate</text>
+<g><title>N1-drop-tenant-predicate · random: p̂=0.522 [0.480, 0.563]</title><line x1="470.4" y1="1082" x2="510.4" y2="1082" stroke="#2a78d6" stroke-width="2"/><circle cx="490.4" cy="1082" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N1-drop-tenant-predicate · pct-d2: p̂=0.530 [0.488, 0.572]</title><line x1="474.2" y1="1097" x2="514.5" y2="1097" stroke="#eb6834" stroke-width="2"/><circle cx="494.4" cy="1097" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N1-drop-tenant-predicate · pct-d3: p̂=0.467 [0.428, 0.507]</title><line x1="445.5" y1="1112" x2="483.2" y2="1112" stroke="#1baf7a" stroke-width="2"/><circle cx="464.3" cy="1112" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="1165.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">N3-unbound-cursor-walk</text>
+<g><title>N3-unbound-cursor-walk · random: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1140" x2="720.0" y2="1140" stroke="#2a78d6" stroke-width="2"/><circle cx="720.0" cy="1140" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N3-unbound-cursor-walk · pct-d2: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1155" x2="720.0" y2="1155" stroke="#eb6834" stroke-width="2"/><circle cx="720.0" cy="1155" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N3-unbound-cursor-walk · pct-d3: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1170" x2="720.0" y2="1170" stroke="#1baf7a" stroke-width="2"/><circle cx="720.0" cy="1170" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+<text x="228" y="1223.0" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b" text-anchor="end">N2-stale-cache</text>
+<g><title>N2-stale-cache · random: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1198" x2="720.0" y2="1198" stroke="#2a78d6" stroke-width="2"/><circle cx="720.0" cy="1198" r="4" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N2-stale-cache · pct-d2: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1213" x2="720.0" y2="1213" stroke="#eb6834" stroke-width="2"/><circle cx="720.0" cy="1213" r="4" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/></g>
+<g><title>N2-stale-cache · pct-d3: p̂=1.000 [0.988, 1.000]</title><line x1="714.1" y1="1228" x2="720.0" y2="1228" stroke="#1baf7a" stroke-width="2"/><circle cx="720.0" cy="1228" r="4" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/></g>
+</svg>
