@@ -361,14 +361,43 @@ def declared_key(key: str) -> tuple[Tree, bool, bool]:
     return (_tree(_tokens(text)), descending, nulls_first)
 
 
+def _bare_key(key: str) -> str:
+    """A declared key without its direction or ``NULLS`` clause."""
+
+    text = re.sub(r"\s+nulls\s+(first|last)$", "", key.strip(), flags=re.IGNORECASE)
+
+    return re.sub(r"\s+(asc|desc)$", "", text, flags=re.IGNORECASE)
+
+
 def key_column(key: str) -> str:
     """The column a declared key names, without its direction or ``NULLS`` clause and
     unquoted: ``"order" DESC NULLS LAST`` is ``order``. An expression comes back as text."""
 
-    text = re.sub(r"\s+nulls\s+(first|last)$", "", key.strip(), flags=re.IGNORECASE)
-    text = re.sub(r"\s+(asc|desc)$", "", text, flags=re.IGNORECASE)
+    return unquote_ident(_bare_key(key))
 
-    return unquote_ident(text)
+
+def key_columns(key: str) -> frozenset[str]:
+    """The names a declared key references, unquoted, function names left out:
+    ``lower(alias) DESC`` references ``alias``. A cast's type name is among them, which a
+    caller matching column names never meets."""
+
+    raw = [
+        (match.lastgroup, match.group())
+        for match in _TOKEN.finditer(_bare_key(key))
+        if match.lastgroup != "space"
+    ]
+    names: set[str] = set()
+
+    for position, (kind, value) in enumerate(raw):
+        calls = position + 1 < len(raw) and raw[position + 1][1] == "("
+
+        if kind == "word" and not calls:
+            names.add(value.lower())
+
+        elif kind == "quoted" and not calls:
+            names.add(unquote_ident(value))
+
+    return frozenset(names)
 
 
 def catalog_keys(index: IndexShapeInfo) -> tuple[tuple[Tree, bool, bool], ...]:

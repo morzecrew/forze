@@ -49,6 +49,7 @@ from forze_postgres.kernel.catalog.owned import (
 from forze_postgres.kernel.catalog.owned.matching import (
     conflicting_unique,
     declared_key,
+    key_columns,
     normalize_expression,
 )
 from tests.support.sql_statements import split_sql
@@ -354,6 +355,20 @@ class TestMatching:
 
     def test_unbalanced_parentheses_are_compared_as_written(self) -> None:
         assert normalize_expression("(a = 1") != normalize_expression("a = 1")
+
+    @pytest.mark.parametrize(
+        ("key", "names"),
+        [
+            ("tag", {"tag"}),
+            ("lower(alias) DESC", {"alias"}),
+            ('"Last Seen" DESC NULLS LAST', {"Last Seen"}),
+            ("(a || b)", {"a", "b"}),
+        ],
+    )
+    def test_a_key_references_its_columns_and_no_function_or_direction(
+        self, key: str, names: set[str]
+    ) -> None:
+        assert key_columns(key) == names
 
 
 class TestQuoting:

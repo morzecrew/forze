@@ -10099,7 +10099,9 @@ each finding reproduced against Postgres 18 first.
   column as `index_missing` only on a plain table; a partitioned one still reported
   `required_index_missing`, which refuses startup.
 - **Built:** both paths take the finding from one helper
-  (`src/forze_postgres/kernel/catalog/owned/diff.py`, `_missing_index_finding`).
+  (`src/forze_postgres/kernel/catalog/owned/diff.py`, `_missing_index_finding`). It reads
+  the columns each key references (`matching.py`, `key_columns`), so an expression key such
+  as `lower(tag)` waits on `tag` as a bare key does.
 - **Evidence:** `test_owned_store_schema.py`,
   `test_a_partitioned_log_missing_an_optional_column_and_its_index_starts`, red before the
   change.

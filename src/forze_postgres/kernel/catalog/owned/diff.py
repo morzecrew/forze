@@ -24,6 +24,7 @@ from .matching import (
     declared_key,
     describe_keys,
     key_column,
+    key_columns,
     narrower,
     retired_mismatch,
     same_keys,
@@ -283,7 +284,9 @@ def _missing_index_finding(
 
     optional = {column.name for column in relation.shape.columns if not column.required}
     waits = any(
-        key_column(key) in optional and key_column(key) not in catalog.columns for key in index.keys
+        name in optional and name not in catalog.columns
+        for key in index.keys
+        for name in key_columns(key)
     )
 
     return "required_index_missing" if index.required and not waits else "index_missing"
