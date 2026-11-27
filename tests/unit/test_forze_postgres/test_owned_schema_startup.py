@@ -241,6 +241,21 @@ class TestGrade:
 
         assert len(refused.refusals) == 1 and "narrower" in refused.refusals[0]
 
+    def test_a_column_declared_name_is_not_narrower(self) -> None:
+        # The cut past 63 bytes is what the declaration asked for.
+        relation = _counter()
+        columns = tuple(
+            attrs.evolve(column, type="name") if column.name == "suffix" else column
+            for column in relation.shape.columns
+        )
+        relation = attrs.evolve(relation, shape=attrs.evolve(relation.shape, columns=columns))
+        name = PostgresType(base="name", is_array=False, not_null=True, formatted="name")
+
+        findings = grade([relation], [diff_relation(relation, _catalog(relation, suffix=name))])
+
+        assert findings.refusals == ()
+        assert not any("narrower" in warning for warning in findings.warnings)
+
     def test_a_column_found_not_null_where_forze_writes_null_is_refused(self) -> None:
         relation = _counter()
         not_null = PostgresType(base="timestamptz", is_array=False, not_null=True)

@@ -607,9 +607,11 @@ def narrower(declared: str, found: PostgresType) -> bool:
         return _INTEGER_BYTES[have] < _INTEGER_BYTES[want]
 
     if type_family(declared) == "text":
-        # name holds 63 bytes and truncates the rest.
+        # name holds 63 bytes and truncates the rest, which a name declared asks for.
         return (
-            have in ("char", "bpchar", "name") or _LENGTH_LIMITED.match(found.formatted) is not None
+            have in ("char", "bpchar")
+            or (have == "name" and want != "name")
+            or _LENGTH_LIMITED.match(found.formatted) is not None
         )
 
     return False
