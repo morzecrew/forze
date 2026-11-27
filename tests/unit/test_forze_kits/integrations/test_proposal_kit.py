@@ -13,7 +13,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -60,6 +60,22 @@ class Seen(BaseModel):
 
 
 SPEC = proposal_spec("mappings", change=Mapping, evidence=Seen)
+
+
+class Scored(BaseModel):
+    """Evidence that forbids extras and derives a field, neither of which a store keeps."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filled: float | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def seen(self) -> bool:
+        return self.filled is not None
+
+
+SCORED = proposal_spec("scored", change=Mapping, evidence=Scored)
 USER: Final = AuthnIdentity(principal_id=uuid4())
 
 
@@ -133,7 +149,7 @@ async def _op(
     reg = kit.registry(tx_route="mock")
 
     with ctx.inv_ctx.bind_identity(authn=identity):
-        return await run_operation(reg, f"{SPEC.name}.{op}", args, ctx)
+        return await run_operation(reg, f"{kit.spec.name}.{op}", args, ctx)
 
 
 async def _applied(ctx: ExecutionContext) -> list[str]:
@@ -293,6 +309,25 @@ class TestRequestAndRun:
 
         assert ran.status is ProposalStatus.FAILED
         assert ran.error
+
+    async def test_a_derived_field_the_store_drops_still_opens(self) -> None:
+        # A model forbidding extras would refuse its own derived field read back.
+        draft = SCORED.item(key="a", proposed=Mapping(field="f"), evidence=Scored(filled=0.5))
+
+        ran = await _open(ProposalKit(spec=SCORED, proposer=_proposer(draft)), _ctx())
+
+        assert (ran.status, ran.error) == (ProposalStatus.OPEN, None)
+
+    async def test_an_optional_nan_fails_the_proposal(self) -> None:
+        # It reads back null, which the model accepts: a change the proposer never made.
+        draft = SCORED.item(
+            key="a", proposed=Mapping(field="f"), evidence=Scored(filled=float("nan"))
+        )
+
+        ran = await _open(ProposalKit(spec=SCORED, proposer=_proposer(draft)), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "does not read back" in (ran.error or "")
 
     async def test_a_draft_the_store_cannot_write_fails_the_proposal(
         self, monkeypatch: pytest.MonkeyPatch

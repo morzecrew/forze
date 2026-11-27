@@ -174,8 +174,15 @@ class RunProposal:
                 tokens=draft.tokens,
                 latency_ms=draft.latency_ms,
             )
-            # Through JSON as a store keeps it: a NaN passes the models and reads back null.
-            type(update).model_validate_json(update.model_dump_json())
+            # Through JSON as a store keeps it, derived fields dropped: a NaN passes the
+            # models and reads back null, which only a required field then refuses.
+            stored = update.model_dump_json(exclude_computed_fields=True)
+
+            if type(update).model_validate_json(stored) != update:
+                raise ValueError(
+                    "The draft does not read back as it was made: a NaN or an infinity "
+                    "is stored as null."
+                )
 
         except Exception as error:
             return await command.update(proposal.id, proposal.rev, _failed(self.spec, error))
