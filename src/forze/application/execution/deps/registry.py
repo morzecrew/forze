@@ -1,5 +1,6 @@
 """Authoring dependency registry (compose, freeze, resolve)."""
 
+import inspect
 import os
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Self, cast, final
@@ -87,11 +88,18 @@ def _resolve_runtime_tracer(
 # ....................... #
 
 
-def _declares(provider: object, protocol: type) -> bool:
-    """Whether *provider* implements *protocol*. A class registered as a factory carries the
-    protocol's method unbound, so only an instance declares."""
+def _declares(provider: object, protocol: type, method: str) -> bool:
+    """Whether *provider* implements *protocol*: an instance whose attribute of that name is
+    a method bound to it. The protocol check reads only the attribute's name, so a class
+    registered as a factory, which carries the method unbound, declares nothing, and nor
+    does a field of that name, even one holding a callable."""
 
-    return not isinstance(provider, type) and isinstance(provider, protocol)
+    if isinstance(provider, type) or not isinstance(provider, protocol):
+        return False
+
+    bound = getattr(provider, method, None)
+
+    return inspect.ismethod(bound) and bound.__self__ is provider
 
 
 # ....................... #
@@ -112,7 +120,7 @@ def _refuse_unbound_requirements(store: ProviderStore) -> None:
     remedies: dict[str, None] = {}
 
     for key, route, provider in store.providers():
-        if not _declares(provider, DeclaresRequirements):
+        if not _declares(provider, DeclaresRequirements, "requirements"):
             continue
 
         for requirement in cast(DeclaresRequirements, provider).requirements():
@@ -143,7 +151,7 @@ def _provider_findings(store: ProviderStore) -> Iterator[WiringFinding]:
     which no module carries to the freeze."""
 
     for _, _, provider in store.providers():
-        if _declares(provider, PostureAware):
+        if _declares(provider, PostureAware, "posture_findings"):
             yield from cast(PostureAware, provider).posture_findings()
 
 

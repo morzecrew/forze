@@ -15,6 +15,7 @@ from forze.application.execution import Exempt, ProductionPosture, build_runtime
 from forze.base.exceptions import CoreException
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.execution.deps import module as authn_module
+from forze_identity.authn.execution.deps.deps import ConfigurableAllowAllEligibility
 from forze_identity.authz import policy_principal_spec
 
 pytestmark = pytest.mark.unit
@@ -69,6 +70,16 @@ class TestTheFinding:
         ]
         assert _module("policy_principal").posture_findings() == ()
         assert _module(lambda ctx, spec: None).posture_findings() == ()
+
+    def test_the_shipped_allow_all_factory_is_found_on_every_route(self) -> None:
+        # Passed for one route, it would admit everyone on the others too; exempting that
+        # one route must not exempt them.
+        module = _module(ConfigurableAllowAllEligibility(route="main"))
+
+        assert [f.target for f in module.posture_findings()] == [
+            "authn_eligibility:admin",
+            "authn_eligibility:main",
+        ]
 
     def test_the_routes_are_the_ones_given_at_construction(self) -> None:
         # Freezing reads the findings before it builds the module's Deps; a caller's set

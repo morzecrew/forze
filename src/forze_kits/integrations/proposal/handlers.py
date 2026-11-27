@@ -14,8 +14,8 @@ import attrs
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import exc
-from forze.base.primitives import utcnow
+from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import StrKey, utcnow
 
 from .operations import (
     AcceptEffect,
@@ -124,6 +124,19 @@ def _checked(items: Sequence[ProposalItem[Any, Any]]) -> list[ProposalItem[Any, 
     ]
 
 
+_DRAFT_REFUSALS: Final = frozenset({ExceptionKind.VALIDATION, ExceptionKind.PRECONDITION})
+"""What a store raises for a value it cannot keep, rather than for a race or an outage."""
+
+
+def _failed(spec: ProposalSpec[Any, Any], error: Exception) -> Any:
+    """The update that fails a proposal with *error*'s message."""
+
+    return spec.update_cmd(
+        status=ProposalStatus.FAILED,
+        error=(str(error) or type(error).__name__)[-_ERROR_CHARS:],
+    )
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RunProposal:
@@ -131,12 +144,16 @@ class RunProposal:
 
     A proposal that is no longer ``pending`` is returned as it is, so a retried worker is a
     no-op. An exception from the proposer, or items it should not have returned, fail the
-    proposal with the error; the caller requests a new one.
+    proposal with the error; the caller requests a new one. The draft is written in a scope
+    on :attr:`tx_route`, a savepoint inside a caller's transaction, so a draft the store
+    refuses there still fails the proposal.
     """
 
     ctx: ExecutionContext
     spec: ProposalSpec[Any, Any]
     proposer: Proposer[Any, Any]
+    tx_route: StrKey = "default"
+    """The route the draft's write scope opens on."""
 
     # ....................... #
 
@@ -147,6 +164,7 @@ class RunProposal:
             return proposal
 
         request = ProposalRequest(id=proposal.id, scope=proposal.scope, base=proposal.base)
+        command = _command(self.ctx, self.spec)
 
         # Building the update is inside the try: it is what checks an item against the
         # collection's models, and a draft that fails it must fail, not stay pending.
@@ -160,14 +178,36 @@ class RunProposal:
                 tokens=draft.tokens,
                 latency_ms=draft.latency_ms,
             )
+            # Through JSON as a store keeps it, derived fields dropped: a NaN passes the
+            # models and reads back null, which only a required field then refuses. Fields
+            # are compared, not models: private state is not stored.
+            stored = update.model_dump_json(exclude_computed_fields=True)
+            read = type(update).model_validate_json(stored)
+
+            if read.model_dump(exclude_computed_fields=True) != update.model_dump(
+                exclude_computed_fields=True
+            ):
+                raise ValueError(
+                    "The draft does not read back as it was made: a NaN or an infinity "
+                    "is stored as null."
+                )
 
         except Exception as error:
-            update = self.spec.update_cmd(
-                status=ProposalStatus.FAILED,
-                error=(str(error) or type(error).__name__)[-_ERROR_CHARS:],
-            )
+            return await command.update(proposal.id, proposal.rev, _failed(self.spec, error))
 
-        return await _command(self.ctx, self.spec).update(proposal.id, proposal.rev, update)
+        try:
+            # A refusal aborts the transaction it lands in: in a caller's, as an inbox
+            # consumer's, only this savepoint, so the failure below can still be written.
+            async with self.ctx.tx_ctx.scope(self.tx_route):
+                return await command.update(proposal.id, proposal.rev, update)
+
+        except CoreException as error:
+            # A store that refuses the draft's values, as Postgres a NUL byte in jsonb, fails
+            # the proposal; a lost race or an unreachable store is the caller's to retry.
+            if error.kind not in _DRAFT_REFUSALS or error.code == "revision_mismatch":
+                raise
+
+            return await command.update(proposal.id, proposal.rev, _failed(self.spec, error))
 
 
 # ....................... #
@@ -180,11 +220,12 @@ class DecideProposal:
 
     The operation runs in one transaction, so the effect and the verdicts land together or
     neither does. The update is made at the revision read, so the second of two concurrent
-    decisions fails the document's revision check (``precondition``, ``revision_mismatch``).
-    The decider recorded is who acted: the nearest actor of a delegated call.
+    decisions fails the store's revision check, whose code the store and its history settings
+    decide. Only a principal acting for itself decides: an agent acting for one is refused.
 
     :raises CoreException: ``authentication``, code ``proposal_principal_required``, with no
-        authenticated principal; ``conflict``, codes ``proposal_pending``,
+        authenticated principal; ``authorization``, code ``proposal_human_required``, for a
+        delegated call; ``conflict``, codes ``proposal_pending``,
         ``proposal_decided`` and ``proposal_stale``; ``validation``, codes
         ``proposal_verdict_unknown``, ``proposal_verdict_repeated`` and
         ``proposal_answer_required``.
@@ -205,6 +246,14 @@ class DecideProposal:
                 "Deciding a proposal needs an authenticated principal: nothing accepts one "
                 "on its own.",
                 code="proposal_principal_required",
+            )
+
+        # Inert until a human decides: an agent acting for one would accept on its own say.
+        if identity.is_delegated:
+            raise exc.authorization(
+                "A proposal is decided by a principal acting for itself, not by an agent "
+                "acting for one.",
+                code="proposal_human_required",
             )
 
         proposal = await _query(self.ctx, self.spec).get(args.id)
@@ -233,7 +282,7 @@ class DecideProposal:
             self.spec.update_cmd(
                 status=ProposalStatus.DECIDED,
                 items=items,
-                decided_by=identity.performer_id,
+                decided_by=identity.principal_id,
                 decided_at=utcnow(),
                 note=args.note,
             ),

@@ -1,6 +1,7 @@
 """The inference meter scope: what the calls inside it reported, summed."""
 
 import asyncio
+import contextvars
 
 import pytest
 
@@ -135,3 +136,20 @@ async def test_latency_is_the_scope_time_and_stops_at_exit() -> None:
 
     assert elapsed >= 20
     assert meter.latency_ms == elapsed
+
+
+@pytest.mark.asyncio
+async def test_a_scope_closed_from_another_context_still_stops_counting() -> None:
+    # As an async-generator fixture's teardown can run: the reset refuses, the meter must
+    # still close.
+    scope = InferenceDeps().metered()
+    meter = await scope.__aenter__()
+
+    with pytest.raises(ValueError):
+        await asyncio.create_task(
+            scope.__aexit__(None, None, None), context=contextvars.Context()
+        )
+
+    record_inference_usage("m", input_tokens=5)
+
+    assert meter.tokens is None

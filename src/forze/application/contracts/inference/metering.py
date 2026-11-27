@@ -12,9 +12,11 @@ from each one:
 
     draft = Draft(mapping=mapping, model=meter.model, tokens=meter.tokens)
 
-The meter is fed where an adapter records usage, once for each request it sends. A retried
+The meter is fed where an adapter records usage, once for each response it reads. A retried
 or hedged call and a call that raised after its response arrived spent tokens too, and a
-reader handed only the returned prediction would never see them.
+reader handed only the returned prediction would never see them. An attempt abandoned in
+flight, as a hedge's loser or one a timeout cancels, reports nothing, though the provider may
+bill it.
 """
 
 from collections.abc import AsyncGenerator, Mapping
@@ -177,8 +179,9 @@ async def inference_meter_scope() -> AsyncGenerator[InferenceMeter]:
         yield meter
 
     finally:
-        _CURRENT_METER.reset(token)
+        # First: a reset from another context raises, and the meter must close regardless.
         meter._finish()  # pyright: ignore[reportPrivateUsage]
+        _CURRENT_METER.reset(token)
 
 
 # ....................... #

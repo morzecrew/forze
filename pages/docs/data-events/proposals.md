@@ -98,7 +98,7 @@ Three operations, keyed under the collection's name (`mappings.request`, `mappin
 | Operation | Takes | Does |
 | --- | --- | --- |
 | `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope and base and calls the kit's `dispatch` for it, when it has one, in one transaction on `tx_route`, or returns the one already pending there; a newer base gets a new proposal. Without a `base`, the kit's `base_of` supplies it. |
-| `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, or two items with one key, fails the proposal with the error. A proposal no longer `pending` is returned as it is. |
+| `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, two items with one key, or a draft the store would not keep as made, such as a NaN or a value it refuses, fails the proposal with the error. Called inside a transaction, as an inbox consumer's, it writes the draft in a savepoint on `tx_route`, so a refusal still fails the proposal. A proposal no longer `pending` is returned as it is. |
 | `decide` | `DecideProposalDTO(id, verdicts, note)` | Records each item's verdict and runs `on_accept`, in one transaction on `tx_route`. An item left out is rejected. |
 
 `run` is the slow one: call it from your own worker or durable function, so a model call never
@@ -152,9 +152,10 @@ the first already moved.
 | Code | Kind | When |
 | --- | --- | --- |
 | `proposal_principal_required` | `authentication` | `decide` with no authenticated principal. |
+| `proposal_human_required` | `authorization` | `decide` by an agent acting for a principal, as an MCP tool call is. |
 | `proposal_pending` | `conflict` | `decide` before the proposer finished. |
 | `proposal_decided` | `conflict` | `decide` on a proposal already decided. |
-| `revision_mismatch` | `precondition` | The second of two concurrent `decide` calls on one proposal: it read the proposal before the first stored its verdicts. |
+| `revision_mismatch` | `precondition` | The second of two concurrent `decide` calls on one proposal: it read the proposal before the first stored its verdicts. A store with revision history raises `historical_consistency_violation` (`conflict`) instead, and the mock store `serialization_failure` (`concurrency`). |
 | `proposal_stale` | `conflict` | `decide` after `base_of` moved past the proposal's base. |
 | `proposal_verdict_unknown` | `validation` | A verdict names an item the proposal does not have. |
 | `proposal_verdict_repeated` | `validation` | Two verdicts name one item. |
@@ -162,9 +163,12 @@ the first already moved.
 
 ## What stays out
 
-- **No automatic acceptance.** Nothing in the kit accepts without a principal, and no
-  threshold accepts at all. An application that wants automation composes a deterministic
+- **No automatic acceptance.** Nothing in the kit accepts without a principal acting for
+  itself, so an agent acting for one cannot decide, and no threshold accepts at all. An application that wants automation composes a deterministic
   proposer with its own handler, visibly.
+- **No principal kinds.** A service account calling for itself decides as a person would:
+  an identity carries nothing that tells the two apart. Keep services from deciding with
+  [authorization](../identity-tenancy-enc/identity.md#authorization-may-they) on `decide`.
 - **The guarantee is the kit's operations, not the table.** Proposals are documents, so
   any code holding the document port can still change one. Enforcement lives in `decide`,
   and in your choice to route decisions through it.
@@ -178,6 +182,9 @@ that includes the index behind the pending uniqueness:
 CREATE UNIQUE INDEX mappings_one_pending ON mappings (scope, base)
     NULLS NOT DISTINCT WHERE status = 'pending';
 ```
+
+A tenant-aware collection leads that index with `tenant_id`, `(tenant_id, scope, base)`, or
+one tenant's pending proposal blocks the same scope in every other tenant.
 
 A store that cannot keep a filtered uniqueness refuses the collection when it is wired. To replace
 a generated operation, pass `handlers=`; to add one, `extra_ops=`.

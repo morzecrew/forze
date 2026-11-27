@@ -1,7 +1,7 @@
 """Authn dependency module for the application kernel."""
 
 from collections.abc import Collection
-from typing import Literal, final
+from typing import Literal, cast, final
 
 import attrs
 
@@ -240,7 +240,7 @@ class AuthnDepsModule(DepsModule):
             )
 
         # However the module is passed, it is constructed, so built ``Deps`` warn too.
-        if self.eligibility == "allow_all":
+        if self._allows_all:
             logger.warning(
                 "authn.eligibility.allow_all",
                 routes=sorted(str.__str__(route) for route in self._eligibility_routes()),
@@ -289,6 +289,18 @@ class AuthnDepsModule(DepsModule):
 
     # ....................... #
 
+    @property
+    def _allows_all(self) -> bool:
+        """Whether the gate admits everyone: ``"allow_all"``, or the shipped factory for it,
+        which one route's instance would otherwise extend to every route. A gate factory of
+        the application's own is not inspected."""
+
+        return self.eligibility == "allow_all" or isinstance(
+            self.eligibility, ConfigurableAllowAllEligibility
+        )
+
+    # ....................... #
+
     def posture_findings(self) -> tuple[WiringFinding, ...]:
         """One finding per route whose gate is ``eligibility="allow_all"``.
 
@@ -297,7 +309,7 @@ class AuthnDepsModule(DepsModule):
         with the reason the deployment checks nobody.
         """
 
-        if self.eligibility != "allow_all":
+        if not self._allows_all:
             return ()
 
         return tuple(
@@ -373,7 +385,7 @@ class AuthnDepsModule(DepsModule):
             # policy-principal one is passed here or not at all.
             gates: dict[StrKey, PrincipalEligibilityDepPort]
 
-            if self.eligibility == "allow_all":
+            if self._allows_all:
                 # One per route, so its posture finding names the route however it is passed.
                 gates = {
                     route: ConfigurableAllowAllEligibility(route=route)
@@ -381,10 +393,11 @@ class AuthnDepsModule(DepsModule):
                 }
 
             else:
+                # Neither name is left here: "allow_all" took the branch above.
                 factory: PrincipalEligibilityDepPort = (
                     ConfigurablePolicyPrincipalEligibility(shared=shared)
                     if self.eligibility == "policy_principal"
-                    else self.eligibility
+                    else cast(PrincipalEligibilityDepPort, self.eligibility)
                 )
                 gates = dict.fromkeys(eligibility_routes, factory)
 

@@ -264,6 +264,22 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def _string_keys(value: object) -> bool:
+    """Whether every mapping in *value*, at any depth, has string keys only."""
+
+    if isinstance(value, Mapping):
+        items = cast(Mapping[object, Any], value)
+
+        return all(isinstance(key, str) for key in items) and all(
+            _string_keys(item) for item in items.values()
+        )
+
+    if isinstance(value, (list, tuple)):
+        return all(_string_keys(item) for item in cast(Sequence[Any], value))
+
+    return True
+
+
 def _as_json(value: object) -> Any:
     """``json.dumps``'s fallback: it serializes a ``dict`` but no other mapping."""
 
@@ -297,17 +313,20 @@ def copy_extra_body(extra_body: object) -> Mapping[str, Any] | None:
 
     fields = cast(Mapping[object, Any], extra_body)
 
-    # Checked before serializing: JSON turns a key of 1 into "1" without complaint.
-    if not all(isinstance(key, str) for key in fields):
-        raise exc.configuration("HttpInferenceConfig.extra_body keys must be strings.")
-
+    # Serialized first: JSON refuses a body that contains itself, which the key walk below
+    # would follow without end.
     try:
         copied = json.loads(json.dumps(fields, allow_nan=False, default=_as_json))
 
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, RecursionError) as e:
         raise exc.configuration(
             f"HttpInferenceConfig.extra_body cannot be sent as JSON ({e})."
         ) from e
+
+    # Read on the original: JSON turns a key of 1 into "1" without complaint, at any depth,
+    # and keeps one of two keys that collide.
+    if not _string_keys(fields):
+        raise exc.configuration("HttpInferenceConfig.extra_body keys must be strings.")
 
     return cast(Mapping[str, Any], _frozen(copied))
 

@@ -13,7 +13,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -22,7 +22,7 @@ from forze.application.contracts.inventory import SpecPlane, SpecSource
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze.testing import context_from_modules
 from forze_kits.integrations.proposal import (
@@ -40,6 +40,7 @@ from forze_kits.integrations.proposal import (
     proposal_spec,
 )
 from forze_mock import MockDepsModule, MockInferenceRegistry
+from forze_mock.adapters.document import MockDocumentAdapter
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +60,24 @@ class Seen(BaseModel):
 
 
 SPEC = proposal_spec("mappings", change=Mapping, evidence=Seen)
+
+
+class Scored(BaseModel):
+    """Evidence that forbids extras, derives a field and keeps private state, none of which
+    a store keeps."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filled: float | None = None
+    _source: str | None = PrivateAttr(default=None)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def seen(self) -> bool:
+        return self.filled is not None
+
+
+SCORED = proposal_spec("scored", change=Mapping, evidence=Scored)
 USER: Final = AuthnIdentity(principal_id=uuid4())
 
 
@@ -132,7 +151,7 @@ async def _op(
     reg = kit.registry(tx_route="mock")
 
     with ctx.inv_ctx.bind_identity(authn=identity):
-        return await run_operation(reg, f"{SPEC.name}.{op}", args, ctx)
+        return await run_operation(reg, f"{kit.spec.name}.{op}", args, ctx)
 
 
 async def _applied(ctx: ExecutionContext) -> list[str]:
@@ -283,6 +302,91 @@ class TestRequestAndRun:
 
         assert (ran.status, ran.error) == (ProposalStatus.FAILED, "the model timed out")
 
+    async def test_a_draft_the_store_refuses_fails_the_proposal(self) -> None:
+        # JSON has no NaN: the stored draft cannot be read back as the evidence model. Left
+        # pending, the proposal would block its scope and rerun the proposer on every retry.
+        draft = SPEC.item(key="a", proposed=Mapping(field="f"), evidence=Seen(filled=float("nan")))
+
+        ran = await _open(_kit(_proposer(draft)), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert ran.error
+
+    async def test_what_the_store_drops_still_opens(self) -> None:
+        # A model forbidding extras would refuse its own derived field read back, and private
+        # state is not stored, so it does not read back at all.
+        evidence = Scored(filled=0.5)
+        evidence._source = "row 7"
+        draft = SCORED.item(key="a", proposed=Mapping(field="f"), evidence=evidence)
+
+        ran = await _open(ProposalKit(spec=SCORED, proposer=_proposer(draft)), _ctx())
+
+        assert (ran.status, ran.error) == (ProposalStatus.OPEN, None)
+
+    async def test_an_optional_nan_fails_the_proposal(self) -> None:
+        # It reads back null, which the model accepts: a change the proposer never made.
+        draft = SCORED.item(
+            key="a", proposed=Mapping(field="f"), evidence=Scored(filled=float("nan"))
+        )
+
+        ran = await _open(ProposalKit(spec=SCORED, proposer=_proposer(draft)), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "does not read back" in (ran.error or "")
+
+    async def test_a_draft_the_store_cannot_write_fails_the_proposal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # As Postgres refuses a NUL byte in a jsonb value: the draft's write is refused, and
+        # the proposal must fail rather than stay pending.
+        written = MockDocumentAdapter.update
+
+        async def refusing(self: Any, pk: Any, rev: Any, dto: Any, **kwargs: Any) -> Any:
+            if getattr(dto, "status", None) == ProposalStatus.OPEN:
+                raise exc.precondition("Invalid value (data too long or invalid format).")
+
+            return await written(self, pk, rev, dto, **kwargs)
+
+        monkeypatch.setattr(MockDocumentAdapter, "update", refusing)
+
+        ran = await _open(_kit(_proposer(_item("a"))), _ctx())
+
+        assert ran.status is ProposalStatus.FAILED
+        assert "Invalid value" in (ran.error or "")
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            exc.precondition("Revision mismatch.", code="revision_mismatch"),
+            exc.infrastructure("The store is unreachable."),
+        ],
+        ids=["lost-race", "outage"],
+    )
+    async def test_a_draft_write_that_may_succeed_on_retry_stays_pending(
+        self, monkeypatch: pytest.MonkeyPatch, error: CoreException
+    ) -> None:
+        # Failing it would throw away a draft a retry could still store.
+        written = MockDocumentAdapter.update
+
+        async def losing(self: Any, pk: Any, rev: Any, dto: Any, **kwargs: Any) -> Any:
+            if getattr(dto, "status", None) == ProposalStatus.OPEN:
+                raise error
+
+            return await written(self, pk, rev, dto, **kwargs)
+
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+        requested = await _op(kit, "request", RequestProposalDTO(scope="s", base="r1"), ctx)
+        monkeypatch.setattr(MockDocumentAdapter, "update", losing)
+
+        with pytest.raises(CoreException) as caught:
+            await _op(kit, "run", ProposalIdDTO(id=requested.id), ctx)
+
+        assert caught.value is error
+        assert (await ctx.document.query(SPEC.document).get(requested.id)).status is (
+            ProposalStatus.PENDING
+        )
+
     @pytest.mark.parametrize(
         ("items", "message"),
         [((("a", "f"), ("a", "g")), "more than once"), ((("a", None),), "propose nothing")],
@@ -397,6 +501,29 @@ class TestDecide:
         assert (caught.value.kind, caught.value.code) == (
             ExceptionKind.AUTHENTICATION,
             "proposal_principal_required",
+        )
+        assert await _applied(ctx) == []
+
+    async def test_an_agent_acting_for_a_principal_cannot_decide(self) -> None:
+        # Inert until a human decides: an agent's tool call carries the human as its subject,
+        # and accepting through it would run the effect on the agent's say.
+        ctx = _ctx()
+        kit = _kit(_proposer(_item("a")))
+        proposal = await _open(kit, ctx)
+        delegated = AuthnIdentity(principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4()))
+
+        with pytest.raises(CoreException) as caught:
+            await _op(
+                kit,
+                "decide",
+                _decide(proposal, VerdictDTO[Mapping](key="a", accept=True)),
+                ctx,
+                delegated,
+            )
+
+        assert (caught.value.kind, caught.value.code) == (
+            ExceptionKind.AUTHORIZATION,
+            "proposal_human_required",
         )
         assert await _applied(ctx) == []
 
