@@ -23,7 +23,8 @@ from forze_postgres.kernel.catalog.introspect.utils import (
 
 _SCALAR_PG_BASES: dict[type[Any], frozenset[str]] = {
     UUID: frozenset({"uuid"}),
-    str: frozenset({"text", "varchar", "char", "citext", "name"}),
+    # Not ``name``: Postgres cuts a value assigned to it at 63 bytes without an error.
+    str: frozenset({"text", "varchar", "char", "citext"}),
     # ``bool`` MUST precede ``int``: the fallback below probes with ``issubclass``
     # and ``issubclass(bool, int)`` is True — probed the other way around, every
     # bool field demanded an int2/int4/int8 column and a correct boolean column

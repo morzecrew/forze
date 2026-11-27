@@ -53,7 +53,7 @@ class TestExpectedPgBases:
             tags: list[str]
 
         field = Row.model_fields["tags"]
-        assert expected_pg_bases_for_field(field) == frozenset({"text", "varchar", "char", "citext", "name"})
+        assert expected_pg_bases_for_field(field) == frozenset({"text", "varchar", "char", "citext"})
 
     def test_any_returns_none(self) -> None:
         assert expected_pg_bases_for_annotation(Any) is None
@@ -127,6 +127,19 @@ class TestValidateFieldTypeCompatibility:
                 column_types={"tags": _pg("int4", is_array=True)},
                 omit_fields=frozenset(),
                 label="read",
+            )
+
+    @pytest.mark.parametrize("sealed", [False, True], ids=["text", "sealed"])
+    def test_a_name_column_is_refused_for_a_string(self, sealed: bool) -> None:
+        # Postgres cuts a value assigned to name at 63 bytes without an error: a longer
+        # string, or a sealed field's ciphertext, would be stored cut short.
+        with pytest.raises(CoreException, match="incompatible"):
+            validate_field_type_compatibility(
+                model=_Model,
+                column_types={"name": _pg("name")},
+                omit_fields=frozenset(),
+                label="write",
+                sealed_fields=frozenset({"name"}) if sealed else frozenset(),
             )
 
     def test_omits_fields(self) -> None:
