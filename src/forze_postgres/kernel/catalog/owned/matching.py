@@ -377,9 +377,8 @@ def key_column(key: str) -> str:
 
 
 def key_columns(key: str) -> frozenset[str]:
-    """The names a declared key references, unquoted, function names left out:
-    ``lower(alias) DESC`` references ``alias``. A cast's type name is among them, which a
-    caller matching column names never meets."""
+    """The names a declared key or predicate references, unquoted, with function names and
+    a cast's type left out: ``lower(alias)::text DESC`` references ``alias``."""
 
     raw = [
         (match.lastgroup, match.group())
@@ -387,9 +386,26 @@ def key_columns(key: str) -> frozenset[str]:
         if match.lastgroup != "space"
     ]
     names: set[str] = set()
+    cast = False
+    type_name = False
 
     for position, (kind, value) in enumerate(raw):
         calls = position + 1 < len(raw) and raw[position + 1][1] == "("
+
+        # A cast's type, schema-qualified or of several words, names no column.
+        if kind == "cast":
+            cast = type_name = True
+            continue
+
+        if cast and type_name and kind in ("word", "quoted"):
+            type_name = False
+            continue
+
+        if cast and not type_name and (value == "." or value.lower() in _TYPE_WORDS):
+            type_name = value == "."
+            continue
+
+        cast = False
 
         if kind == "word" and not calls:
             names.add(value.lower())

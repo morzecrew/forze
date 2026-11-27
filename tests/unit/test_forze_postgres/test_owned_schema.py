@@ -363,6 +363,10 @@ class TestMatching:
             ("lower(alias) DESC", {"alias"}),
             ('"Last Seen" DESC NULLS LAST', {"Last Seen"}),
             ("(a || b)", {"a", "b"}),
+            ("lower(payload)::text", {"payload"}),
+            ("(seen::timestamp with time zone) DESC", {"seen"}),
+            ("amount::double precision", {"amount"}),
+            ('code::app."Code"[]', {"code"}),
         ],
     )
     def test_a_key_references_its_columns_and_no_function_or_direction(
