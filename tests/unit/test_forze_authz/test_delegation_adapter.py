@@ -11,7 +11,7 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authz.adapters.delegation import (
     DelegationGrantAdapter,
     DelegationQueryAdapter,
@@ -73,6 +73,7 @@ def _grant_adapter(*, principal_exists: bool = True) -> DelegationGrantAdapter:
     grant_cmd.spec = _secure_spec("delegation_grants_cmd", ReadDelegationGrant)
     grant_cmd.create = AsyncMock()
     grant_cmd.kill = AsyncMock()
+    grant_cmd.kill_many = AsyncMock()
 
     return DelegationGrantAdapter(
         spec=AuthzSpec(name="main"),
@@ -131,15 +132,97 @@ async def test_grant_delegation_unknown_principal_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_grant_that_lost_a_race_to_the_same_grant_succeeds() -> None:
+    # Both calls found no grant; the unique index refused the second insert.
+    adapter = _grant_adapter()
+    actor, subject = uuid4(), uuid4()
+    adapter.grant_qry.find = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[None, _read_grant(actor, subject)]
+    )
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    await adapter.grant_delegation(actor, subject)
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_whose_recovery_read_fails_is_raised_as_the_conflict() -> None:
+    # Inside a caller's transaction the refused insert aborted it, so the read fails too.
+    adapter = _grant_adapter()
+    adapter.grant_qry.find = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[None, exc.infrastructure("current transaction is aborted")]
+    )
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+    assert caught.value.kind is ExceptionKind.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_a_failed_grant_other_than_a_conflict_is_raised_unread() -> None:
+    adapter = _grant_adapter()
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.infrastructure("The store is unreachable.")
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+    assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    adapter.grant_qry.find.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_with_no_grant_behind_it_is_raised() -> None:
+    adapter = _grant_adapter()
+    adapter.grant_cmd.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=exc.conflict("Unique violation.")
+    )
+
+    with pytest.raises(CoreException):
+        await adapter.grant_delegation(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
 async def test_revoke_delegation_kills_binding() -> None:
     adapter = _grant_adapter()
     actor, subject = uuid4(), uuid4()
     grant = _read_grant(actor, subject)
-    adapter.grant_qry.find = AsyncMock(return_value=grant)  # type: ignore[method-assign]
+    adapter.grant_qry.find_stream = streaming(grant)  # type: ignore[method-assign]
 
     await adapter.revoke_delegation(actor, subject)
 
-    adapter.grant_cmd.kill.assert_awaited_once_with(grant.id)  # type: ignore[attr-defined]
+    adapter.grant_cmd.kill_many.assert_awaited_once_with([grant.id])  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_revoke_delegation_kills_every_row_of_the_pair() -> None:
+    # A table without the unique index can hold two rows for one pair; a revoke that killed
+    # one would leave the actor delegated.
+    adapter = _grant_adapter()
+    actor, subject = uuid4(), uuid4()
+    first, second = _read_grant(actor, subject), _read_grant(actor, subject)
+    adapter.grant_qry.find_stream = streaming(first, second)  # type: ignore[method-assign]
+
+    await adapter.revoke_delegation(actor, subject)
+
+    adapter.grant_cmd.kill_many.assert_awaited_once_with(  # type: ignore[attr-defined]
+        [first.id, second.id]
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_delegation_with_no_grant_kills_nothing() -> None:
+    adapter = _grant_adapter()
+
+    await adapter.revoke_delegation(uuid4(), uuid4())
+
+    adapter.grant_cmd.kill_many.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

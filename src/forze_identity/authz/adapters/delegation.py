@@ -17,7 +17,7 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..domain.models.bindings import (
     CreateDelegationGrantCmd,
@@ -120,10 +120,27 @@ class DelegationGrantAdapter(DelegationGrantPort):
         if existing is not None:
             return
 
-        await self.grant_cmd.create(
-            CreateDelegationGrantCmd(actor_id=actor_id, subject_id=subject_id),
-            return_new=False,
-        )
+        try:
+            await self.grant_cmd.create(
+                CreateDelegationGrantCmd(actor_id=actor_id, subject_id=subject_id),
+                return_new=False,
+            )
+
+        except CoreException as error:
+            # A concurrent grant of the same pair won the unique index: the grant exists.
+            if error.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            try:
+                existing = await self._find_grant(actor_id, subject_id)
+
+            except CoreException:
+                # Inside a caller's transaction the refused insert aborted it, and the read
+                # fails with it: the conflict is the error that caller can act on.
+                raise error from None
+
+            if existing is None:
+                raise
 
     # ....................... #
 
@@ -142,12 +159,14 @@ class DelegationGrantAdapter(DelegationGrantPort):
         actor_id = subject_for_grant_query(actor)
         subject_id = subject_for_grant_query(subject)
 
-        grant = await self._find_grant(actor_id, subject_id)
+        # Every row of the pair: a table without the unique index can hold more than one.
+        rows = await fetch_all_document_hits(
+            self.grant_qry,
+            filters={"$values": {"actor_id": actor_id, "subject_id": subject_id}},
+        )
 
-        if grant is None:
-            return
-
-        await self.grant_cmd.kill(grant.id)
+        if rows:
+            await self.grant_cmd.kill_many([row.id for row in rows])
 
     # ....................... #
 

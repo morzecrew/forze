@@ -45,13 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inside a tenant, `assign_role` and `revoke_role` act in that tenant** (**Breaking**): an unscoped `assign_role` in a tenant-bound invocation binds the role there, not in every tenant. `revoke_role` there refuses a role held in every tenant (`authz.role_held_globally`); revoke it with no tenant bound.
 
-- **The principal-role binding table gains `scope_tenant_id`** (**Breaking**): add the nullable column and a unique index on `(principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT` (Postgres 15+) before booting, dropping any `(principal_id, role_id)` pair constraint. The Postgres identity recipe has the migration.
+- **The principal-role binding table gains `scope_tenant_id`** (**Breaking**): add the nullable column and a unique index on `(principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT` (Postgres 15+) before booting, dropping any `(principal_id, role_id)` pair constraint. A store kept per tenant, a routed client's database or a relation per tenant, whose ports are not tenant-aware under `tenancy_mode="global"`, also sets `scope_tenant_id` to its tenant on its existing rows, or they read as held in every tenant and cannot be revoked inside it. The Postgres identity recipe has the migration.
 
 - **Leaving a tenant drops the roles held in it** (**Breaking**): `detach_principal` first calls the new `RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)`, which a custom port must add. `TenancyDepsModule(tenant_management=...)` must name `authz_route=...` or pass `detach_keeps_roles=True`.
 
 ### Fixed
 
 - **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
+
+### Security
+
+- **Delegation grants and identity mappings are unique per pair.** `delegation_grant_spec` requires a unique index on `(actor_id, subject_id)` and `identity_mapping_spec` one on `(issuer, subject)`, which `forze schema diff --specs` prints; remove duplicate rows before building them. `revoke_delegation` removes every grant of the pair.
 
 ## [0.24.1] - 2026-11-10
 

@@ -168,4 +168,7 @@ delegation_grant_spec = DocumentSpec(
         "domain": DelegationGrant,
         "create_cmd": CreateDelegationGrantCmd,
     },
+    # Granting checks for an existing grant and then inserts: only the index stops two
+    # concurrent grants leaving two rows for one pair.
+    required_indexes=(DocumentIndex(fields=("actor_id", "subject_id"), unique=True),),
 )
