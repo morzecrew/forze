@@ -6839,9 +6839,10 @@ order. Each field type renders as one column type: an <code>int</code> is <code>
 annotated <code>Int64</code> is <code>bigint</code>; a list of scalars is an array, and a nested model, a <code>dict</code>
 or any other list is <code>jsonb</code>; a sealed field is <code>text</code>. A field that is not <code>T | None</code> is
 <code>NOT NULL</code>, and a literal default or an empty collection renders as <code>DEFAULT</code>. A
-<code>UniqueTogether</code> guarantee and a spec's <code>required_indexes</code> render as required indexes, led
-by <code>tenant_id</code> on a tenant-aware route, with <code>NULLS NOT DISTINCT</code> where a nullable key
-counts <code>NULL</code> as one value. A route with <code>bookkeeping_strategy="database"</code> gets a note:
+<code>UniqueTogether</code> guarantee and a unique entry of a spec's <code>required_indexes</code> render as
+required indexes, led by <code>tenant_id</code> on a tenant-aware route, with <code>NULLS NOT DISTINCT</code>
+where a nullable key counts <code>NULL</code> as one value; a plain entry, which only speeds reads,
+renders as a recommended one. A route with <code>bookkeeping_strategy="database"</code> gets a note:
 the trigger is yours. No trigger, function or history table is printed.</p>
 <p><code>--tenant</code>, repeated, binds each such relation once per tenant id: the resolver is called
 for the tenant, and awaited when it returns an awaitable, as the adapters resolve it. The

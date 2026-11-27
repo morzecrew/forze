@@ -11456,10 +11456,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Leaving a tenant drops the roles held in it</strong> (<strong>Breaking</strong>): <code>detach_principal</code> first calls the new <code>RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)</code>, which a custom port must add. <code>TenancyDepsModule(tenant_management=...)</code> must name <code>authz_route=...</code> or pass <code>detach_keeps_roles=True</code>.</p>
 </li>
+<li>
+<p><strong>The store-table startup check refuses an integer smaller than declared</strong> (<strong>Breaking</strong>), since a packed <abbr title="Hybrid Logical Clock">HLC</abbr> or an epoch in milliseconds overflows it on every write. A length-limited text column still only warns; a <code>name</code> column refuses, since it cuts a value past 63 bytes without an error.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>detach_principal</code> removes every membership row of the pair.</strong> It read only the first page of them.</li>
+<li>
+<p><strong><code>detach_principal</code> removes every membership row of the pair.</strong> It read only the first page of them.</p>
+</li>
+<li>
+<p><strong>The store-table check no longer refuses a table the store can serve</strong>: a unique index in another column order, a primary key with <code>INCLUDE</code> columns, or a missing optional column whose index went with it, on a partitioned table too. <code>forze schema diff</code> prints no duplicate index for them.</p>
+</li>
+<li>
+<p><strong>The identity and realtime mailbox tables declare their lookup indexes</strong>: API-key accounts on <code>key_hash</code> and <code>principal_id</code>, token sessions on <code>refresh_digest</code> and <code>principal_id</code>, the mailbox on <code>(principal, hlc, id)</code> and <code>(principal, event_id)</code>. <code>forze schema diff --specs</code> prints any that are missing, as recommended: a plain index in <code>required_indexes</code> only speeds reads, so it is recommended, and a unique one required.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

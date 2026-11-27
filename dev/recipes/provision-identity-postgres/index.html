@@ -6940,8 +6940,10 @@ store can keep one, so startup validation neither requires it nor reports it.</p
 <span class="w">    </span><span class="n">key_hash</span><span class="w">           </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
-</code></pre></div>
-<div class="highlight"><span class="filename">For lookups by principal</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
+<span class="c1">-- recommended: authn_api_key_accounts relies on it over (key_hash)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">key_hash</span><span class="p">);</span>
+<span class="c1">-- recommended: authn_api_key_accounts relies on it over (principal_id)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
 </code></pre></div>
 <p>Sessions (<code>session_spec</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span>
@@ -6959,9 +6961,12 @@ store can keep one, so startup validation neither requires it nor reports it.</p
 <span class="w">    </span><span class="n">expires_at</span><span class="w">     </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">)</span>
 <span class="p">);</span>
+<span class="c1">-- recommended: authn_token_sessions relies on it over (refresh_digest)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">refresh_digest</span><span class="p">);</span>
+<span class="c1">-- recommended: authn_token_sessions relies on it over (principal_id)</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
 </code></pre></div>
-<div class="highlight"><span class="filename">For lookups by principal and by family</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
-<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">family_id</span><span class="p">);</span>
+<div class="highlight"><span class="filename">For lookups by family</span><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_token_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">family_id</span><span class="p">);</span>
 </code></pre></div>
 <p>Password resets (<code>password_reset_spec</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">authn_password_resets</span><span class="w"> </span><span class="p">(</span>
