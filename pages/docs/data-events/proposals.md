@@ -166,6 +166,9 @@ the first already moved.
 - **No automatic acceptance.** Nothing in the kit accepts without a principal acting for
   itself, so an agent acting for one cannot decide, and no threshold accepts at all. An application that wants automation composes a deterministic
   proposer with its own handler, visibly.
+- **No principal kinds.** A service account calling for itself decides as a person would:
+  an identity carries nothing that tells the two apart. Keep services from deciding with
+  [authorization](../identity-tenancy-enc/identity.md#authorization-may-they) on `decide`.
 - **The guarantee is the kit's operations, not the table.** Proposals are documents, so
   any code holding the document port can still change one. Enforcement lives in `decide`,
   and in your choice to route decisions through it.
