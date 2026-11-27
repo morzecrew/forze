@@ -278,15 +278,15 @@ def _missing_index_finding(
 ) -> str:
     """The finding for a declared index the table lacks.
 
-    Over an optional column the table lacks, no adapter call needs the index until that
-    column is added: printed after the column, it only warns.
+    Over an optional column the table lacks, in a key or in the predicate, no adapter call
+    needs the index until that column is added: printed after the column, it only warns.
     """
 
     optional = {column.name for column in relation.shape.columns if not column.required}
     waits = any(
         name in optional and name not in catalog.columns
-        for key in index.keys
-        for name in key_columns(key)
+        for text in (*index.keys, index.where or "")
+        for name in key_columns(text)
     )
 
     return "required_index_missing" if index.required and not waits else "index_missing"

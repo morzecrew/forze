@@ -10100,10 +10100,11 @@ each finding reproduced against Postgres 18 first.
   `required_index_missing`, which refuses startup.
 - **Built:** both paths take the finding from one helper
   (`src/forze_postgres/kernel/catalog/owned/diff.py`, `_missing_index_finding`). It reads
-  the columns each key references (`matching.py`, `key_columns`), so an expression key such
-  as `lower(tag)` waits on `tag` as a bare key does.
+  the columns each key and the predicate reference (`matching.py`, `key_columns`, a cast's
+  type left out), so an expression key such as `lower(tag)`, or a predicate such as
+  `tag IS NOT NULL`, waits on `tag` as a bare key does.
 - **Evidence:** `test_owned_store_schema.py`,
-  `test_a_partitioned_log_missing_an_optional_column_and_its_index_starts`, red before the
-  change.
+  `test_a_log_missing_an_optional_column_and_its_index_starts`, red before the change on
+  both table kinds.
 - **Class:** `spec-gap`.
 - **Action:** decided.

@@ -480,10 +480,14 @@ class TestDeliveryLog:
         assert "-- DROP INDEX app.log_route;" in text
         assert "-- retired in 0.25.0: unused" in text
 
-    @pytest.mark.parametrize("key", ["tag", "lower(tag)"])
+    @pytest.mark.parametrize(
+        ("key", "where"),
+        [("tag", None), ("lower(tag)", None), ("event_id", "tag IS NOT NULL")],
+        ids=["column", "expression", "predicate"],
+    )
     @pytest.mark.parametrize("kind", ["table", "partitioned_table"])
     def test_a_log_missing_an_optional_column_and_its_index_starts(
-        self, kind: Any, key: str
+        self, kind: Any, key: str, where: str | None
     ) -> None:
         from forze_postgres.execution.lifecycle.owned_schema import grade
 
@@ -496,7 +500,7 @@ class TestDeliveryLog:
                 columns=(*relation.shape.columns, tag),
                 indexes=(
                     *relation.shape.indexes,
-                    OwnedIndex(keys=(key,), required=True, comment="tag lookups"),
+                    OwnedIndex(keys=(key,), where=where, required=True, comment="tag lookups"),
                 ),
             ),
         )
