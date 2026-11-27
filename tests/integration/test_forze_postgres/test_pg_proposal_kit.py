@@ -9,6 +9,7 @@ partial unique index keeps one proposal pending per scope and base.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any
 from uuid import uuid4
 
@@ -193,6 +194,34 @@ async def test_a_proposal_round_trips_its_items_and_applies_what_is_accepted(
         (ItemVerdict.ACCEPTED, Mapping(field="customer_id")),
     ]
     assert await _applied(pg_client) == ["amount", "customer_id"]
+
+
+async def _nul(ctx: ExecutionContext, request: ProposalRequest) -> ProposalDraft[Any, Any]:
+    return ProposalDraft(
+        items=[SPEC.item(key="a", proposed=Mapping(field="a\x00b"), evidence=Seen(filled=1.0))]
+    )
+
+
+@pytest.mark.parametrize("in_tx", [False, True], ids=["standalone", "in-a-transaction"])
+async def test_a_draft_postgres_refuses_fails_the_proposal(
+    pg_client: PostgresClient, in_tx: bool
+) -> None:
+    # jsonb refuses a NUL byte, and in a caller's transaction, as an inbox consumer's, the
+    # refusal aborts it: the failure has to land all the same, or the proposal stays pending.
+    ctx = _ctx(pg_client)
+    kit = ProposalKit(spec=SPEC, proposer=_nul)
+    requested = await _op(kit, "request", RequestProposalDTO(scope="orders", base="r1"), ctx)
+    scope: AbstractAsyncContextManager[Any] = (
+        ctx.tx_ctx.scope("main") if in_tx else nullcontext()
+    )
+
+    async with scope:
+        await _op(kit, "run", ProposalIdDTO(id=requested.id), ctx)
+
+    stored = await ctx.document.query(SPEC.document).get(requested.id)
+
+    assert stored.status is ProposalStatus.FAILED
+    assert stored.error
 
 
 async def test_an_effect_that_fails_leaves_the_proposal_open(pg_client: PostgresClient) -> None:

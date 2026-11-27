@@ -98,7 +98,7 @@ Three operations, keyed under the collection's name (`mappings.request`, `mappin
 | Operation | Takes | Does |
 | --- | --- | --- |
 | `request` | `RequestProposalDTO(scope, base=None)` | Creates a `pending` proposal for the scope and base and calls the kit's `dispatch` for it, when it has one, in one transaction on `tx_route`, or returns the one already pending there; a newer base gets a new proposal. Without a `base`, the kit's `base_of` supplies it. |
-| `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, two items with one key, or a draft the store would not keep as made, such as a NaN or a value it refuses, fails the proposal with the error. A proposal no longer `pending` is returned as it is. |
+| `run` | `ProposalIdDTO(id)` | Calls the proposer and stores its items as `open`, or `decided` when it returns none. An exception, two items with one key, or a draft the store would not keep as made, such as a NaN or a value it refuses, fails the proposal with the error. Called inside a transaction, as an inbox consumer's, it writes the draft in a savepoint on `tx_route`, so a refusal still fails the proposal. A proposal no longer `pending` is returned as it is. |
 | `decide` | `DecideProposalDTO(id, verdicts, note)` | Records each item's verdict and runs `on_accept`, in one transaction on `tx_route`. An item left out is rejected. |
 
 `run` is the slow one: call it from your own worker or durable function, so a model call never

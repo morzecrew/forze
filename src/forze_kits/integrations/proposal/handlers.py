@@ -15,7 +15,7 @@ import attrs
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import StrKey, utcnow
 
 from .operations import (
     AcceptEffect,
@@ -144,12 +144,16 @@ class RunProposal:
 
     A proposal that is no longer ``pending`` is returned as it is, so a retried worker is a
     no-op. An exception from the proposer, or items it should not have returned, fail the
-    proposal with the error; the caller requests a new one.
+    proposal with the error; the caller requests a new one. The draft is written in a scope
+    on :attr:`tx_route`, a savepoint inside a caller's transaction, so a draft the store
+    refuses there still fails the proposal.
     """
 
     ctx: ExecutionContext
     spec: ProposalSpec[Any, Any]
     proposer: Proposer[Any, Any]
+    tx_route: StrKey = "default"
+    """The route the draft's write scope opens on."""
 
     # ....................... #
 
@@ -188,7 +192,10 @@ class RunProposal:
             return await command.update(proposal.id, proposal.rev, _failed(self.spec, error))
 
         try:
-            return await command.update(proposal.id, proposal.rev, update)
+            # A refusal aborts the transaction it lands in: in a caller's, as an inbox
+            # consumer's, only this savepoint, so the failure below can still be written.
+            async with self.ctx.tx_ctx.scope(self.tx_route):
+                return await command.update(proposal.id, proposal.rev, update)
 
         except CoreException as error:
             # A store that refuses the draft's values, as Postgres a NUL byte in jsonb, fails

@@ -92,7 +92,7 @@ class ProposalKit(Generic[C, E]):
 
     def registry(self, *, tx_route: StrKey = "default") -> FrozenOperationRegistry:
         """The kit's operations, ``request`` and ``decide`` each in a transaction on *tx_route*,
-        frozen."""
+        and ``run`` writing its draft in a scope there, frozen."""
 
         ns = self.namespace
         spec = self.spec
@@ -101,7 +101,7 @@ class ProposalKit(Generic[C, E]):
             return RequestProposal(ctx=ctx, spec=spec, base_of=self.base_of, dispatch=self.dispatch)
 
         def _run(ctx: ExecutionContext) -> RunProposal:
-            return RunProposal(ctx=ctx, spec=spec, proposer=self.proposer)
+            return RunProposal(ctx=ctx, spec=spec, proposer=self.proposer, tx_route=tx_route)
 
         def _decide(ctx: ExecutionContext) -> DecideProposal:
             return DecideProposal(
