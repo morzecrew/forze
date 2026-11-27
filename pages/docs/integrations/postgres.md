@@ -157,15 +157,19 @@ cannot serve its adapter:
 - a missing table, or a missing required column or index;
 - a required index still being built with no valid one beside it, since `ON CONFLICT` cannot
   use it yet;
-- a column of another type family;
+- a column of another type family, or an integer smaller than declared, which a packed HLC or
+  an epoch in milliseconds overflows on every write;
+- a `name` column where forze declares text, which cuts a value past 63 bytes without an
+  error, so two keys sharing a prefix become one;
 - a column that is `NOT NULL` where forze writes `NULL`;
 - a primary key on other columns, or a deferrable one;
 - a unique index that breaks a conflict target;
 - a relation that is not a table;
 - a partitioned table with no partition.
 
-It warns about everything else: an optional column or a recommended index missing, a column
-narrower than declared, or an index forze has retired. A relation on a per-tenant resolver is
+It warns about everything else: an optional column (and an index over it) or a recommended
+index missing, a length-limited text column, or an index forze has retired. A unique index
+matches in any column order, since `ON CONFLICT` reads only its set of columns. A relation on a per-tenant resolver is
 skipped with a warning. `owned_relations(pg_deps, specs=registry)` also binds the tables of
 framework-owned document specs, for `forze schema`; the step leaves those to document schema
 validation, which already checks them. The step reads every table in one snapshot, and is skipped when the

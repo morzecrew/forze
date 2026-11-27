@@ -59,6 +59,7 @@ from forze_postgres.kernel.catalog.validation.validate_schema_types import (
 from forze_kits.integrations.audit import audit_record_spec
 from forze_kits.integrations.progress import job_record_spec
 from forze_kits.integrations.realtime import realtime_mailbox_spec
+from forze_kits.integrations.realtime import realtime_mailbox_spec
 from tests.support.framework_documents import (
     document_config,
     framework_contributions,
@@ -205,6 +206,36 @@ def test_the_identity_indexes_render_as_required() -> None:
     ]
     assert [(i.keys, i.unique, i.nulls_not_distinct) for i in bindings.indexes] == [
         (("principal_id", "role_id", "scope_tenant_id"), True, True)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "keys"),
+    [
+        ("authn_api_key_accounts", [("key_hash",), ("principal_id",)]),
+        ("authn_token_sessions", [("refresh_digest",), ("principal_id",)]),
+    ],
+)
+def test_a_table_read_by_a_lookup_renders_its_index(
+    name: str, keys: list[tuple[str, ...]]
+) -> None:
+    # Every API-key request and token refresh finds its row by these columns. Recommended:
+    # a table without one is slower, never wrong.
+    shape = document_shape(_schema_spec({str(spec.name): spec for spec in _SPECS}[name]))
+
+    assert [(i.keys, i.unique, i.required) for i in shape.indexes] == [
+        (key, False, False) for key in keys
+    ]
+
+
+def test_the_mailbox_renders_its_replay_and_ack_indexes() -> None:
+    shape = document_shape(_schema_spec(realtime_mailbox_spec()))
+    keys = {i.keys[-3:]: i.required for i in shape.indexes}
+
+    assert keys[("principal", "hlc", "id")] is False
+    # An ack resolves its event to a position by principal and event_id.
+    assert [required for k, required in keys.items() if k[-2:] == ("principal", "event_id")] == [
+        False
     ]
 
 
@@ -557,7 +588,7 @@ def test_a_uniqueness_that_skips_nulls_is_a_plain_unique_index() -> None:
     assert [(i.keys, i.nulls_not_distinct) for i in _shape(spec).indexes] == [(("note",), False)]
 
 
-def test_a_required_index_and_a_conflict_target_render_as_required_indexes() -> None:
+def test_a_unique_index_and_a_conflict_target_are_required_and_a_plain_one_recommended() -> None:
     spec = _spec(
         required_indexes=(
             DocumentIndex(fields=("name",), unique=True),
@@ -568,7 +599,7 @@ def test_a_required_index_and_a_conflict_target_render_as_required_indexes() -> 
 
     assert [(i.keys, i.unique, i.required) for i in indexes] == [
         (("name",), True, True),
-        (("count",), False, True),
+        (("count",), False, False),
         (("name", "label"), True, True),
     ]
 

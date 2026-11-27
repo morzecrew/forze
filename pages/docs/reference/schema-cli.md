@@ -41,9 +41,10 @@ order. Each field type renders as one column type: an `int` is `integer`, and on
 annotated `Int64` is `bigint`; a list of scalars is an array, and a nested model, a `dict`
 or any other list is `jsonb`; a sealed field is `text`. A field that is not `T | None` is
 `NOT NULL`, and a literal default or an empty collection renders as `DEFAULT`. A
-`UniqueTogether` guarantee and a spec's `required_indexes` render as required indexes, led
-by `tenant_id` on a tenant-aware route, with `NULLS NOT DISTINCT` where a nullable key
-counts `NULL` as one value. A route with `bookkeeping_strategy="database"` gets a note:
+`UniqueTogether` guarantee and a unique entry of a spec's `required_indexes` render as
+required indexes, led by `tenant_id` on a tenant-aware route, with `NULLS NOT DISTINCT`
+where a nullable key counts `NULL` as one value; a plain entry, which only speeds reads,
+renders as a recommended one. A route with `bookkeeping_strategy="database"` gets a note:
 the trigger is yours. No trigger, function or history table is printed.
 
 `--tenant`, repeated, binds each such relation once per tenant id: the resolver is called

@@ -16,6 +16,7 @@ from typing import Final, Literal, final
 import attrs
 
 from ..introspect import IndexShapeInfo, PostgresIntrospector, PostgresRelationKind, PostgresType
+from ..introspect.utils import normalize_pg_type
 from .matching import (
     catalog_keys,
     catalog_type_family,
@@ -23,6 +24,7 @@ from .matching import (
     declared_key,
     describe_keys,
     key_column,
+    key_columns,
     narrower,
     retired_mismatch,
     same_keys,
@@ -194,6 +196,23 @@ def _add_column(relation: BoundOwnedRelation, column: OwnedColumn) -> Block:
     )
 
 
+def _narrower_finding(declared: str, found: PostgresType) -> str:
+    """The finding for a column narrower than declared, of the family *declared*.
+
+    Packed HLCs and epoch milliseconds overflow a smaller integer on every write, and
+    ``name`` cuts a value past 63 bytes without an error, so two keys sharing a prefix
+    become one. A length-limited text column refuses only a long value, and says so.
+    """
+
+    if declared == "integer":
+        return "narrower_integer"
+
+    if normalize_pg_type(found.base) == "name":
+        return "truncating"
+
+    return "narrower"
+
+
 def _compare_column(
     relation: BoundOwnedRelation,
     column: OwnedColumn,
@@ -225,7 +244,7 @@ def _compare_column(
             _refusal(
                 f"column {name} of {table} is {found_type}, narrower than forze's {column.type}.",
                 "A value the adapter writes may not fit; widen the column.",
-                finding="narrower",
+                finding=_narrower_finding(declared, found),
             )
         )
 
@@ -252,6 +271,27 @@ def _compare_column(
     return refusals
 
 
+def _missing_index_finding(
+    relation: BoundOwnedRelation,
+    index: OwnedIndex,
+    catalog: CatalogRelation,
+) -> str:
+    """The finding for a declared index the table lacks.
+
+    Over an optional column the table lacks, in a key or in the predicate, no adapter call
+    needs the index until that column is added: printed after the column, it only warns.
+    """
+
+    optional = {column.name for column in relation.shape.columns if not column.required}
+    waits = any(
+        name in optional and name not in catalog.columns
+        for text in (*index.keys, index.where or "")
+        for name in key_columns(text)
+    )
+
+    return "required_index_missing" if index.required and not waits else "index_missing"
+
+
 def _declared_index(
     relation: BoundOwnedRelation,
     index: OwnedIndex,
@@ -266,7 +306,7 @@ def _declared_index(
     create = Block(
         comments=(index.label,),
         statement=create_index(relation, index, concurrently=True),
-        finding="required_index_missing" if index.required else "index_missing",
+        finding=_missing_index_finding(relation, index, catalog),
     )
 
     if not invalid:
@@ -332,7 +372,7 @@ def _partitioned_index(
                 index.label,
             ),
             commented=(create_index(relation, index, concurrently=False),),
-            finding="required_index_missing" if index.required else "index_missing",
+            finding=_missing_index_finding(relation, index, catalog),
         )
     ]
 

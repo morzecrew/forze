@@ -49,9 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Leaving a tenant drops the roles held in it** (**Breaking**): `detach_principal` first calls the new `RoleAssignmentPort.revoke_tenant_roles(subject, *, tenant_id)`, which a custom port must add. `TenancyDepsModule(tenant_management=...)` must name `authz_route=...` or pass `detach_keeps_roles=True`.
 
+- **The store-table startup check refuses an integer smaller than declared** (**Breaking**), since a packed HLC or an epoch in milliseconds overflows it on every write. A length-limited text column still only warns; a `name` column refuses, since it cuts a value past 63 bytes without an error.
+
 ### Fixed
 
 - **`detach_principal` removes every membership row of the pair.** It read only the first page of them.
+
+- **The store-table check no longer refuses a table the store can serve**: a unique index in another column order, a primary key with `INCLUDE` columns, or a missing optional column whose index went with it, on a partitioned table too. `forze schema diff` prints no duplicate index for them.
+
+- **The identity and realtime mailbox tables declare their lookup indexes**: API-key accounts on `key_hash` and `principal_id`, token sessions on `refresh_digest` and `principal_id`, the mailbox on `(principal, hlc, id)` and `(principal, event_id)`. `forze schema diff --specs` prints any that are missing, as recommended: a plain index in `required_indexes` only speeds reads, so it is recommended, and a unique one required.
 
 ### Security
 

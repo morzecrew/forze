@@ -481,6 +481,37 @@ class TestDeliveryLog:
         assert "-- retired in 0.25.0: unused" in text
 
     @pytest.mark.parametrize(
+        ("key", "where"),
+        [("tag", None), ("lower(tag)", None), ("event_id", "tag IS NOT NULL")],
+        ids=["column", "expression", "predicate"],
+    )
+    @pytest.mark.parametrize("kind", ["table", "partitioned_table"])
+    def test_a_log_missing_an_optional_column_and_its_index_starts(
+        self, kind: Any, key: str, where: str | None
+    ) -> None:
+        from forze_postgres.execution.lifecycle.owned_schema import grade
+
+        relation = self._relation()
+        tag = OwnedColumn(name="tag", type="text", required=False)
+        relation = attrs.evolve(
+            relation,
+            shape=attrs.evolve(
+                relation.shape,
+                columns=(*relation.shape.columns, tag),
+                indexes=(
+                    *relation.shape.indexes,
+                    OwnedIndex(keys=(key,), where=where, required=True, comment="tag lookups"),
+                ),
+            ),
+        )
+        catalog = self._catalog(kind, _found(("event_id",), name="log_event"))
+
+        findings = grade([relation], [diff_relation(relation, catalog)])
+
+        assert findings.refusals == ()
+        assert any("tag" in warning for warning in findings.warnings)
+
+    @pytest.mark.parametrize(
         "name",
         ["l" * 63, "l" * 55 + "_default", "ж" * 31],
         ids=["63-bytes", "ends-in-the-suffix", "multibyte"],

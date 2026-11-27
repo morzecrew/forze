@@ -16,6 +16,7 @@ duplicates a scan index. A retired one read as different is refused rather than 
 """
 
 import re
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from typing import Final
 
@@ -360,14 +361,59 @@ def declared_key(key: str) -> tuple[Tree, bool, bool]:
     return (_tree(_tokens(text)), descending, nulls_first)
 
 
+def _bare_key(key: str) -> str:
+    """A declared key without its direction or ``NULLS`` clause."""
+
+    text = re.sub(r"\s+nulls\s+(first|last)$", "", key.strip(), flags=re.IGNORECASE)
+
+    return re.sub(r"\s+(asc|desc)$", "", text, flags=re.IGNORECASE)
+
+
 def key_column(key: str) -> str:
     """The column a declared key names, without its direction or ``NULLS`` clause and
     unquoted: ``"order" DESC NULLS LAST`` is ``order``. An expression comes back as text."""
 
-    text = re.sub(r"\s+nulls\s+(first|last)$", "", key.strip(), flags=re.IGNORECASE)
-    text = re.sub(r"\s+(asc|desc)$", "", text, flags=re.IGNORECASE)
+    return unquote_ident(_bare_key(key))
 
-    return unquote_ident(text)
+
+def key_columns(key: str) -> frozenset[str]:
+    """The names a declared key or predicate references, unquoted, with function names and
+    a cast's type left out: ``lower(alias)::text DESC`` references ``alias``."""
+
+    raw = [
+        (match.lastgroup, match.group())
+        for match in _TOKEN.finditer(_bare_key(key))
+        if match.lastgroup != "space"
+    ]
+    names: set[str] = set()
+    cast = False
+    type_name = False
+
+    for position, (kind, value) in enumerate(raw):
+        calls = position + 1 < len(raw) and raw[position + 1][1] == "("
+
+        # A cast's type, schema-qualified or of several words, names no column.
+        if kind == "cast":
+            cast = type_name = True
+            continue
+
+        if cast and type_name and kind in ("word", "quoted"):
+            type_name = False
+            continue
+
+        if cast and not type_name and (value == "." or value.lower() in _TYPE_WORDS):
+            type_name = value == "."
+            continue
+
+        cast = False
+
+        if kind == "word" and not calls:
+            names.add(value.lower())
+
+        elif kind == "quoted" and not calls:
+            names.add(unquote_ident(value))
+
+    return frozenset(names)
 
 
 def catalog_keys(index: IndexShapeInfo) -> tuple[tuple[Tree, bool, bool], ...]:
@@ -391,6 +437,16 @@ def same_keys(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
     )
 
 
+def same_key_set(declared: OwnedIndex, index: IndexShapeInfo) -> bool:
+    """Whether *index* is a b-tree over the declared keys in any order and direction. That
+    is all that decides for a unique index: ``ON CONFLICT`` infers its arbiter from the set of
+    columns, and a uniqueness holds over the set alone."""
+
+    return index.method == "btree" and Counter(
+        tree for tree, _, _ in catalog_keys(index)
+    ) == Counter(declared_key(key)[0] for key in declared.keys)
+
+
 def same_predicate(
     declared: OwnedIndex,
     index: IndexShapeInfo,
@@ -409,8 +465,9 @@ def satisfies(
     index: IndexShapeInfo,
     text_columns: frozenset[str] = frozenset(),
 ) -> bool:
-    """Whether *index* is the declared index: the same keys, uniqueness and predicate, with
-    default operator classes and collations, and nulls compared as declared (distinct, as
+    """Whether *index* is the declared index: the same keys (in order for a scan index, as a
+    set for a unique one), uniqueness and predicate, with default operator classes and
+    collations, and nulls compared as declared (distinct, as
     Postgres has them by default, unless the index says ``NULLS NOT DISTINCT``). A unique one
     must also be immediate, since ``ON CONFLICT`` never takes a deferrable index as its
     arbiter.
@@ -420,7 +477,7 @@ def satisfies(
     """
 
     return (
-        same_keys(declared, index)
+        (same_key_set(declared, index) if declared.unique else same_keys(declared, index))
         and index.unique == declared.unique
         and same_predicate(declared, index, text_columns)
         and index.default_opclasses
@@ -566,9 +623,11 @@ def narrower(declared: str, found: PostgresType) -> bool:
         return _INTEGER_BYTES[have] < _INTEGER_BYTES[want]
 
     if type_family(declared) == "text":
-        # name holds 63 bytes and truncates the rest.
+        # name holds 63 bytes and truncates the rest, which a name declared asks for.
         return (
-            have in ("char", "bpchar", "name") or _LENGTH_LIMITED.match(found.formatted) is not None
+            have in ("char", "bpchar")
+            or (have == "name" and want != "name")
+            or _LENGTH_LIMITED.match(found.formatted) is not None
         )
 
     return False

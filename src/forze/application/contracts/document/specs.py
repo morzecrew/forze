@@ -705,7 +705,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     Unlike :attr:`guarantees`, nothing refuses a store that cannot keep one. A store that can
     keeps it, and one that cannot ignores it. Each must name stored fields of the write domain
-    model. Empty by default."""
+    model. Empty by default.
+
+    A store that prints its tables grades a unique one required, since without it two writes
+    can each insert a row, and a plain one recommended, since without it reads are only
+    slower."""
 
     # ....................... #
 

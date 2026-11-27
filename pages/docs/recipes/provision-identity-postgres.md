@@ -82,9 +82,9 @@ CREATE TABLE app.authn_api_key_accounts (
     key_hash           text        NOT NULL,
     PRIMARY KEY (id)
 );
-```
-
-```sql title="For lookups by principal"
+-- recommended: authn_api_key_accounts relies on it over (key_hash)
+CREATE INDEX ON app.authn_api_key_accounts (key_hash);
+-- recommended: authn_api_key_accounts relies on it over (principal_id)
 CREATE INDEX ON app.authn_api_key_accounts (principal_id);
 ```
 
@@ -106,10 +106,13 @@ CREATE TABLE app.authn_token_sessions (
     expires_at     timestamptz NOT NULL,
     PRIMARY KEY (id)
 );
+-- recommended: authn_token_sessions relies on it over (refresh_digest)
+CREATE INDEX ON app.authn_token_sessions (refresh_digest);
+-- recommended: authn_token_sessions relies on it over (principal_id)
+CREATE INDEX ON app.authn_token_sessions (principal_id);
 ```
 
-```sql title="For lookups by principal and by family"
-CREATE INDEX ON app.authn_token_sessions (principal_id);
+```sql title="For lookups by family"
 CREATE INDEX ON app.authn_token_sessions (family_id);
 ```
 

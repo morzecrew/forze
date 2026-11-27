@@ -32,6 +32,8 @@ REFUSED_FINDINGS: Final = frozenset(
     {
         "required_column_missing",
         "type_family",
+        "narrower_integer",
+        "truncating",
         "refuses_null",
         "required_index_missing",
         "required_index_building",
@@ -43,8 +45,11 @@ REFUSED_FINDINGS: Final = frozenset(
 )
 """What stops startup, beside a missing table: anything with which the adapter's reads or
 writes fail, a required index still being built included, since ``ON CONFLICT`` never infers
-an invalid one. A table missing an optional column or a recommended index, a column narrower
-than declared, or an index forze has retired only warns."""
+an invalid one; an integer smaller than declared, which a packed HLC or an epoch in
+milliseconds overflows on every write; and a ``name`` column where forze declares text, which
+cuts a value past 63 bytes without an error. A table missing an optional column (and an index
+over it) or a recommended index, a length-limited text column, or an index forze has retired
+only warns."""
 
 _SNAPSHOT: Final = PostgresTransactionOptions(read_only=True, isolation="repeatable_read")
 """The catalog read in one snapshot, as ``forze schema diff`` reads it."""
